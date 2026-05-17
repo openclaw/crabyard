@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node scripts/generate-assets.mjs && tsc --noEmit",
+    "build": "node scripts/generate-assets.mjs && tsgo --noEmit",
     "build:static": "node scripts/generate-assets.mjs --static",
     "deploy": "pnpm build && wrangler d1 migrations apply crabyard-ai --remote && wrangler deploy",
     "lint": "oxlint --ignore-pattern node_modules --ignore-pattern src/generated.ts .",
@@ -16,9 +16,9 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "latest",
+    "@typescript/native-preview": "7.0.0-dev.20260517.1",
     "oxfmt": "^0.50.0",
     "oxlint": "^1.65.0",
-    "typescript": "^6.0.3",
     "wrangler": "^4.92.0"
   },
   "packageManager": "pnpm@10.23.0"

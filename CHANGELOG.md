@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Switch the Worker typecheck/build path from `tsc` to `tsgo`.
 - Fix the default OpenClaw maintainer team allowlist slug.
 - Add a fullscreen Ghostty WASM Codex session grid for attach/watch/takeover workflows.
 - Add a persistent light/dark mode toggle to the app rail.
