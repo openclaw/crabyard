@@ -99,6 +99,21 @@ type WorkflowConfig = {
   promptPrefix?: string;
 };
 
+type RuntimeCapabilities = {
+  terminal: boolean;
+  takeover: boolean;
+  vnc: boolean;
+  desktop: boolean;
+  logs: boolean;
+  artifacts: boolean;
+};
+
+type RuntimeDescriptor = {
+  runtime: "container" | "crabbox";
+  reason: string;
+  capabilities: RuntimeCapabilities;
+};
+
 type RepoWorkflow = {
   repo: string;
   status: WorkflowStatus;
@@ -150,6 +165,8 @@ type RunAttempt = {
   leaseId: string | null;
   attachUrl: string | null;
   vncUrl: string | null;
+  selectionReason: string | null;
+  capabilities: RuntimeCapabilities;
   operator: string | null;
   lastHeartbeatAt: number;
   startedAt: number | null;
@@ -245,6 +262,8 @@ type RunAttemptTable = {
   lease_id: string | null;
   attach_url: string | null;
   vnc_url: string | null;
+  selection_reason: string | null;
+  capabilities_json: string;
   operator: string | null;
   last_heartbeat_at: number;
   started_at: number | null;
@@ -310,6 +329,22 @@ const runtimeOptions = ["auto", "container", "crabbox"] as const;
 const mergePolicyOptions = ["open_pr", "merge_when_green", "fix_until_green_and_merge"] as const;
 const defaultStallMs = 5 * 60 * 1000;
 const workflowCacheMs = 60 * 60 * 1000;
+const containerCapabilities: RuntimeCapabilities = {
+  terminal: true,
+  takeover: false,
+  vnc: false,
+  desktop: false,
+  logs: true,
+  artifacts: true,
+};
+const crabboxCapabilities: RuntimeCapabilities = {
+  terminal: true,
+  takeover: true,
+  vnc: true,
+  desktop: true,
+  logs: true,
+  artifacts: true,
+};
 
 class D1Dialect implements Dialect {
   constructor(private readonly d1: D1Database) {}
@@ -835,7 +870,7 @@ async function claimRunning(
   const workflowConfig = workflow?.status === "ok" ? workflow.config : undefined;
   const attempt = await nextRunAttempt(env, currentCard.id);
   const runId = `${currentCard.id}-R${attempt}`;
-  const runtime = selectRuntime(currentCard, workflowConfig);
+  const descriptor = selectRuntimeDescriptor(currentCard, workflowConfig);
   const transition = await sql`
     UPDATE cards
       SET lane = 'Running',
@@ -870,12 +905,14 @@ async function claimRunning(
       id: runId,
       card_id: currentCard.id,
       attempt,
-      runtime,
+      runtime: descriptor.runtime,
       status: "queued",
       control_intent: null,
       lease_id: null,
       attach_url: null,
       vnc_url: null,
+      selection_reason: descriptor.reason,
+      capabilities_json: JSON.stringify(descriptor.capabilities),
       operator: null,
       last_heartbeat_at: now,
       started_at: now,
@@ -891,7 +928,7 @@ async function claimRunning(
     env,
     currentCard.id,
     user,
-    `runtime=${runtime} policy=${currentCard.policy} workflow=${workflow?.status ?? "unseen"}`,
+    `runtime=${descriptor.runtime} policy=${currentCard.policy} workflow=${workflow?.status ?? "unseen"} reason=${descriptor.reason}`,
     now + 2,
   );
   return true;
@@ -961,13 +998,15 @@ async function mutateCard(
   }
 
   if (action === "takeover") {
-    if (card.run) {
-      await database(env)
-        .updateTable("run_attempts")
-        .set({ operator: actor(user), control_intent: "takeover", updated_at: now })
-        .where("id", "=", card.run.id)
-        .execute();
+    if (!card.run || !activeRunStatuses.includes(card.run.status)) {
+      throw badRequest("no active run to take over");
     }
+    if (!card.run.capabilities.takeover) throw badRequest("runtime does not support takeover");
+    await database(env)
+      .updateTable("run_attempts")
+      .set({ operator: actor(user), control_intent: "takeover", updated_at: now })
+      .where("id", "=", card.run.id)
+      .execute();
     await appendEvent(env, card.id, user, "operator takeover granted", now);
     return { card: (await readCard(env, id)) as Card };
   }
@@ -1897,6 +1936,8 @@ function runAttempt(row: RunAttemptTable): RunAttempt {
     leaseId: row.lease_id,
     attachUrl: row.attach_url,
     vncUrl: row.vnc_url,
+    selectionReason: row.selection_reason,
+    capabilities: runtimeCapabilities(row.runtime, row.capabilities_json),
     operator: row.operator,
     lastHeartbeatAt: row.last_heartbeat_at,
     startedAt: row.started_at,
@@ -2033,14 +2074,55 @@ function workflowConfigErrors(
   return errors;
 }
 
-function selectRuntime(card: Pick<Card, "runtime" | "prompt">, workflow?: WorkflowConfig): string {
-  if (card.runtime === "crabbox" || card.runtime === "container") return card.runtime;
-  const needsCrabbox = /\b(vnc|manual|takeover|gpu|perf|performance)\b/i.test(card.prompt);
-  if (needsCrabbox) return "crabbox";
-  if (workflow?.runtime === "crabbox" || workflow?.runtime === "container") {
-    return workflow.runtime;
+function selectRuntimeDescriptor(
+  card: Pick<Card, "runtime" | "prompt">,
+  workflow?: WorkflowConfig,
+): RuntimeDescriptor {
+  if (card.runtime === "crabbox") {
+    return runtimeDescriptor("crabbox", "card runtime override");
   }
-  return "container";
+  if (card.runtime === "container") {
+    return runtimeDescriptor("container", "card runtime override");
+  }
+  const needsCrabbox = /\b(vnc|manual|takeover|gpu|perf|performance)\b/i.test(card.prompt);
+  if (needsCrabbox) {
+    return runtimeDescriptor("crabbox", "prompt requires desktop/manual/perf capability");
+  }
+  if (workflow?.runtime === "crabbox") {
+    return runtimeDescriptor("crabbox", "repo CRABYARD.md runtime default");
+  }
+  if (workflow?.runtime === "container") {
+    return runtimeDescriptor("container", "repo CRABYARD.md runtime default");
+  }
+  return runtimeDescriptor("container", "default container runtime");
+}
+
+function runtimeDescriptor(
+  runtime: RuntimeDescriptor["runtime"],
+  reason: string,
+): RuntimeDescriptor {
+  return {
+    runtime,
+    reason,
+    capabilities: runtime === "crabbox" ? crabboxCapabilities : containerCapabilities,
+  };
+}
+
+function runtimeCapabilities(runtime: string, value: string): RuntimeCapabilities {
+  const fallback = runtime === "crabbox" ? crabboxCapabilities : containerCapabilities;
+  const parsed = parseJson<Partial<RuntimeCapabilities>>(value, fallback);
+  return {
+    terminal: booleanCapability(parsed.terminal, fallback.terminal),
+    takeover: booleanCapability(parsed.takeover, fallback.takeover),
+    vnc: booleanCapability(parsed.vnc, fallback.vnc),
+    desktop: booleanCapability(parsed.desktop, fallback.desktop),
+    logs: booleanCapability(parsed.logs, fallback.logs),
+    artifacts: booleanCapability(parsed.artifacts, fallback.artifacts),
+  };
+}
+
+function booleanCapability(value: unknown, fallback: boolean): boolean {
+  return typeof value === "boolean" ? value : fallback;
 }
 
 function stallThresholdMs(settings: Record<string, string>): number {

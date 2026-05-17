@@ -1837,10 +1837,11 @@
       }
 
       function renderSessionCell(card) {
-        const running = card.lane === "Running";
-        const maintainerControls = canMaintain()
-          ? `<button data-session-watch="${card.id}">Watch</button><button data-session-takeover="${card.id}">Take over</button>`
-          : `<button data-session-watch="${card.id}">Watch</button>`;
+        const takeoverButton =
+          canMaintain() && hasRunCapability(card, "takeover")
+            ? `<button data-session-takeover="${card.id}">Take over</button>`
+            : "";
+        const maintainerControls = `<button data-session-watch="${card.id}">Watch</button>${takeoverButton}`;
         const focusButton = focusedSessionId
           ? `<button data-session-unfocus>Grid</button>`
           : `<button data-session-focus="${card.id}">Full</button>`;
@@ -1861,7 +1862,7 @@
           </div>
           <footer class="session-cell-foot">
             <span data-terminal-status="${escapeHtml(card.id)}">Ghostty WASM</span>
-            <span data-session-runtime-label="${escapeHtml(card.id)}">${escapeHtml(runRuntime(card) === "crabbox" ? "VNC eligible" : "container")}</span>
+            <span data-session-runtime-label="${escapeHtml(card.id)}">${escapeHtml(runtimeCapabilityLabel(card))}</span>
           </footer>
         </article>`;
       }
@@ -1882,6 +1883,33 @@
         return card.run?.runtime || card.runtime;
       }
 
+      function runCapabilities(card) {
+        if (card.run?.capabilities) return card.run.capabilities;
+        const crabbox = runRuntime(card) === "crabbox";
+        return {
+          terminal: true,
+          takeover: crabbox,
+          vnc: crabbox,
+          desktop: crabbox,
+          logs: true,
+          artifacts: true,
+        };
+      }
+
+      function hasRunCapability(card, name) {
+        if (name === "takeover" && !["queued", "leasing", "running"].includes(card.run?.status)) {
+          return false;
+        }
+        return runCapabilities(card)[name] === true;
+      }
+
+      function runtimeCapabilityLabel(card) {
+        const caps = runCapabilities(card);
+        if (caps.vnc) return "VNC eligible";
+        if (caps.terminal) return "terminal";
+        return runRuntime(card);
+      }
+
       function refreshSessionCell(card) {
         const id = CSS.escape(card.id);
         const title = document.querySelector(`[data-session-title="${id}"]`);
@@ -1892,8 +1920,7 @@
           title.title = card.title;
         }
         if (meta) meta.innerHTML = sessionMetaHtml(card);
-        if (runtime)
-          runtime.textContent = runRuntime(card) === "crabbox" ? "VNC eligible" : "container";
+        if (runtime) runtime.textContent = runtimeCapabilityLabel(card);
       }
 
       async function hydrateSessionTerminals() {
@@ -2007,8 +2034,13 @@
       }
 
       function renderRunSide(card) {
+        const capabilities = runCapabilities(card);
+        const capabilityLabel = Object.entries(capabilities)
+          .filter(([, enabled]) => enabled)
+          .map(([name]) => name)
+          .join(", ");
         const maintainerControls = canMaintain()
-          ? `<button class="primary" id="takeover">Take over</button>
+          ? `${hasRunCapability(card, "takeover") ? `<button class="primary" id="takeover">Take over</button>` : ""}
         <button id="stall">Mark stalled</button>`
           : "";
         document.getElementById("run-side").innerHTML = `
@@ -2018,9 +2050,11 @@
           <span>Runtime <strong>${escapeHtml(runRuntime(card))}</strong></span>
           <span>Run <strong>${escapeHtml(card.run?.id || "none")}</strong></span>
           <span>Run state <strong>${escapeHtml(card.run?.status || "idle")}</strong></span>
+          <span>Adapter <strong>${escapeHtml(card.run?.selectionReason || "not selected")}</strong></span>
+          <span>Capabilities <strong>${escapeHtml(capabilityLabel || "none")}</strong></span>
           <span>Policy <strong>${card.policy}</strong></span>
           <span>State <strong>${card.lane}</strong></span>
-          <span>VNC <strong>${runRuntime(card) === "crabbox" ? "available" : "not available"}</strong></span>
+          <span>VNC <strong>${capabilities.vnc ? "available" : "not available"}</strong></span>
         </div>
         <button id="watch">Watch</button>
         ${maintainerControls}
