@@ -10,6 +10,9 @@
     "format": "oxfmt --check .",
     "check": "pnpm build && pnpm lint && pnpm format"
   },
+  "dependencies": {
+    "kysely": "^0.29.2"
+  },
   "devDependencies": {
     "@cloudflare/workers-types": "latest",
     "oxfmt": "^0.50.0",

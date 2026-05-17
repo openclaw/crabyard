@@ -1,3 +1,17 @@
+import {
+  Kysely,
+  SqliteAdapter,
+  SqliteIntrospector,
+  SqliteQueryCompiler,
+  sql,
+  type CompiledQuery,
+  type DatabaseConnection,
+  type DatabaseIntrospector,
+  type Dialect,
+  type Driver,
+  type Generated,
+  type QueryResult,
+} from "kysely";
 import { APP_HTML, SPEC_HTML, SPEC_MARKDOWN } from "./generated";
 
 type Role = "viewer" | "maintainer" | "owner";
@@ -42,12 +56,188 @@ type Card = {
   logs: string[];
 };
 
+type SettingsTable = {
+  key: string;
+  value: string;
+};
+
+type AllowEntryTable = {
+  value: string;
+  role: Role;
+  created_at: number;
+  updated_at: number;
+};
+
+type RepoTable = {
+  repo: string;
+  enabled: number;
+  created_at: number;
+  updated_at: number;
+};
+
+type UserTable = {
+  subject: string;
+  login: string | null;
+  email: string | null;
+  name: string | null;
+  role: Role;
+  allowed: number;
+  teams: string;
+  created_at: number;
+  updated_at: number;
+  last_seen_at: number;
+};
+
+type SessionTable = {
+  token_hash: string;
+  subject: string;
+  expires_at: number;
+  created_at: number;
+};
+
+type CardTable = {
+  id: string;
+  title: string;
+  prompt: string;
+  repo: string;
+  source: string;
+  runtime: string;
+  policy: string;
+  lane: string;
+  owner: string;
+  started_at: number | null;
+  created_at: number;
+  updated_at: number;
+  last_event: string | null;
+};
+
+type EventTable = {
+  id: Generated<number>;
+  card_id: string;
+  actor: string;
+  message: string;
+  created_at: number;
+};
+
+type AuditEventTable = {
+  id: Generated<number>;
+  actor: string;
+  message: string;
+  created_at: number;
+};
+
+type Database = {
+  settings: SettingsTable;
+  allow_entries: AllowEntryTable;
+  repos: RepoTable;
+  users: UserTable;
+  sessions: SessionTable;
+  cards: CardTable;
+  events: EventTable;
+  audit_events: AuditEventTable;
+};
+
+type CompilableQuery = {
+  compile(): CompiledQuery;
+};
+
 const encoder = new TextEncoder();
 const sessionCookie = "crabyard_session";
 const oauthStateCookie = "crabyard_oauth_state";
 const bootstrapSessionSeconds = 60 * 60;
 const githubSessionSeconds = 60 * 15;
 const lanes = ["Todo", "Running", "Human Review", "Done"];
+
+class D1Dialect implements Dialect {
+  constructor(private readonly d1: D1Database) {}
+
+  createDriver(): Driver {
+    return new D1Driver(this.d1);
+  }
+
+  createQueryCompiler(): SqliteQueryCompiler {
+    return new SqliteQueryCompiler();
+  }
+
+  createAdapter(): SqliteAdapter {
+    return new SqliteAdapter();
+  }
+
+  createIntrospector(db: Kysely<unknown>): DatabaseIntrospector {
+    return new SqliteIntrospector(db);
+  }
+}
+
+class D1Driver implements Driver {
+  private readonly connection: D1Connection;
+
+  constructor(d1: D1Database) {
+    this.connection = new D1Connection(d1);
+  }
+
+  async init(): Promise<void> {}
+
+  async acquireConnection(): Promise<DatabaseConnection> {
+    return this.connection;
+  }
+
+  async beginTransaction(): Promise<void> {
+    throw new Error("D1 batch transactions are not exposed through this Kysely dialect");
+  }
+
+  async commitTransaction(): Promise<void> {}
+
+  async rollbackTransaction(): Promise<void> {}
+
+  async releaseConnection(): Promise<void> {}
+
+  async destroy(): Promise<void> {}
+}
+
+class D1Connection implements DatabaseConnection {
+  constructor(private readonly d1: D1Database) {}
+
+  async executeQuery<R>(compiledQuery: CompiledQuery): Promise<QueryResult<R>> {
+    const statement = this.d1.prepare(compiledQuery.sql).bind(...compiledQuery.parameters);
+    if (isReadQuery(compiledQuery.sql)) {
+      const result = await statement.all<R>();
+      return { rows: result.results ?? [] };
+    }
+
+    const result = await statement.run();
+    const changes = result.meta.changes;
+    const lastRowId = result.meta.last_row_id;
+    const queryResult: QueryResult<R> = { rows: [] };
+    if (typeof changes === "number") {
+      Object.assign(queryResult, { numAffectedRows: BigInt(changes) });
+    }
+    if (typeof lastRowId === "number") {
+      Object.assign(queryResult, { insertId: BigInt(lastRowId) });
+    }
+    return queryResult;
+  }
+
+  async *streamQuery<R>(compiledQuery: CompiledQuery): AsyncIterableIterator<QueryResult<R>> {
+    yield await this.executeQuery<R>(compiledQuery);
+  }
+}
+
+function database(env: RuntimeEnv): Kysely<Database> {
+  return new Kysely<Database>({ dialect: new D1Dialect(env.DB) });
+}
+
+async function executeBatch(env: RuntimeEnv, queries: readonly CompilableQuery[]): Promise<void> {
+  await env.DB.batch(
+    queries.map((query) => {
+      const compiled = query.compile();
+      return env.DB.prepare(compiled.sql).bind(...compiled.parameters);
+    }),
+  );
+}
+
+function isReadQuery(sqlText: string): boolean {
+  return /^(?:select|with|pragma)\b/i.test(sqlText.trim());
+}
 
 export default {
   async fetch(request: Request, env: RuntimeEnv): Promise<Response> {
@@ -276,9 +466,10 @@ async function githubCallback(request: Request, env: RuntimeEnv): Promise<Respon
 async function logout(request: Request, env: RuntimeEnv): Promise<Response> {
   const token = cookies(request).get(sessionCookie);
   if (token) {
-    await env.DB.prepare("DELETE FROM sessions WHERE token_hash = ?")
-      .bind(await sha256(token))
-      .run();
+    await database(env)
+      .deleteFrom("sessions")
+      .where("token_hash", "=", await sha256(token))
+      .execute();
   }
   return json({ ok: true }, { headers: { "set-cookie": cookie(sessionCookie, "", 0) } });
 }
@@ -287,22 +478,14 @@ async function requireUser(request: Request, env: RuntimeEnv): Promise<User> {
   const token = cookies(request).get(sessionCookie);
   if (!token) throw unauthorized();
   const tokenHash = await sha256(token);
-  const row = await env.DB.prepare(
-    `SELECT u.subject, u.login, u.email, u.name, u.role, u.allowed, u.teams
-      FROM sessions s
-      JOIN users u ON u.subject = s.subject
-      WHERE s.token_hash = ? AND s.expires_at > ?`,
-  )
-    .bind(tokenHash, Date.now())
-    .first<{
-      subject: string;
-      login: string | null;
-      email: string | null;
-      name: string | null;
-      role: Role;
-      allowed: number;
-      teams: string;
-    }>();
+  const db = database(env);
+  const row = await db
+    .selectFrom("sessions as s")
+    .innerJoin("users as u", "u.subject", "s.subject")
+    .select(["u.subject", "u.login", "u.email", "u.name", "u.role", "u.allowed", "u.teams"])
+    .where("s.token_hash", "=", tokenHash)
+    .where("s.expires_at", ">", Date.now())
+    .executeTakeFirst();
   if (!row) throw unauthorized();
 
   const user = {
@@ -317,7 +500,7 @@ async function requireUser(request: Request, env: RuntimeEnv): Promise<User> {
 
   if (user.subject.startsWith("bootstrap:")) {
     if (!env.CRABYARD_BOOTSTRAP_TOKEN || user.subject !== (await bootstrapSubject(env))) {
-      await env.DB.prepare("DELETE FROM sessions WHERE token_hash = ?").bind(tokenHash).run();
+      await db.deleteFrom("sessions").where("token_hash", "=", tokenHash).execute();
       throw unauthorized();
     }
     return user;
@@ -327,7 +510,7 @@ async function requireUser(request: Request, env: RuntimeEnv): Promise<User> {
 
   const authorized = await authorize(env, user);
   if (!authorized.allowed) {
-    await env.DB.prepare("DELETE FROM sessions WHERE token_hash = ?").bind(tokenHash).run();
+    await db.deleteFrom("sessions").where("token_hash", "=", tokenHash).execute();
     throw forbidden("user is no longer allowlisted");
   }
   if (authorized.role !== user.role || authorized.allowed !== user.allowed) {
@@ -337,15 +520,13 @@ async function requireUser(request: Request, env: RuntimeEnv): Promise<User> {
 }
 
 async function readState(env: RuntimeEnv, user: User): Promise<Record<string, unknown>> {
+  const db = database(env);
   const [settings, allow, repos, cards] = await Promise.all([
     readSettings(env),
-    env.DB.prepare("SELECT value, role FROM allow_entries ORDER BY value").all<{
-      value: string;
-      role: Role;
-    }>(),
-    env.DB.prepare("SELECT repo FROM repos WHERE enabled = 1 ORDER BY repo").all<{
-      repo: string;
-    }>(),
+    user.role === "owner"
+      ? db.selectFrom("allow_entries").select(["value", "role"]).orderBy("value").execute()
+      : Promise.resolve([]),
+    db.selectFrom("repos").select("repo").where("enabled", "=", 1).orderBy("repo").execute(),
     readCards(env),
   ]);
 
@@ -356,8 +537,8 @@ async function readState(env: RuntimeEnv, user: User): Promise<Record<string, un
     cap: numberSetting(settings.cap, 20),
     retention: settings.retention ?? "30",
     merge: settings.merge ?? "guarded",
-    allow: user.role === "owner" ? (allow.results ?? []) : [],
-    repos: (repos.results ?? []).map((row) => row.repo),
+    allow,
+    repos: repos.map((row) => row.repo),
     cards,
   };
 }
@@ -386,20 +567,35 @@ async function createCard(request: Request, env: RuntimeEnv, user: User): Promis
   );
   const now = Date.now();
   const owner = user.login ?? user.email ?? user.subject;
+  const db = database(env);
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const id = await nextCardId(env);
     try {
-      await env.DB.prepare(
-        `INSERT INTO cards
-          (id, title, prompt, repo, source, runtime, policy, lane, owner, started_at, created_at, updated_at, last_event)
-          VALUES (?, ?, ?, ?, ?, ?, ?, 'Todo', ?, NULL, ?, ?, ?)`,
-      )
-        .bind(id, title, prompt, repo, source, runtime, policy, owner, now, now, "card created")
-        .run();
-      await env.DB.batch([
-        eventInsert(env, id, actor(user), "card created", now),
-        eventInsert(env, id, actor(user), "repo allowlist ok", now + 1),
-      ]);
+      await db
+        .insertInto("cards")
+        .values({
+          id,
+          title,
+          prompt,
+          repo,
+          source,
+          runtime,
+          policy,
+          lane: "Todo",
+          owner,
+          started_at: null,
+          created_at: now,
+          updated_at: now,
+          last_event: "card created",
+        })
+        .execute();
+      await db
+        .insertInto("events")
+        .values([
+          { card_id: id, actor: actor(user), message: "card created", created_at: now },
+          { card_id: id, actor: actor(user), message: "repo allowlist ok", created_at: now + 1 },
+        ])
+        .execute();
       return { card: (await readCard(env, id)) as Card };
     } catch (error) {
       if (!isConstraintError(error) || attempt === 2) throw error;
@@ -417,16 +613,15 @@ async function claimRunning(
   await requireRepo(env, card.repo);
   const settings = await readSettings(env);
   const cap = numberSetting(settings.cap, 20);
-  const transition = await env.DB.prepare(
-    `UPDATE cards
-      SET lane = 'Running', started_at = ?, updated_at = ?, last_event = ?
-      WHERE id = ?
+  const db = database(env);
+  const transition = await sql`
+    UPDATE cards
+      SET lane = 'Running', started_at = ${now}, updated_at = ${now}, last_event = ${"run started"}
+      WHERE id = ${card.id}
         AND lane <> 'Running'
-        AND (SELECT count(*) FROM cards WHERE lane = 'Running') < ?`,
-  )
-    .bind(now, now, "run started", card.id, cap)
-    .run();
-  if ((transition.meta.changes ?? 0) === 0) {
+        AND (SELECT count(*) FROM cards WHERE lane = 'Running') < ${cap}
+  `.execute(db);
+  if ((transition.numAffectedRows ?? 0n) === 0n) {
     await appendEvent(env, card.id, user, `capacity blocked at cap ${cap}`, now);
     return false;
   }
@@ -462,11 +657,16 @@ async function mutateCard(
       return { card: (await readCard(env, id)) as Card };
     }
     const startedAt = nextLane === "Running" ? now : card.startedAt;
-    await env.DB.prepare(
-      "UPDATE cards SET lane = ?, started_at = ?, updated_at = ?, last_event = ? WHERE id = ?",
-    )
-      .bind(nextLane, startedAt, now, `moved to ${nextLane}`, card.id)
-      .run();
+    await database(env)
+      .updateTable("cards")
+      .set({
+        lane: nextLane,
+        started_at: startedAt,
+        updated_at: now,
+        last_event: `moved to ${nextLane}`,
+      })
+      .where("id", "=", card.id)
+      .execute();
     await appendEvent(env, card.id, user, `moved to ${nextLane}`, now);
     return { card: (await readCard(env, id)) as Card };
   }
@@ -486,11 +686,15 @@ async function mutateCard(
   }
 
   if (action === "stall") {
-    await env.DB.prepare(
-      "UPDATE cards SET lane = 'Human Review', updated_at = ?, last_event = ? WHERE id = ?",
-    )
-      .bind(now, "stalled; workspace preserved", card.id)
-      .run();
+    await database(env)
+      .updateTable("cards")
+      .set({
+        lane: "Human Review",
+        updated_at: now,
+        last_event: "stalled; workspace preserved",
+      })
+      .where("id", "=", card.id)
+      .execute();
     await appendEvent(env, card.id, user, "stalled; workspace preserved", now);
     return { card: (await readCard(env, id)) as Card };
   }
@@ -508,11 +712,15 @@ async function updatePolicy(
   const retention = oneOf(body.retention, ["14", "30", "60"], "30");
   const merge = oneOf(body.merge, ["guarded", "maintainers", "disabled"], "guarded");
   const now = Date.now();
-  await env.DB.batch([
-    settingUpdate(env, "cap", String(cap)),
-    settingUpdate(env, "retention", retention),
-    settingUpdate(env, "merge", merge),
-  ]);
+  await database(env)
+    .insertInto("settings")
+    .values([
+      { key: "cap", value: String(cap) },
+      { key: "retention", value: retention },
+      { key: "merge", value: merge },
+    ])
+    .onConflict((oc) => oc.column("key").doUpdateSet({ value: sql<string>`excluded.value` }))
+    .execute();
   await audit(env, user, `policy updated cap=${cap} retention=${retention} merge=${merge}`, now);
   return readState(env, user);
 }
@@ -527,13 +735,11 @@ async function addAllowEntry(
   if (!value) throw badRequest("allow value is required");
   const role = oneOf(body.role, ["viewer", "maintainer", "owner"], "maintainer") as Role;
   const now = Date.now();
-  await env.DB.prepare(
-    `INSERT INTO allow_entries (value, role, created_at, updated_at)
-      VALUES (?, ?, ?, ?)
-      ON CONFLICT(value) DO UPDATE SET role = excluded.role, updated_at = excluded.updated_at`,
-  )
-    .bind(value, role, now, now)
-    .run();
+  await database(env)
+    .insertInto("allow_entries")
+    .values({ value, role, created_at: now, updated_at: now })
+    .onConflict((oc) => oc.column("value").doUpdateSet({ role, updated_at: now }))
+    .execute();
   await audit(env, user, `allowlist updated ${value} role=${role}`, now);
   return readState(env, user);
 }
@@ -544,7 +750,7 @@ async function removeAllowEntry(
   value: string,
 ): Promise<Record<string, unknown>> {
   const normalized = normalizeAllow(value);
-  await env.DB.prepare("DELETE FROM allow_entries WHERE value = ?").bind(normalized).run();
+  await database(env).deleteFrom("allow_entries").where("value", "=", normalized).execute();
   await audit(env, user, `allowlist removed ${normalized}`, Date.now());
   return readState(env, user);
 }
@@ -558,13 +764,11 @@ async function addRepo(
   const repo = normalizeRepo(body.repo);
   if (!repo) throw badRequest("repo is required");
   const now = Date.now();
-  await env.DB.prepare(
-    `INSERT INTO repos (repo, enabled, created_at, updated_at)
-      VALUES (?, 1, ?, ?)
-      ON CONFLICT(repo) DO UPDATE SET enabled = 1, updated_at = excluded.updated_at`,
-  )
-    .bind(repo, now, now)
-    .run();
+  await database(env)
+    .insertInto("repos")
+    .values({ repo, enabled: 1, created_at: now, updated_at: now })
+    .onConflict((oc) => oc.column("repo").doUpdateSet({ enabled: 1, updated_at: now }))
+    .execute();
   await audit(env, user, `repo allowlisted ${repo}`, now);
   return readState(env, user);
 }
@@ -575,35 +779,39 @@ async function removeRepo(
   repo: string,
 ): Promise<Record<string, unknown>> {
   const normalized = normalizeRepo(repo);
-  await env.DB.prepare("UPDATE repos SET enabled = 0, updated_at = ? WHERE repo = ?")
-    .bind(Date.now(), normalized)
-    .run();
+  await database(env)
+    .updateTable("repos")
+    .set({ enabled: 0, updated_at: Date.now() })
+    .where("repo", "=", normalized)
+    .execute();
   await audit(env, user, `repo removed ${normalized}`, Date.now());
   return readState(env, user);
 }
 
 async function readCards(env: RuntimeEnv): Promise<Card[]> {
-  const rows = await env.DB.prepare(
-    `SELECT id, title, prompt, repo, source, runtime, policy, lane, owner, started_at, created_at
-      FROM cards
-      ORDER BY updated_at DESC, created_at DESC`,
-  ).all<{
-    id: string;
-    title: string;
-    prompt: string;
-    repo: string;
-    source: string;
-    runtime: string;
-    policy: string;
-    lane: string;
-    owner: string;
-    started_at: number | null;
-    created_at: number;
-  }>();
-  const cards = rows.results ?? [];
+  const db = database(env);
+  const cards = await db
+    .selectFrom("cards")
+    .select([
+      "id",
+      "title",
+      "prompt",
+      "repo",
+      "source",
+      "runtime",
+      "policy",
+      "lane",
+      "owner",
+      "started_at",
+      "created_at",
+    ])
+    .orderBy("updated_at", "desc")
+    .orderBy("created_at", "desc")
+    .execute();
   if (!cards.length) return [];
-  const eventRows = await env.DB.prepare(
-    `SELECT card_id, message, created_at
+  const eventRows = (
+    await sql<{ card_id: string; message: string; created_at: number }>`
+      SELECT card_id, message, created_at
       FROM (
         SELECT card_id, message, created_at, id,
           row_number() OVER (PARTITION BY card_id ORDER BY created_at DESC, id DESC) AS rank
@@ -611,10 +819,11 @@ async function readCards(env: RuntimeEnv): Promise<Card[]> {
         WHERE card_id IN (SELECT id FROM cards)
       )
       WHERE rank <= 80
-      ORDER BY card_id ASC, created_at ASC, id ASC`,
-  ).all<{ card_id: string; message: string; created_at: number }>();
+      ORDER BY card_id ASC, created_at ASC, id ASC
+    `.execute(db)
+  ).rows;
   const logs = new Map<string, string[]>();
-  for (const row of eventRows.results ?? []) {
+  for (const row of eventRows) {
     const line = `${new Date(row.created_at).toLocaleTimeString("en-GB")} ${row.message}`;
     logs.set(row.card_id, [...(logs.get(row.card_id) ?? []), line]);
   }
@@ -635,39 +844,38 @@ async function readCards(env: RuntimeEnv): Promise<Card[]> {
 }
 
 async function readCard(env: RuntimeEnv, id: string): Promise<Card | null> {
-  const card = await env.DB.prepare(
-    `SELECT id, title, prompt, repo, source, runtime, policy, lane, owner, started_at, created_at
-      FROM cards
-      WHERE id = ?`,
-  )
-    .bind(id)
-    .first<{
-      id: string;
-      title: string;
-      prompt: string;
-      repo: string;
-      source: string;
-      runtime: string;
-      policy: string;
-      lane: string;
-      owner: string;
-      started_at: number | null;
-      created_at: number;
-    }>();
+  const db = database(env);
+  const card = await db
+    .selectFrom("cards")
+    .select([
+      "id",
+      "title",
+      "prompt",
+      "repo",
+      "source",
+      "runtime",
+      "policy",
+      "lane",
+      "owner",
+      "started_at",
+      "created_at",
+    ])
+    .where("id", "=", id)
+    .executeTakeFirst();
   if (!card) return null;
-  const eventRows = await env.DB.prepare(
-    `SELECT message, created_at
+  const eventRows = (
+    await sql<{ message: string; created_at: number }>`
+      SELECT message, created_at
       FROM (
         SELECT message, created_at, id
         FROM events
-        WHERE card_id = ?
+        WHERE card_id = ${card.id}
         ORDER BY created_at DESC, id DESC
         LIMIT 80
       )
-      ORDER BY created_at ASC, id ASC`,
-  )
-    .bind(card.id)
-    .all<{ message: string; created_at: number }>();
+      ORDER BY created_at ASC, id ASC
+    `.execute(db)
+  ).rows;
   return {
     id: card.id,
     title: card.title,
@@ -680,32 +888,29 @@ async function readCard(env: RuntimeEnv, id: string): Promise<Card | null> {
     owner: card.owner,
     startedAt: card.started_at,
     createdAt: card.created_at,
-    logs: (eventRows.results ?? []).map(
+    logs: eventRows.map(
       (row) => `${new Date(row.created_at).toLocaleTimeString("en-GB")} ${row.message}`,
     ),
   };
 }
 
 async function readSettings(env: RuntimeEnv): Promise<Record<string, string>> {
-  const rows = await env.DB.prepare("SELECT key, value FROM settings").all<{
-    key: string;
-    value: string;
-  }>();
-  return Object.fromEntries((rows.results ?? []).map((row) => [row.key, row.value]));
+  const rows = await database(env).selectFrom("settings").select(["key", "value"]).execute();
+  return Object.fromEntries(rows.map((row) => [row.key, row.value]));
 }
 
 async function authorize(env: RuntimeEnv, user: User): Promise<User> {
-  const entries = await env.DB.prepare("SELECT value, role FROM allow_entries").all<{
-    value: string;
-    role: Role;
-  }>();
+  const entries = await database(env)
+    .selectFrom("allow_entries")
+    .select(["value", "role"])
+    .execute();
   const candidates = new Set([
     user.login ? `@${user.login.toLowerCase()}` : "",
     user.email ? user.email.toLowerCase() : "",
     ...user.teams.map((team) => team.toLowerCase()),
   ]);
   let role: Role | null = null;
-  for (const row of entries.results ?? []) {
+  for (const row of entries) {
     if (!candidates.has(row.value.toLowerCase())) continue;
     role = strongerRole(role, row.role);
   }
@@ -713,32 +918,34 @@ async function authorize(env: RuntimeEnv, user: User): Promise<User> {
 }
 
 async function upsertUser(env: RuntimeEnv, user: User, now: number): Promise<void> {
-  await env.DB.prepare(
-    `INSERT INTO users (subject, login, email, name, role, allowed, teams, created_at, updated_at, last_seen_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(subject) DO UPDATE SET
-        login = excluded.login,
-        email = excluded.email,
-        name = excluded.name,
-        role = excluded.role,
-        allowed = excluded.allowed,
-        teams = excluded.teams,
-        updated_at = excluded.updated_at,
-        last_seen_at = excluded.last_seen_at`,
-  )
-    .bind(
-      user.subject,
-      user.login,
-      user.email,
-      user.name,
-      user.role,
-      user.allowed ? 1 : 0,
-      JSON.stringify(user.teams),
-      now,
-      now,
-      now,
+  const row = {
+    subject: user.subject,
+    login: user.login,
+    email: user.email,
+    name: user.name,
+    role: user.role,
+    allowed: user.allowed ? 1 : 0,
+    teams: JSON.stringify(user.teams),
+    created_at: now,
+    updated_at: now,
+    last_seen_at: now,
+  };
+  await database(env)
+    .insertInto("users")
+    .values(row)
+    .onConflict((oc) =>
+      oc.column("subject").doUpdateSet({
+        login: row.login,
+        email: row.email,
+        name: row.name,
+        role: row.role,
+        allowed: row.allowed,
+        teams: row.teams,
+        updated_at: row.updated_at,
+        last_seen_at: row.last_seen_at,
+      }),
     )
-    .run();
+    .execute();
 }
 
 async function createSession(
@@ -750,25 +957,29 @@ async function createSession(
   const token = crypto.randomUUID() + crypto.randomUUID();
   const tokenHash = await sha256(token);
   const expires = now + maxAgeSeconds * 1000;
-  await env.DB.prepare(
-    "INSERT INTO sessions (token_hash, subject, expires_at, created_at) VALUES (?, ?, ?, ?)",
-  )
-    .bind(tokenHash, subject, expires, now)
-    .run();
+  await database(env)
+    .insertInto("sessions")
+    .values({ token_hash: tokenHash, subject, expires_at: expires, created_at: now })
+    .execute();
   return cookie(sessionCookie, token, maxAgeSeconds);
 }
 
 async function nextCardId(env: RuntimeEnv): Promise<string> {
-  const row = await env.DB.prepare(
-    "SELECT max(CAST(substr(id, 4) AS INTEGER)) AS max_id FROM cards WHERE id LIKE 'CY-%'",
-  ).first<{ max_id: number | null }>();
+  const row = await database(env)
+    .selectFrom("cards")
+    .select(sql<number | null>`max(CAST(substr(id, 4) AS INTEGER))`.as("max_id"))
+    .where("id", "like", "CY-%")
+    .executeTakeFirst();
   return `CY-${String((row?.max_id ?? 100) + 1)}`;
 }
 
 async function requireRepo(env: RuntimeEnv, repo: string): Promise<void> {
-  const row = await env.DB.prepare("SELECT repo FROM repos WHERE repo = ? AND enabled = 1")
-    .bind(repo)
-    .first<{ repo: string }>();
+  const row = await database(env)
+    .selectFrom("repos")
+    .select("repo")
+    .where("repo", "=", repo)
+    .where("enabled", "=", 1)
+    .executeTakeFirst();
   if (!row) throw forbidden(`repo blocked by allowlist: ${repo}`);
 }
 
@@ -779,40 +990,30 @@ async function appendEvent(
   message: string,
   now: number,
 ): Promise<void> {
-  await env.DB.batch([
-    eventInsert(env, cardId, actor(user), message, now),
-    env.DB.prepare("UPDATE cards SET updated_at = ?, last_event = ? WHERE id = ?").bind(
-      now,
-      message,
-      cardId,
-    ),
+  const db = database(env);
+  await executeBatch(env, [
+    eventInsert(db, cardId, actor(user), message, now),
+    db.updateTable("cards").set({ updated_at: now, last_event: message }).where("id", "=", cardId),
   ]);
 }
 
 async function audit(env: RuntimeEnv, user: User, message: string, now: number): Promise<void> {
-  await env.DB.prepare("INSERT INTO audit_events (actor, message, created_at) VALUES (?, ?, ?)")
-    .bind(actor(user), message, now)
-    .run();
+  await database(env)
+    .insertInto("audit_events")
+    .values({ actor: actor(user), message, created_at: now })
+    .execute();
 }
 
 function eventInsert(
-  env: RuntimeEnv,
+  db: Kysely<Database>,
   cardId: string,
   actorName: string,
   message: string,
   now: number,
-): D1PreparedStatement {
-  return env.DB.prepare(
-    "INSERT INTO events (card_id, actor, message, created_at) VALUES (?, ?, ?, ?)",
-  ).bind(cardId, actorName, message, now);
-}
-
-function settingUpdate(env: RuntimeEnv, key: string, value: string): D1PreparedStatement {
-  return env.DB.prepare(
-    `INSERT INTO settings (key, value)
-      VALUES (?, ?)
-      ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-  ).bind(key, value);
+): CompilableQuery {
+  return db
+    .insertInto("events")
+    .values({ card_id: cardId, actor: actorName, message, created_at: now });
 }
 
 async function githubFetch<T>(path: string, token: string): Promise<T> {
