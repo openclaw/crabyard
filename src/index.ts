@@ -12,7 +12,7 @@ import {
   type Generated,
   type QueryResult,
 } from "kysely";
-import { APP_HTML, SPEC_HTML, SPEC_MARKDOWN } from "./generated";
+import { APP_HTML, LOGO_PNG_BASE64, SPEC_HTML, SPEC_MARKDOWN } from "./generated";
 
 type Role = "viewer" | "maintainer" | "owner";
 
@@ -246,6 +246,15 @@ export default {
     try {
       if (url.pathname === "/healthz") {
         return text("ok\n", "text/plain; charset=utf-8");
+      }
+
+      if (url.pathname === "/crabyard-logo.png") {
+        return new Response(base64Bytes(LOGO_PNG_BASE64), {
+          headers: {
+            ...securityHeaders("image/png"),
+            "cache-control": "public, max-age=86400",
+          },
+        });
       }
 
       if (url.pathname === "/docs/spec.md") {
@@ -1227,6 +1236,15 @@ function securityHeaders(contentType: string, cache = true): HeadersInit {
     "referrer-policy": "no-referrer",
     "cache-control": cache ? "public, max-age=300" : "no-store",
   };
+}
+
+function base64Bytes(value: string): Uint8Array {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
 }
 
 function unauthorized(): Error {
