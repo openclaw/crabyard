@@ -6,7 +6,7 @@ permalink: /spec/
 
 # Crabyard.ai Spec
 
-Status: draft, initial deployed control plane backed by Cloudflare Worker and D1
+Status: draft. Deployed subset: Cloudflare Worker, D1/Kysely persistence, GitHub OAuth, admin allowlists, card/run state, repo workflow evaluation, issue/PR previews, diffs, and Ghostty WASM log grid.
 
 Crabyard.ai is a Cloudflare-native control plane for running Codex sessions in cloud workspaces. It gives OpenClaw maintainers a Linear-like board where each card represents an intent, a live run, and its durable history.
 
@@ -37,6 +37,29 @@ Crabyard.ai is a Cloudflare-native control plane for running Codex sessions in c
 - Persist logs, terminal replay, session events, diffs, and run metadata.
 - Keep access restricted to allowlisted OpenClaw org members and allowlisted repos.
 - Run fully on Cloudflare for the product/control plane.
+
+## Current Implementation Status
+
+Implemented now:
+
+- Empty-by-default D1-backed board with Todo, Running, Human Review, Done.
+- GitHub OAuth, bootstrap login, org membership check, team/user allowlists, repo allowlists.
+- Prompt cards and GitHub `#number` previews across enabled repos.
+- Optional titles derived from prompt.
+- D1 `run_attempts` with heartbeat, stall reconciliation, runtime selection reason, lease fields, operator intent, and runtime capabilities.
+- Runtime adapter descriptor for Container and Crabbox policy.
+- Ghostty WASM fullscreen session grid with D1 event replay and text fallback.
+- `CRABYARD.md` fetch/parse/evaluate admin surface.
+- Card diff metadata and compact patch preview.
+- Worker docs route at `/docs/` plus GitHub Pages docs.
+
+Not wired yet:
+
+- Real Cloudflare Container or Crabbox lease creation.
+- Live PTY/app-server transport and interactive stdin.
+- R2 terminal/artifact archival.
+- Durable Object WebSocket fanout.
+- Direct merge execution or ClawSweeper handoff.
 
 ## Non-Goals
 

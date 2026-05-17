@@ -8,21 +8,22 @@ Crabyard gives OpenClaw maintainers a Linear-like board where each card represen
 
 - **Board-based workflow.** Create cards from prompts, GitHub issues, or PRs. Track them through Todo, Running, Human Review, and Done lanes.
 - **Issue/PR lookup.** Type `#123` in search to preview matching GitHub issues or PRs across enabled OpenClaw repos and create a card from the match.
-- **Live Codex runs.** Watch autonomous sessions, attach to Ghostty WASM terminals, take over when needed.
+- **Codex run control.** Start durable run attempts, track heartbeats, watch the Ghostty WASM session grid, and take over only when the selected runtime advertises that capability.
 - **Diff previews.** Card tiles show changed files and totals; the run drawer shows a compact Codiff-style patch view.
-- **Multi-runtime support.** Auto-select between Cloudflare Containers and Crabbox based on job requirements.
+- **Multi-runtime policy.** Auto-select between the Container and Crabbox adapter surfaces based on card overrides, repo workflow defaults, and task requirements.
 - **Allowlist controls.** Restrict access to OpenClaw org members and specific repos through admin-managed allowlists.
-- **Session logs.** 30-day retention of run events, terminal replay, and artifacts in R2.
-- **Merge automation.** Direct merge with guardrails or handoff to ClawSweeper for review loops.
+- **Session logs.** D1-backed card/run event history with a 30-day product retention setting.
+- **Repo workflow config.** Owners can evaluate `CRABYARD.md` per repo and use it for runtime and merge defaults.
 
 ## Architecture
 
-- **Cloudflare Workers** for API and orchestration
-- **D1** for persistent state (cards, users, events, sessions)
-- **R2** for logs and artifacts
-- **Durable Objects** for live session state and WebSocket fanout
-- **Cloudflare Containers** for lightweight Codex runs
-- **Crabbox** integration for VNC, manual CLI, and heavy jobs
+- **Cloudflare Workers** for the app, API, auth, GitHub lookup, and docs routes.
+- **D1 + Kysely** for typed persistence: users, sessions, allowlists, repos, cards, events, run attempts, diffs, and repo workflow evaluations.
+- **Ghostty WebAssembly** for the fullscreen attach grid and run log replay.
+- **Runtime adapter descriptors** for Container and Crabbox selection, capability display, and guarded takeover.
+- **GitHub API** for OAuth, org/team membership, and issue/PR previews across enabled repos.
+
+Container leasing, Crabbox PTY/VNC transport, R2 archival, Durable Object fanout, and merge automation are adapter targets, not faked in the current Worker.
 
 ## Quick Start
 
@@ -52,9 +53,9 @@ Add users/teams to the allowlist and enable repos:
 
 ### 4. Watch Runs
 
-- Running cards show live logs
+- Running cards show D1 event logs and heartbeat state
 - Click "Attach" to open the fullscreen Ghostty WASM session grid
-- Click "Take over" to control the Codex session
+- Click "Take over" only when the active run advertises takeover support
 - Click "Watch" for read-only stream
 
 ## Features
@@ -69,13 +70,27 @@ Add users/teams to the allowlist and enable repos:
 ### Card Policies
 
 - **Runtime:** `auto`, `container`, `crabbox`
-- **Merge policy:** `open_pr`, `merge_when_green`, `fix_until_green_and_merge`
+- **Merge policy:** repo default, `open_pr`, `merge_when_green`, `fix_until_green_and_merge`
 - **Source types:** Prompt, Issue, PR
+
+Repo defaults can come from a `CRABYARD.md` file:
+
+```yaml
+---
+runtime:
+  default: auto
+merge:
+  default_policy: open_pr
+---
+```
+
+`stall_ms`, `cap`, `prompt_prefix`, and the Markdown body are parsed/stored for future policy work, but only runtime and merge defaults are effective today.
 
 ### Admin Controls
 
 - User and team allowlists with role-based access
 - Repo allowlists
+- Manual `CRABYARD.md` evaluation with status/error visibility
 - Concurrent run caps (default: 20)
 - Log retention (14, 30, 60 days)
 - Direct merge permissions (guarded, maintainers, disabled)
@@ -117,7 +132,7 @@ Configure these in Cloudflare Workers dashboard:
 - `GITHUB_CLIENT_ID` – GitHub OAuth app client ID (optional)
 - `GITHUB_CLIENT_SECRET` – GitHub OAuth app secret (optional)
 - `GITHUB_ORG` – GitHub org for membership check (default: `openclaw`)
-- `GITHUB_TOKEN` – GitHub token for all enabled repo issue/PR previews (optional; falls back to default repo only)
+- `GITHUB_TOKEN` – GitHub token for all enabled repo issue/PR previews and private repo `CRABYARD.md` refreshes (optional; public/default repo paths work without it)
 
 ### Verify Deployment
 
@@ -149,6 +164,15 @@ pnpm lint
 # Format code
 pnpm format
 ```
+
+### Test Stack
+
+- `tsgo --noEmit` through `pnpm build`
+- `oxlint` for linting
+- `oxfmt --check` for formatting
+- SQLite migration smoke checks for D1 schema compatibility
+- `codex-review` before feature commits
+- Browser/live smoke checks after deploy
 
 ### Local Development
 
@@ -202,9 +226,9 @@ Full documentation available at [docs.crabyard.ai](https://docs.crabyard.ai):
 
 Active development. See [CHANGELOG.md](CHANGELOG.md) for recent updates.
 
-Current phase: MVP deployed with auth, board UI, admin controls, card management, D1/R2 persistence, and Ghostty WASM terminal grid.
+Current phase: MVP deployed with auth, board UI, admin controls, card management, Kysely-backed D1 persistence, durable run attempts, repo workflow evaluation, card diffs, and Ghostty WASM terminal grid.
 
-Next: Cloudflare Container runtime and Codex app-server/PTY transport integration.
+Next: Cloudflare Container or Crabbox lease binding plus Codex app-server/PTY transport integration.
 
 ## License
 

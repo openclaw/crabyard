@@ -2,136 +2,81 @@
 title: Overview
 layout: default
 permalink: /
-description: "Crabyard.ai is a Cloudflare-native control plane for running OpenClaw Codex sessions in cloud workspaces."
+description: "Crabyard.ai is a Cloudflare Worker control plane for OpenClaw Codex cards and run attempts."
 ---
 
 # Crabyard.ai Documentation
 
-**Cloudflare-native control plane for OpenClaw Codex runs.**
+Crabyard is an OpenClaw control plane for Codex work: prompt cards, repo gates, durable run attempts, issue/PR previews, workflow policy, and attachable Ghostty WASM session views.
 
-Crabyard gives OpenClaw maintainers a Linear-like board where each card represents a coding task, live Codex session, and durable execution history.
+## What Works Today
 
-## What You Can Do
+- GitHub OAuth plus bootstrap login.
+- User/team allowlists and repo allowlists.
+- Empty-by-default board backed by D1.
+- Cards from prompts or `#number` issue/PR previews across enabled repos.
+- Optional title generation from prompt.
+- Durable run attempts with heartbeat, stall handling, operator, runtime reason, and capabilities.
+- Ghostty WASM fullscreen session grid with D1 event replay and text fallback.
+- Card diff metadata and compact patch view.
+- Owner workflow evaluation for repo `CRABYARD.md`.
+- Worker-served docs at `/docs/` and GitHub Pages docs at `docs.crabyard.ai`.
 
-- Create cards from prompts, GitHub issues, or PRs
-- Watch autonomous Codex sessions in real-time
-- Attach to live terminal sessions
-- Take over manual control when needed
-- Track runs through Todo, Running, Human Review, Done
-- Manage access with user/team/repo allowlists
-- Review 30-day retained logs and terminal replays
-- Direct merge or ClawSweeper handoff
+## Not Wired Yet
+
+- Real Container/Crabbox lease creation.
+- Live PTY/app-server stdin/stdout transport.
+- R2 artifact/terminal archival.
+- Durable Object WebSocket fanout.
+- Direct merge execution and ClawSweeper handoff.
 
 ## Quick Links
 
-- **[Quickstart](/quickstart/)** – Bootstrap admin, create first card, watch a run
-- **[Architecture](/architecture/)** – Cloudflare Workers, D1, R2, Durable Objects
+- **[Quickstart](/quickstart/)** – Bootstrap admin, create a card, start a recorded run attempt
+- **[Architecture](/architecture/)** – Worker, D1/Kysely, runtime descriptors, workflow config
 - **[Cards](/cards/)** – Card lifecycle, policies, sources
-- **[Runs](/runs/)** – Runtime selection, execution, logs
+- **[Runs](/runs/)** – Run attempts, runtime selection, Ghostty grid
 - **[Admin](/admin/)** – Access control, allowlists, policies
-- **[API Reference](/api/)** – REST endpoints and WebSockets
-- **[Complete Spec](/spec/)** – Full product specification
+- **[API Reference](/api/)** – REST endpoints
+- **[Complete Spec](/spec/)** – Product specification and planned integrations
 
 ## Core Concepts
 
 ### Cards
 
-Cards are the primary object. Each card represents:
+Cards represent task intent and policy:
 
-- A coding task (from prompt, issue, or PR)
-- Current state/lane (Todo, Running, Human Review, Done)
-- Runtime preference (auto, container, crabbox)
-- Merge policy (open_pr, merge_when_green, fix_until_green_and_merge)
-- Complete run history and logs
+- Prompt, issue, or PR source.
+- Enabled repo target.
+- Runtime preference: `auto`, `container`, `crabbox`.
+- Merge policy: repo default, `open_pr`, `merge_when_green`, `fix_until_green_and_merge`.
+- Lane: Todo, Running, Human Review, Done.
+- Logs, changes, and active run attempt.
 
 ### Runs
 
-When a card enters Running:
+When a card enters Running, Crabyard creates a `run_attempts` row, selects a runtime descriptor, records the selection reason and capabilities, and starts heartbeat/stall tracking. Current output is event-log backed; live external execution is the next adapter binding.
 
-- Scheduler claims capacity (default cap: 20 concurrent)
-- Runtime selected (Cloudflare Container or Crabbox)
-- Codex starts in CLI or app-server mode
-- Logs stream to browser via WebSockets and persist to R2
-- Result: PR opened, merged, or escalated to human review
+### Repo Workflows
+
+Owners can evaluate `CRABYARD.md` for enabled repos. Valid workflow config can set runtime and merge defaults for new cards and future scheduler policy.
 
 ### Roles
 
-- **Owner** – Manage allowlists, repos, caps, merge policy
-- **Maintainer** – Create cards, start/stop runs, take over sessions
-- **Viewer** – Watch board, view logs, read-only attach
-
-### Access Control
-
-- Users must be in OpenClaw GitHub org
-- Users must be allowlisted (by login or team)
-- Repos must be allowlisted
-- Direct merge requires maintainer role + policy approval
-
-## Architecture
-
-```
-┌─────────────────┐
-│  Browser UI     │
-│  (app.html)     │
-└────────┬────────┘
-         │ HTTPS + WebSocket
-┌────────▼────────┐
-│ Cloudflare      │
-│ Worker          │◄──── GitHub OAuth
-│ (src/index.ts)  │
-└────┬───┬───┬────┘
-     │   │   │
-     │   │   └──────► R2 (logs, artifacts)
-     │   │
-     │   └──────────► D1 (cards, users, events)
-     │
-     └──────────────► Durable Objects
-                      (BoardDO, RunDO)
-```
+- **Owner**: manage allowlists, repos, caps, retention, workflow evaluations.
+- **Maintainer**: create cards, start runs, attach, watch, take over capable active runs.
+- **Viewer**: view board and attach/watch read-only surfaces.
 
 ## Tech Stack
 
-- **TypeScript** + pnpm
-- **Cloudflare Workers** – API and orchestration
-- **Cloudflare D1** – SQLite persistence
-- **Cloudflare R2** – Log storage
-- **Cloudflare Durable Objects** – Live session state
-- **Kysely** – Type-safe SQL queries
-- **GitHub OAuth** – Authentication
-- **Codex** – AI coding agent runtime
+- TypeScript + pnpm
+- Cloudflare Workers
+- Cloudflare D1
+- Kysely
+- GitHub OAuth/API
+- Ghostty WebAssembly
+- `tsgo`, `oxlint`, `oxfmt`
 
 ## Status
 
-Active MVP deployment.
-
-✅ Completed:
-
-- Auth (GitHub OAuth + bootstrap token)
-- Board UI with lanes
-- Card CRUD
-- Admin allowlists and policies
-- D1 + R2 persistence
-- Session management
-- Run event logging
-- Ghostty WASM terminal grid
-
-🚧 In progress:
-
-- Cloudflare Container runtime
-- Codex app-server integration
-- VNC support for Crabbox
-
-## Get Started
-
-1. [Read the Quickstart](/quickstart/) to bootstrap your first admin session
-2. [Review Architecture](/architecture/) to understand the system design
-3. [Learn about Cards](/cards/) to create your first coding task
-4. [Explore Admin controls](/admin/) to configure access and policies
-
-## Support
-
-For OpenClaw org members: use #crabyard in Discord or file issues in the private repo.
-
-## License
-
-MIT License. Not affiliated with Cloudflare, GitHub, or Anthropic.
+MVP deployed. The control-plane data model is real; the external runtime execution path is intentionally still explicit adapter work.

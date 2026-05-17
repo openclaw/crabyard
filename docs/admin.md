@@ -229,7 +229,7 @@ Max number of simultaneous Running cards.
 
 ### Log Retention
 
-How long to keep R2 logs and artifacts.
+Product retention setting for run logs.
 
 **Options:**
 
@@ -239,10 +239,8 @@ How long to keep R2 logs and artifacts.
 
 **Effects:**
 
-- After expiry, R2 logs deleted
-- D1 keeps minimal run summary
-- Terminal replay unavailable
-- Artifacts (screenshots, diffs) deleted
+- Current Worker keeps D1 card/run events.
+- R2 terminal/artifact lifecycle cleanup is planned for the runtime integration.
 
 **How to set:**
 
@@ -250,33 +248,30 @@ How long to keep R2 logs and artifacts.
 2. Select retention period
 3. Click Save policy
 
-**Cost considerations:**
+**Notes:**
 
-- Longer retention = higher R2 storage costs
-- 30 days sufficient for most cases
-- 60 days for compliance/audit requirements
+- 30 days is the product default.
+- 60 days is reserved for future compliance/audit retention.
 
 ### Direct Merge Permission
 
-Who can auto-merge PRs when policy allows.
+Configured direct merge policy. The current Worker stores this policy; real merge execution is a planned integration.
 
 **Options:**
 
 **Guarded (default):**
 
-- Maintainers can merge if all guardrails pass
-- Checks: repo allowlisted, all CI green, branch up to date, no takeover active
+- Intended mode: maintainers can merge if all guardrails pass
 
 **Disabled:**
 
-- No auto-merge allowed
+- No auto-merge intended
 - All PRs require manual merge
 - Safest option
 
 **Maintainers only:**
 
-- Same as Guarded, explicitly labeled
-- Clarifies maintainer+ required
+- Same as Guarded, explicitly labeled maintainer+
 
 **How to set:**
 
@@ -289,6 +284,31 @@ Who can auto-merge PRs when policy allows.
 - Start with Disabled for new orgs
 - Move to Guarded after testing workflows
 - Never merge critical infra repos automatically
+
+## Repo Workflows
+
+Owners can refresh `CRABYARD.md` for enabled repos from Admin → Workflows. For private repos, the Worker needs deployment `GITHUB_TOKEN` access to fetch the file; it does not use the logged-in user's OAuth token for this refresh.
+
+Supported shape:
+
+```yaml
+---
+runtime:
+  default: auto
+merge:
+  default_policy: open_pr
+---
+```
+
+What is stored:
+
+- status: `ok`, `missing`, `invalid`, or `error`
+- source path and source SHA
+- parsed config JSON
+- prompt guidance body
+- parse/error message
+
+Only runtime and merge defaults in `ok` configs influence card defaults and runtime selection today. `stall_ms`, `cap`, `prompt_prefix`, and the Markdown body are parsed/stored for future policy work. Invalid configs are visible in Admin and ignored.
 
 ## Auth
 
@@ -304,7 +324,7 @@ Recommended for production.
 4. Add secrets to Cloudflare Worker:
    - `GITHUB_CLIENT_ID`
    - `GITHUB_CLIENT_SECRET`
-   - `GITHUB_TOKEN` for all enabled repo previews (optional; default repo works without it)
+   - `GITHUB_TOKEN` for all enabled repo previews and private repo `CRABYARD.md` refreshes (optional; public/default repo paths work without it)
 5. Set `GITHUB_ORG` var (default: `openclaw`)
 
 **Session lifetime:**
@@ -405,7 +425,7 @@ Secrets stored in Cloudflare Worker environment, never in D1/R2.
 
 - `GITHUB_CLIENT_ID`
 - `GITHUB_CLIENT_SECRET`
-- `GITHUB_TOKEN` for all enabled repo previews
+- `GITHUB_TOKEN` for all enabled repo previews and private repo `CRABYARD.md` refreshes
 - Rotate if leaked
 
 **GitHub App (future):**

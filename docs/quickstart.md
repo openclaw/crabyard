@@ -2,209 +2,125 @@
 title: Quickstart
 layout: default
 permalink: /quickstart/
-description: "Five minutes from deployment to your first Crabyard card and live Codex run."
+description: "Bootstrap Crabyard, configure access, create a card, and inspect a run attempt."
 ---
 
 # Quickstart
 
-Get from zero to running your first Codex card in 5 minutes.
+This gets you from login to a real D1-backed card and run attempt. It does not start an external Codex executor yet.
 
 ## Prerequisites
 
-- OpenClaw GitHub org membership
-- Bootstrap token (from deployment secrets)
-- Access to https://crabyard.openclaw.ai/app/
+- OpenClaw GitHub org membership.
+- Bootstrap token from deployment secrets, or GitHub OAuth already configured.
+- Access to `https://crabyard.openclaw.ai/app/`.
 
-## 1. Bootstrap Admin Login
+## 1. Log In
 
-Visit https://crabyard.openclaw.ai/app/ and log in with the bootstrap token.
+Open `https://crabyard.openclaw.ai/app/`.
 
-1. Open https://crabyard.openclaw.ai/app/ in your browser
-2. You'll see a login screen with two options:
-   - **Continue with GitHub** (if OAuth is configured)
-   - **Bootstrap token** (always available)
-3. Paste your `CRABYARD_BOOTSTRAP_TOKEN` into the token field
-4. Click "Use token"
+- Use GitHub OAuth if configured.
+- Use the bootstrap token for setup/recovery.
 
-You're now logged in as bootstrap admin with owner role.
+Bootstrap sessions last 1 hour. GitHub sessions last 15 minutes.
 
-> **Note:** Bootstrap sessions are short-lived (1 hour). Set up GitHub OAuth and add your GitHub user to the allowlist for persistent sessions.
+## 2. Add Access
 
-## 2. Add Your GitHub User
+Open Admin.
 
-Now that you're admin, add yourself to the allowlist:
+Add users or teams:
 
-1. Click the **Admin** button
-2. In "Users and teams" section:
-   - Enter your GitHub username (e.g., `@steipete`)
-   - Select role: **Owner**
-   - Click **Add**
+```text
+@steipete
+@openclaw/maintainer
+```
 
-Your GitHub user is now allowlisted. Next time you can log in via GitHub OAuth.
+Roles:
 
-## 3. Add a Repo
+- `owner`: full admin.
+- `maintainer`: create/start/control cards.
+- `viewer`: read-only board and attach/watch.
 
-Enable a repo for Codex runs:
+## 3. Enable Repos
 
-1. Still in Admin panel, go to "Repos" section
-2. Enter a repo in `owner/repo` format (e.g., `openclaw/crabyard`)
-3. Click **Add**
+Add repos in `owner/repo` format. `openclaw/openclaw` is sorted first and is the default repo in the card form.
 
-Only allowlisted repos can be used for cards.
+Enabled repos drive:
 
-## 4. Create Your First Card
+- Card creation.
+- Issue/PR preview search.
+- `CRABYARD.md` workflow evaluation.
+- Run allowlist checks.
 
-Return to the board and create a card:
+## 4. Optional: Evaluate CRABYARD.md
 
-1. Click the **Board** button to exit admin
-2. Click **New card** (primary button in toolbar)
-3. Fill in the card form:
-   - **Source:** Prompt
-   - **Repo:** Select the repo you just added
-   - **Title:** "Add health check endpoint"
-   - **Prompt:** "Add a new /healthz endpoint that returns 200 OK with basic system status"
-   - **Runtime:** auto
-   - **Merge policy:** open_pr
-4. Click **Create**
+In Admin → Workflows, enter a repo and refresh `CRABYARD.md`.
 
-Your card appears in the **Todo** lane.
+Supported shape:
 
-## 5. Start a Run
+```yaml
+---
+runtime:
+  default: auto
+merge:
+  default_policy: open_pr
+---
+```
 
-Click the card to see actions, then start it:
+Invalid configs are visible and ignored. `stall_ms`, `cap`, `prompt_prefix`, and the Markdown body are parsed/stored for future policy work, but only runtime and merge defaults are effective today.
 
-1. Find your card in the Todo lane
-2. Click **Start** button
-3. Card moves to **Running** lane
-4. Watch live logs appear in real-time
+For private repos, the Worker needs deployment `GITHUB_TOKEN` access to fetch `CRABYARD.md`; it does not use the logged-in user's OAuth token for this refresh.
 
-The scheduler will:
+## 5. Create a Card
 
-- Check capacity (default cap: 20 concurrent runs)
-- Select runtime (Container or Crabbox)
-- Clone the repo
-- Start Codex with your prompt
-- Stream logs to browser and R2
+Click New card.
 
-## 6. Watch Live Logs
+Required:
 
-View detailed logs and session info:
+- Repo
+- Prompt
 
-1. Click **Attach** on your running card
-2. Terminal drawer opens showing live output
-3. Session panel shows:
-   - Repo, runtime, policy
-   - Current state
-   - VNC availability (Crabbox only)
-4. Click **Watch** to stream logs
-5. Click **Take over** to gain manual control (maintainer+)
+Optional:
 
-Logs persist for 30 days in R2.
+- Title
+- Runtime
+- Merge policy
 
-## 7. Review Results
+Blank title is generated from the prompt. Blank merge policy uses repo default, then `open_pr`.
 
-When the run completes:
+## 6. Create from Issue/PR Number
 
-1. Card moves to **Human Review** or **Done**
-2. Check the logs for PR link
-3. Review the PR on GitHub
-4. Merge manually or let Crabyard handle it (based on policy)
+Type `#76552` in board search. Crabyard previews matches across enabled repos when `GITHUB_TOKEN` is configured; without it, preview falls back to the preferred repo or first enabled repo. Choose a match to create a card with the GitHub URL, title, body, repo, runtime `auto`, and repo-default policy.
 
-## Next Steps
+## 7. Start and Attach
 
-### Configure GitHub OAuth
+Click Start on a Todo card.
 
-For production use, set up GitHub OAuth:
+The Worker will:
 
-1. Create a GitHub OAuth app in your org
-2. Set callback URL: `https://crabyard.openclaw.ai/auth/github/callback`
-3. Add secrets to Cloudflare Worker:
-   - `GITHUB_CLIENT_ID`
-   - `GITHUB_CLIENT_SECRET`
-4. Redeploy worker
+- Check capacity, default cap `20`.
+- Verify repo allowlist.
+- Evaluate cached repo workflow defaults.
+- Select `container` or `crabbox`.
+- Store a run attempt with selection reason and capabilities.
+- Move the card to Running and append events.
 
-Now users can log in with GitHub instead of bootstrap token.
-
-### Add Team Allowlists
-
-Instead of individual users, add entire teams:
-
-1. Admin → Users and teams
-2. Enter team as `@org/team` (e.g., `@openclaw/maintainer`)
-3. Select role: Maintainer
-4. All team members inherit access
-
-### Adjust Policies
-
-Configure org-wide defaults:
-
-1. Admin → Policy section
-2. Set **Concurrent cap** (default: 20)
-3. Set **Direct merge** (guarded, disabled, or maintainers)
-4. Set **Log retention** (14, 30, or 60 days)
-5. Click **Save policy**
-
-### Create Cards from Issues
-
-Instead of freeform prompts:
-
-1. Click **New card**
-2. Change source to **Issue**
-3. Search for an issue by number or URL
-4. Card inherits issue title, body, and repo
-
-### Create Cards from PRs
-
-For review and fix tasks:
-
-1. Click **New card**
-2. Change source to **PR**
-3. Search for a PR by number or URL
-4. Codex can review, fix tests, rebase, or merge
+Click Attach to open the Ghostty WASM session grid. The current grid replays D1 events. Live PTY/app-server transport is planned.
 
 ## Troubleshooting
 
-### "Capacity blocked at cap"
+### Repo blocked by allowlist
 
-You've hit the concurrent run limit.
+Add the repo in Admin → Repos.
 
-- Wait for a run to finish
-- Or increase cap in Admin → Policy
-- Default cap: 20 concurrent runs
+### GitHub user not allowlisted
 
-### "Repo blocked by allowlist"
+Add a direct `@login` entry or the exact team slug, for example `@openclaw/maintainer`.
 
-The repo hasn't been added.
+### Capacity blocked
 
-- Admin → Repos → Add the repo
-- Format: `owner/repo`
+Increase cap in Admin → Policy or move active runs out of Running.
 
-### "User is not in the Crabyard allowlist"
+### Take over hidden
 
-Your GitHub user isn't allowlisted.
-
-- Admin → Users and teams
-- Add your `@login` or your team `@org/team`
-
-### Bootstrap token expired
-
-Bootstrap sessions last 1 hour.
-
-- Re-enter token to start a new session
-- Or log in via GitHub OAuth if configured
-
-## Tips
-
-- **Search cards:** Use the search bar to filter by title, repo, or ID
-- **Filter views:**
-  - All – Show all cards
-  - Mine – Show your cards only
-  - Live – Show running cards only
-
-## Learn More
-
-- [Architecture](/architecture/) – How Crabyard works
-- [Cards](/cards/) – Card lifecycle and policies
-- [Runs](/runs/) – Runtime selection and execution
-- [Admin](/admin/) – Access control deep dive
-- [API Reference](/api/) – REST and WebSocket APIs
+Takeover appears only for active runs whose runtime capabilities include takeover. Container runs do not advertise takeover.

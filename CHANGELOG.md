@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Document the real deployed control-plane status, runtime adapter boundary, workflow config, and test stack.
+- Add runtime adapter descriptors with persisted selection reasons and capability-gated takeover.
+- Add repo `CRABYARD.md` workflow evaluation for runtime and merge defaults.
+- Add durable D1 run attempts with heartbeat, stall handling, run history, and active-run state.
+- Vendor local app icons and remove external icon runtime dependency.
 - Serve `/docs/` from the Worker documentation page.
 - Switch the Worker typecheck/build path from `tsc` to `tsgo`.
 - Fix the default OpenClaw maintainer team allowlist slug.
