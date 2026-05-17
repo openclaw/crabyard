@@ -12,7 +12,14 @@ import {
   type Generated,
   type QueryResult,
 } from "kysely";
-import { APP_HTML, LOGO_PNG_BASE64, SPEC_HTML, SPEC_MARKDOWN } from "./generated";
+import {
+  APP_HTML,
+  GHOSTTY_BROWSER_EXTERNAL_JS,
+  GHOSTTY_WEB_JS,
+  LOGO_PNG_BASE64,
+  SPEC_HTML,
+  SPEC_MARKDOWN,
+} from "./generated";
 
 type Role = "viewer" | "maintainer" | "owner";
 
@@ -314,6 +321,14 @@ export default {
             "cache-control": "public, max-age=86400",
           },
         });
+      }
+
+      if (url.pathname === "/vendor/ghostty-web.js") {
+        return text(GHOSTTY_WEB_JS, "text/javascript; charset=utf-8");
+      }
+
+      if (url.pathname === "/vendor/__vite-browser-external-2447137e.js") {
+        return text(GHOSTTY_BROWSER_EXTERNAL_JS, "text/javascript; charset=utf-8");
       }
 
       if (url.pathname === "/docs/spec.md") {

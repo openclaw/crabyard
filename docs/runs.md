@@ -246,7 +246,7 @@ Full control of Codex session.
 
 ### PTY Rendering
 
-Terminal rendered via Ghostty WebAssembly (future):
+Terminal sessions render in a fullscreen Ghostty WebAssembly grid:
 
 - Full xterm.js compatibility
 - Color support, 256-color mode
@@ -254,7 +254,7 @@ Terminal rendered via Ghostty WebAssembly (future):
 - Copy/paste
 - Resize events
 
-Current MVP: Plain text rendering in `<pre>` with ANSI stripping.
+Current MVP: Ghostty renders replayed attach logs; live PTY byte transport is the next runtime integration step.
 
 ## Heartbeat and Stall Detection
 

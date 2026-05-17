@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add a fullscreen Ghostty WASM Codex session grid for attach/watch/takeover workflows.
 - Add a persistent light/dark mode toggle to the app rail.
 - Make new card titles optional and derive blank titles from the prompt.
 - Add `#number` issue/PR previews across enabled OpenClaw repos and default new cards to `openclaw/openclaw`.

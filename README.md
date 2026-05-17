@@ -8,7 +8,7 @@ Crabyard gives OpenClaw maintainers a Linear-like board where each card represen
 
 - **Board-based workflow.** Create cards from prompts, GitHub issues, or PRs. Track them through Todo, Running, Human Review, and Done lanes.
 - **Issue/PR lookup.** Type `#123` in search to preview matching GitHub issues or PRs across enabled OpenClaw repos and create a card from the match.
-- **Live Codex runs.** Watch autonomous sessions, attach to terminals, take over when needed.
+- **Live Codex runs.** Watch autonomous sessions, attach to Ghostty WASM terminals, take over when needed.
 - **Diff previews.** Card tiles show changed files and totals; the run drawer shows a compact Codiff-style patch view.
 - **Multi-runtime support.** Auto-select between Cloudflare Containers and Crabbox based on job requirements.
 - **Allowlist controls.** Restrict access to OpenClaw org members and specific repos through admin-managed allowlists.
@@ -53,7 +53,7 @@ Add users/teams to the allowlist and enable repos:
 ### 4. Watch Runs
 
 - Running cards show live logs
-- Click "Attach" to view terminal output
+- Click "Attach" to open the fullscreen Ghostty WASM session grid
 - Click "Take over" to control the Codex session
 - Click "Watch" for read-only stream
 
@@ -202,9 +202,9 @@ Full documentation available at [docs.crabyard.ai](https://docs.crabyard.ai):
 
 Active development. See [CHANGELOG.md](CHANGELOG.md) for recent updates.
 
-Current phase: MVP deployed with auth, board UI, admin controls, card management, and D1/R2 persistence.
+Current phase: MVP deployed with auth, board UI, admin controls, card management, D1/R2 persistence, and Ghostty WASM terminal grid.
 
-Next: Cloudflare Container runtime, Codex app-server integration, terminal attach via Ghostty WASM.
+Next: Cloudflare Container runtime and Codex app-server/PTY transport integration.
 
 ## License
 

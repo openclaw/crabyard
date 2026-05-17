@@ -113,12 +113,12 @@ Active MVP deployment.
 - D1 + R2 persistence
 - Session management
 - Run event logging
+- Ghostty WASM terminal grid
 
 🚧 In progress:
 
 - Cloudflare Container runtime
 - Codex app-server integration
-- Terminal attach via Ghostty WASM
 - VNC support for Crabbox
 
 ## Get Started

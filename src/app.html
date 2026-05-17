@@ -702,6 +702,141 @@
         line-height: 1.6;
         white-space: pre-wrap;
       }
+      .session-panel {
+        width: 100%;
+        height: 100%;
+        border-left: 0;
+      }
+      .session-head {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        align-items: center;
+        gap: 14px;
+      }
+      .session-head p {
+        margin: 4px 0 0;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .session-tools {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+      .session-panel .panel-body {
+        display: grid;
+        min-height: 0;
+        padding: 14px;
+      }
+      .session-grid {
+        min-height: 0;
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+        gap: 12px;
+      }
+      .session-grid.focus-mode {
+        grid-template-columns: 1fr;
+      }
+      .session-cell {
+        min-height: 360px;
+        min-width: 0;
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        overflow: hidden;
+        background: var(--panel-2);
+      }
+      .session-grid.focus-mode .session-cell {
+        min-height: calc(100vh - 158px);
+      }
+      .session-cell-head {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 10px;
+        align-items: start;
+        padding: 12px;
+        border-bottom: 1px solid var(--line);
+        background: var(--panel);
+      }
+      .session-cell-title {
+        min-width: 0;
+        display: grid;
+        gap: 6px;
+      }
+      .session-cell-title strong {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 14px;
+      }
+      .session-meta {
+        display: flex;
+        gap: 5px;
+        flex-wrap: wrap;
+      }
+      .session-controls {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+      .session-controls button {
+        min-width: 34px;
+        padding: 0 9px;
+        font-size: 12px;
+        font-weight: 700;
+      }
+      .session-terminal-wrap {
+        min-height: 0;
+        background: #101827;
+        position: relative;
+      }
+      .ghostty-terminal {
+        width: 100%;
+        height: 100%;
+        min-height: 276px;
+        overflow: hidden;
+      }
+      .session-grid.focus-mode .ghostty-terminal {
+        min-height: calc(100vh - 252px);
+      }
+      .terminal-fallback {
+        width: 100%;
+        height: 100%;
+        min-height: inherit;
+        margin: 0;
+        overflow: auto;
+        padding: 14px;
+        color: #e5e7eb;
+        background: #101827;
+        font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+        font-size: 13px;
+        line-height: 1.55;
+        white-space: pre-wrap;
+      }
+      .session-cell-foot {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        min-height: 36px;
+        padding: 8px 12px;
+        border-top: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 12px;
+        background: var(--panel);
+      }
+      .session-empty {
+        display: grid;
+        place-items: center;
+        border: 1px dashed var(--line);
+        border-radius: 8px;
+        color: var(--muted);
+        min-height: calc(100vh - 160px);
+      }
       .diff-panel {
         border: 1px solid var(--line);
         border-radius: 6px;
@@ -864,8 +999,18 @@
         .status-strip,
         .board,
         .run-layout,
-        .form-grid {
+        .form-grid,
+        .session-head {
           grid-template-columns: 1fr;
+        }
+        .session-grid {
+          grid-template-columns: 1fr;
+        }
+        .session-tools {
+          justify-content: flex-start;
+        }
+        .session-cell {
+          min-height: 420px;
         }
         .ref-preview {
           position: fixed;
@@ -1017,6 +1162,24 @@
       </section>
     </div>
 
+    <div class="drawer" id="sessions-drawer" aria-hidden="true">
+      <section class="panel session-panel">
+        <div class="panel-head session-head">
+          <div>
+            <h2>Codex sessions</h2>
+            <p>Attach, watch, or take over live Codex CLI terminals.</p>
+          </div>
+          <div class="session-tools">
+            <button id="show-all-sessions">Grid</button>
+            <button class="icon" data-close="sessions-drawer">x</button>
+          </div>
+        </div>
+        <div class="panel-body">
+          <section class="session-grid" id="session-grid" aria-label="Codex session grid"></section>
+        </div>
+      </section>
+    </div>
+
     <div class="drawer" id="admin-drawer" aria-hidden="true">
       <section class="panel wide">
         <div class="panel-head">
@@ -1091,6 +1254,10 @@
       let refPreview = { number: "", loading: false, matches: [], error: "" };
       let refPreviewTimer = null;
       let refPreviewSeq = 0;
+      let focusedSessionId = null;
+      let ghosttyModulePromise = null;
+      let terminalEpoch = 0;
+      const terminalHosts = new Map();
 
       function render() {
         renderMetrics();
@@ -1101,6 +1268,7 @@
         renderShellControls();
         renderThemeToggle();
         renderRefPreview();
+        renderSessionGrid();
       }
 
       function renderMetrics() {
@@ -1361,6 +1529,13 @@
         drawer.classList.remove("open");
         drawer.setAttribute("aria-hidden", "true");
         if (id === "run-drawer") activeRunId = null;
+        if (id === "sessions-drawer") {
+          terminalEpoch += 1;
+          focusedSessionId = null;
+          const grid = document.getElementById("session-grid");
+          if (grid) grid.dataset.sessionKey = "";
+          disposeMissingTerminals(new Set());
+        }
       }
 
       function closeAllDrawers() {
@@ -1368,6 +1543,10 @@
           drawer.classList.remove("open");
           drawer.setAttribute("aria-hidden", "true");
         });
+        activeRunId = null;
+        focusedSessionId = null;
+        terminalEpoch += 1;
+        disposeMissingTerminals(new Set());
       }
 
       async function startCard(id) {
@@ -1381,13 +1560,244 @@
       async function attachCard(id) {
         await cardAction(id, "attach");
         activeRunId = id;
-        const card = findCard(id);
+        focusedSessionId = id;
+        openSessionGrid();
+      }
+
+      async function openRunDetails(id) {
+        closeDrawer("sessions-drawer");
+        activeRunId = id;
+        let card = findCard(id);
         if (!card) return;
+        try {
+          const result = await api(`/api/cards/${encodeURIComponent(id)}/actions`, {
+            method: "POST",
+            body: { action: "attach" },
+          });
+          replaceCard(result.card);
+          card = result.card;
+          render();
+        } catch (error) {
+          showLogin(error.message);
+          return;
+        }
         document.getElementById("run-title").textContent = card.id + " - " + card.title;
         document.getElementById("terminal").textContent = card.logs.join("\n");
         renderDiffPanel(card);
         renderRunSide(card);
         openDrawer("run-drawer");
+      }
+
+      function openSessionGrid(id = focusedSessionId) {
+        if (id) focusedSessionId = id;
+        openDrawer("sessions-drawer");
+        renderSessionGrid();
+      }
+
+      function renderSessionGrid() {
+        const grid = document.getElementById("session-grid");
+        if (!grid) return;
+        if (!document.getElementById("sessions-drawer").classList.contains("open")) return;
+        const focusedCard = focusedSessionId ? findCard(focusedSessionId) : null;
+        const cards = focusedCard ? [focusedCard] : sessionCards();
+        grid.classList.toggle("focus-mode", Boolean(focusedCard));
+        document.getElementById("show-all-sessions").hidden = !focusedCard;
+        if (!cards.length) {
+          terminalEpoch += 1;
+          disposeMissingTerminals(new Set());
+          grid.dataset.sessionKey = "empty";
+          grid.innerHTML = `<div class="session-empty">No Codex sessions yet</div>`;
+          return;
+        }
+        const ids = new Set(cards.map((card) => card.id));
+        const sessionKey = `${focusedCard ? "focus" : "grid"}:${cards.map((card) => card.id).join("|")}`;
+        disposeMissingTerminals(ids);
+        if (grid.dataset.sessionKey !== sessionKey) {
+          terminalEpoch += 1;
+          grid.innerHTML = cards.map(renderSessionCell).join("");
+          grid.dataset.sessionKey = sessionKey;
+        } else {
+          for (const card of cards) refreshSessionCell(card);
+        }
+        requestAnimationFrame(hydrateSessionTerminals);
+      }
+
+      function sessionCards() {
+        return [...state.cards].sort((left, right) => {
+          const laneRank = { Running: 0, "Human Review": 1, Todo: 2, Done: 3 };
+          const leftLane = laneRank[left.lane] ?? 4;
+          const rightLane = laneRank[right.lane] ?? 4;
+          if (leftLane !== rightLane) return leftLane - rightLane;
+          return (
+            Number(right.startedAt || right.createdAt || 0) -
+            Number(left.startedAt || left.createdAt || 0)
+          );
+        });
+      }
+
+      function renderSessionCell(card) {
+        const running = card.lane === "Running";
+        const maintainerControls = canMaintain()
+          ? `<button data-session-watch="${card.id}">Watch</button><button data-session-takeover="${card.id}">Take over</button>`
+          : `<button data-session-watch="${card.id}">Watch</button>`;
+        const focusButton = focusedSessionId
+          ? `<button data-session-unfocus>Grid</button>`
+          : `<button data-session-focus="${card.id}">Full</button>`;
+        return `<article class="session-cell">
+          <header class="session-cell-head">
+            <div class="session-cell-title">
+              <strong data-session-title="${escapeHtml(card.id)}" title="${escapeHtml(card.title)}">${escapeHtml(card.title)}</strong>
+              <div class="session-meta" data-session-meta="${escapeHtml(card.id)}">${sessionMetaHtml(card)}</div>
+            </div>
+            <div class="session-controls">
+              ${focusButton}
+              <button data-session-details="${card.id}">Details</button>
+              ${maintainerControls}
+            </div>
+          </header>
+          <div class="session-terminal-wrap">
+            <div class="ghostty-terminal" data-card-id="${escapeHtml(card.id)}" aria-label="${escapeHtml(card.id)} terminal"></div>
+          </div>
+          <footer class="session-cell-foot">
+            <span data-terminal-status="${escapeHtml(card.id)}">Ghostty WASM</span>
+            <span data-session-runtime-label="${escapeHtml(card.id)}">${escapeHtml(card.runtime === "crabbox" ? "VNC eligible" : "container")}</span>
+          </footer>
+        </article>`;
+      }
+
+      function sessionMetaHtml(card) {
+        const running = card.lane === "Running";
+        return `
+          <span class="chip">${escapeHtml(card.id)}</span>
+          <span class="chip">${escapeHtml(card.repo)}</span>
+          <span class="chip">${escapeHtml(card.runtime)}</span>
+          <span class="chip merge">${escapeHtml(card.policy)}</span>
+          ${running ? `<span class="chip hot">live ${elapsed(card.startedAt)}</span>` : `<span class="chip">${escapeHtml(card.lane)}</span>`}
+        `;
+      }
+
+      function refreshSessionCell(card) {
+        const id = CSS.escape(card.id);
+        const title = document.querySelector(`[data-session-title="${id}"]`);
+        const meta = document.querySelector(`[data-session-meta="${id}"]`);
+        const runtime = document.querySelector(`[data-session-runtime-label="${id}"]`);
+        if (title) {
+          title.textContent = card.title;
+          title.title = card.title;
+        }
+        if (meta) meta.innerHTML = sessionMetaHtml(card);
+        if (runtime)
+          runtime.textContent = card.runtime === "crabbox" ? "VNC eligible" : "container";
+      }
+
+      async function hydrateSessionTerminals() {
+        const mounts = document.querySelectorAll(".ghostty-terminal[data-card-id]");
+        for (const mount of mounts) {
+          const card = findCard(mount.dataset.cardId);
+          if (card) await mountGhosttyTerminal(card, mount);
+        }
+      }
+
+      async function mountGhosttyTerminal(card, mount) {
+        const existing = terminalHosts.get(card.id);
+        const text = terminalText(card);
+        if (existing?.mount === mount) {
+          if (existing.text !== text) {
+            updateMountedTerminal(existing, text);
+            existing.text = text;
+          }
+          setTerminalStatus(card.id, existing.term ? "Ghostty WASM" : "Text fallback");
+          return;
+        }
+        disposeTerminal(card.id);
+        const mountEpoch = terminalEpoch;
+        try {
+          const mod = await loadGhosttyModule();
+          if (isStaleTerminalMount(card, mount, mountEpoch)) return;
+          if (!mod?.Terminal) throw new Error("Ghostty module missing Terminal");
+          mount.innerHTML = "";
+          const term = new mod.Terminal({
+            disableStdin: true,
+            fontSize: focusedSessionId === card.id ? 14 : 13,
+            theme: { background: "#101827", foreground: "#e5e7eb" },
+          });
+          const fit = mod.FitAddon ? new mod.FitAddon() : null;
+          if (fit) term.loadAddon(fit);
+          term.open(mount);
+          if (fit) {
+            fit.fit();
+            if (typeof fit.observeResize === "function") fit.observeResize();
+          }
+          term.write(text);
+          terminalHosts.set(card.id, { mount, term, fit, text });
+          setTerminalStatus(card.id, "Ghostty WASM");
+        } catch (error) {
+          if (isStaleTerminalMount(card, mount, mountEpoch)) return;
+          mount.innerHTML = `<pre class="terminal-fallback">${escapeHtml(text)}</pre>`;
+          terminalHosts.set(card.id, { mount, term: null, text });
+          setTerminalStatus(card.id, "Text fallback");
+          console.warn("Ghostty terminal unavailable", error);
+        }
+      }
+
+      function isStaleTerminalMount(card, mount, mountEpoch) {
+        const drawer = document.getElementById("sessions-drawer");
+        return (
+          mountEpoch !== terminalEpoch ||
+          !mount.isConnected ||
+          mount.dataset.cardId !== card.id ||
+          !drawer.classList.contains("open")
+        );
+      }
+
+      function updateMountedTerminal(host, text) {
+        if (host.term) {
+          const chunk = text.startsWith(host.text)
+            ? text.slice(host.text.length)
+            : `\x1b[2J\x1b[H${text}`;
+          if (chunk) host.term.write(chunk);
+          return;
+        }
+        const fallback = host.mount.querySelector(".terminal-fallback");
+        if (fallback) {
+          fallback.textContent = text;
+          return;
+        }
+        host.mount.innerHTML = `<pre class="terminal-fallback">${escapeHtml(text)}</pre>`;
+      }
+
+      function loadGhosttyModule() {
+        if (!ghosttyModulePromise) {
+          ghosttyModulePromise = import("/vendor/ghostty-web.js").then(async (mod) => {
+            if (typeof mod.init === "function") await mod.init();
+            return mod;
+          });
+        }
+        return ghosttyModulePromise;
+      }
+
+      function terminalText(card) {
+        const logs =
+          Array.isArray(card.logs) && card.logs.length ? card.logs : ["Codex session ready."];
+        return logs.join("\r\n") + "\r\n";
+      }
+
+      function setTerminalStatus(id, label) {
+        const status = document.querySelector(`[data-terminal-status="${CSS.escape(id)}"]`);
+        if (status) status.textContent = label;
+      }
+
+      function disposeMissingTerminals(ids) {
+        for (const id of terminalHosts.keys()) {
+          if (!ids.has(id)) disposeTerminal(id);
+        }
+      }
+
+      function disposeTerminal(id) {
+        const host = terminalHosts.get(id);
+        if (host?.fit && typeof host.fit.dispose === "function") host.fit.dispose();
+        if (host?.term && typeof host.term.dispose === "function") host.term.dispose();
+        terminalHosts.delete(id);
       }
 
       function renderRunSide(card) {
@@ -1513,7 +1923,8 @@
           openDrawer("admin-drawer");
         if (target.dataset.view === "logs") {
           const live = state.cards.find((card) => card.lane === "Running") || state.cards[0];
-          if (live) attachCard(live.id);
+          if (live) focusedSessionId = live.id;
+          openSessionGrid();
         }
         if (target.dataset.filter) {
           filter = target.dataset.filter;
@@ -1525,6 +1936,17 @@
         if (target.dataset.action === "start") startCard(target.dataset.id);
         if (target.dataset.action === "advance") advanceCard(target.dataset.id);
         if (target.dataset.action === "attach") attachCard(target.dataset.id);
+        if (target.dataset.sessionFocus) {
+          focusedSessionId = target.dataset.sessionFocus;
+          renderSessionGrid();
+        }
+        if (target.dataset.sessionUnfocus !== undefined || target.id === "show-all-sessions") {
+          focusedSessionId = null;
+          renderSessionGrid();
+        }
+        if (target.dataset.sessionDetails) openRunDetails(target.dataset.sessionDetails);
+        if (target.dataset.sessionWatch) cardAction(target.dataset.sessionWatch, "watch");
+        if (target.dataset.sessionTakeover) cardAction(target.dataset.sessionTakeover, "takeover");
         if (target.dataset.createRef) createRefCard(Number(target.dataset.createRef));
         if (target.dataset.remove === "allow") removeAllow(target.dataset.value);
         if (target.dataset.remove === "repo") removeRepo(target.dataset.value);

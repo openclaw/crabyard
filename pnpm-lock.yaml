@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      ghostty-web:
+        specifier: 0.4.0
+        version: 0.4.0
       kysely:
         specifier: ^0.29.2
         version: 0.29.2
@@ -654,6 +657,9 @@ packages:
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
     os: [darwin]
 
+  ghostty-web@0.4.0:
+    resolution: {integrity: sha512-0puDBik2qapbD/QQBW9o5ZHfXnZBqZWx/ctBiVtKZ6ZLds4NYb+wZuw1cRLXZk9zYovIQ908z3rvFhexAvc5Hg==}
+
   kleur@4.1.5:
     resolution: {integrity: sha512-o+NO+8WrRiQEE4/7nwRJhN1HWpVmJm511pBHUxPLtp0BUISzlBplORYSmTclCnJvQq2tKu/sgl3xVpkc7ZWuQQ==}
     engines: {node: '>=6'}
@@ -1146,6 +1152,8 @@ snapshots:
 
   fsevents@2.3.3:
     optional: true
+
+  ghostty-web@0.4.0: {}
 
   kleur@4.1.5: {}
 
