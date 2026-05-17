@@ -85,27 +85,30 @@
       button {
         min-height: 32px;
         border: 1px solid var(--line);
-        border-radius: 6px;
+        border-radius: 7px;
         background: var(--panel);
         color: var(--ink);
         cursor: pointer;
         font-weight: 500;
-        transition: all 0.15s ease;
+        transition: all 0.18s ease;
         padding: 0 12px;
       }
       button:hover {
         background: var(--panel-2);
         border-color: var(--line-strong);
+        transform: translateY(-1px);
       }
       button.primary {
         border-color: var(--primary);
         background: var(--primary);
         color: #fff;
         font-weight: 600;
+        box-shadow: 0 2px 4px rgb(94 106 210 / 0.2);
       }
       button.primary:hover {
         background: var(--primary-dark);
         border-color: var(--primary-dark);
+        box-shadow: 0 4px 8px rgb(94 106 210 / 0.3);
       }
       button.ghost {
         border-color: transparent;
@@ -124,18 +127,18 @@
       textarea {
         width: 100%;
         border: 1px solid var(--line);
-        border-radius: 6px;
+        border-radius: 7px;
         background: var(--panel);
         color: var(--ink);
         padding: 8px 12px;
         outline: none;
-        transition: all 0.15s ease;
+        transition: all 0.18s ease;
       }
       input:focus,
       select:focus,
       textarea:focus {
         border-color: var(--primary);
-        box-shadow: 0 0 0 3px rgb(94 106 210 / 0.1);
+        box-shadow: 0 0 0 3px rgb(94 106 210 / 0.15);
       }
       textarea {
         min-height: 80px;
@@ -171,32 +174,62 @@
         display: grid;
         place-items: center;
         padding: 24px;
+        background: radial-gradient(ellipse at top, rgba(94, 106, 210, 0.15), transparent 50%),
+          var(--paper);
       }
       .login-screen[hidden] {
         display: none;
       }
       .login-panel {
-        width: min(420px, 100%);
+        width: min(480px, 100%);
         border: 1px solid var(--line);
-        border-radius: 8px;
+        border-radius: 12px;
         background: var(--panel);
         box-shadow: var(--shadow-lg);
-        padding: 24px;
+        padding: 40px 32px 32px;
         display: grid;
-        gap: 16px;
+        gap: 20px;
+      }
+      .login-panel .mark {
+        justify-self: center;
+        width: 64px;
+        height: 64px;
+        margin-bottom: 8px;
+      }
+      .login-panel .mark img {
+        width: 56px;
+        height: 56px;
       }
       .login-panel h1 {
         margin: 0;
-        font-size: 28px;
+        font-size: 32px;
         line-height: 1.1;
+        text-align: center;
+        letter-spacing: -0.02em;
       }
       .login-panel p {
         margin: 0;
         color: var(--muted);
+        text-align: center;
+        line-height: 1.6;
       }
       .login-actions {
         display: grid;
-        gap: 10px;
+        gap: 12px;
+        margin-top: 8px;
+      }
+      .login-actions button.primary {
+        min-height: 44px;
+        font-size: 15px;
+      }
+      .login-footer {
+        text-align: center;
+        padding-top: 8px;
+        border-top: 1px solid var(--line);
+      }
+      .login-footer a {
+        font-size: 14px;
+        font-weight: 500;
       }
       .banner {
         display: none;
@@ -370,17 +403,18 @@
       }
       .card {
         border: 1px solid var(--line);
-        border-radius: 6px;
+        border-radius: 8px;
         background: var(--panel);
         padding: 12px;
         display: grid;
         gap: 10px;
         cursor: pointer;
-        transition: all 0.15s ease;
+        transition: all 0.2s ease;
       }
       .card:hover {
         border-color: var(--line-strong);
-        box-shadow: var(--shadow);
+        box-shadow: 0 4px 12px rgb(0 0 0 / 0.08);
+        transform: translateY(-2px);
       }
       .card.running {
         border-left: 3px solid var(--accent);
@@ -657,6 +691,9 @@
           <button type="submit">Use token</button>
         </div>
         <div class="banner" id="login-message"></div>
+        <div class="login-footer">
+          <a href="/docs/">Documentation</a>
+        </div>
       </form>
     </section>
 
