@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -24,9 +24,15 @@
     />
     <meta name="twitter:image" content="https://crabyard.openclaw.ai/crabyard-logo.png" />
     <link rel="icon" type="image/png" href="/crabyard-logo.png" />
+    <script>
+      try {
+        const theme = localStorage.getItem("crabyard-theme");
+        if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
+      } catch {}
+    </script>
     <style>
       :root {
-        color-scheme: light dark;
+        color-scheme: light;
         --ink: #0d0d0d;
         --muted: #6b7280;
         --faint: #9ca3af;
@@ -51,22 +57,21 @@
           sans-serif;
       }
 
-      @media (prefers-color-scheme: dark) {
-        :root {
-          --ink: #f9fafb;
-          --muted: #9ca3af;
-          --faint: #6b7280;
-          --paper: #0f1419;
-          --panel: #1a1f2e;
-          --panel-2: #151a27;
-          --line: #2d3648;
-          --line-strong: #3d4657;
-          --primary: #6b7ad6;
-          --primary-dark: #5e6ad2;
-          --accent: #38bdf8;
-          --success: #34d399;
-          --warning: #fbbf24;
-        }
+      :root[data-theme="dark"] {
+        color-scheme: dark;
+        --ink: #f9fafb;
+        --muted: #9ca3af;
+        --faint: #6b7280;
+        --paper: #0f1419;
+        --panel: #1a1f2e;
+        --panel-2: #151a27;
+        --line: #2d3648;
+        --line-strong: #3d4657;
+        --primary: #6b7ad6;
+        --primary-dark: #5e6ad2;
+        --accent: #38bdf8;
+        --success: #34d399;
+        --warning: #fbbf24;
       }
 
       * {
@@ -291,6 +296,10 @@
       .rail button.active {
         background: var(--panel-2);
         color: var(--primary);
+      }
+      .rail button.theme-toggle {
+        font-size: 12px;
+        letter-spacing: 0;
       }
       .rail .spacer {
         flex: 1;
@@ -902,6 +911,7 @@
         <button data-view="admin" title="Admin">A</button>
         <button data-view="logs" title="Logs">L</button>
         <div class="spacer"></div>
+        <button class="theme-toggle" id="theme-toggle" title="Switch to light mode">L</button>
         <button onclick="location.href = '/docs/spec'" title="Spec">S</button>
       </aside>
 
@@ -1077,6 +1087,7 @@
       let signedIn = false;
       let authMethods = { github: false, token: false };
       let stateRetryTimer = null;
+      let theme = document.documentElement.dataset.theme === "light" ? "light" : "dark";
       let refPreview = { number: "", loading: false, matches: [], error: "" };
       let refPreviewTimer = null;
       let refPreviewSeq = 0;
@@ -1088,6 +1099,7 @@
         renderRepoSelect();
         renderUser();
         renderShellControls();
+        renderThemeToggle();
         renderRefPreview();
       }
 
@@ -1309,6 +1321,23 @@
         });
       }
 
+      function renderThemeToggle() {
+        const button = document.getElementById("theme-toggle");
+        const nextTheme = theme === "dark" ? "light" : "dark";
+        button.textContent = theme === "dark" ? "L" : "D";
+        button.title = `Switch to ${nextTheme} mode`;
+        button.setAttribute("aria-label", `Switch to ${nextTheme} mode`);
+      }
+
+      function setTheme(value) {
+        theme = value === "light" ? "light" : "dark";
+        document.documentElement.dataset.theme = theme;
+        try {
+          localStorage.setItem("crabyard-theme", theme);
+        } catch {}
+        renderThemeToggle();
+      }
+
       function canMaintain() {
         return roleRank(state.user?.role) >= roleRank("maintainer");
       }
@@ -1521,6 +1550,7 @@
         if (target.id === "takeover") appendRun("takeover");
         if (target.id === "watch") appendRun("watch");
         if (target.id === "stall") appendRun("stall");
+        if (target.id === "theme-toggle") setTheme(theme === "dark" ? "light" : "dark");
         if (target.id === "user-button") logout();
       });
 
