@@ -8,23 +8,31 @@ const ghosttyExternalPath = new URL(
   "../node_modules/ghostty-web/dist/__vite-browser-external-2447137e.js",
   import.meta.url,
 );
+const lucideIconNodesPath = new URL(
+  "../node_modules/lucide-static/icon-nodes.json",
+  import.meta.url,
+);
 const generatedPath = new URL("../src/generated.ts", import.meta.url);
 const distRoot = new URL("../dist/", import.meta.url);
 const distApp = new URL("../dist/app/", import.meta.url);
 const distDocs = new URL("../dist/docs/", import.meta.url);
 
-const [appHtmlSource, rawSpecMarkdown, logoBytes, ghosttyWebJs, ghosttyExternalJs] =
+const [appHtmlSource, rawSpecMarkdown, logoBytes, ghosttyWebJs, ghosttyExternalJs, lucideIconJson] =
   await Promise.all([
     readFile(appPath, "utf8"),
     readFile(specPath, "utf8"),
     readFile(logoPath),
     readFile(ghosttyWebPath, "utf8"),
     readFile(ghosttyExternalPath, "utf8"),
+    readFile(lucideIconNodesPath, "utf8"),
   ]);
 
 const logoDataUrl = `data:image/png;base64,${logoBytes.toString("base64")}`;
 const logoBase64 = logoBytes.toString("base64");
-const appHtml = appHtmlSource.replaceAll("__CRABYARD_LOGO__", logoDataUrl);
+const lucideIconScript = buildLucideIconScript(JSON.parse(lucideIconJson));
+const appHtml = appHtmlSource
+  .replaceAll("__CRABYARD_LOGO__", logoDataUrl)
+  .replace("__LUCIDE_ICONS__", lucideIconScript);
 const specMarkdown = stripFrontmatter(rawSpecMarkdown);
 const specHtml = renderSpecPage(specMarkdown);
 
@@ -51,6 +59,25 @@ if (process.argv.includes("--static")) {
 function redirectHtml(path) {
   const target = `https://crabyard.openclaw.ai${path}`;
   return `<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0; url=${target}"><title>Crabyard.ai</title><a href="${target}">Crabyard.ai</a>`;
+}
+
+function buildLucideIconScript(iconNodes) {
+  const names = ["book-open", "layout-grid", "moon", "settings", "sun", "terminal", "x"];
+  const selected = Object.fromEntries(names.map((name) => [name, iconNodes[name]]));
+  return `(() => {
+  const icons = ${JSON.stringify(selected)};
+  const attrs = 'xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"';
+  const attr = (value) => Object.entries(value).map(([key, raw]) => \`\${key}="\${String(raw).replaceAll('"', '&quot;')}"\`).join(" ");
+  const node = ([tag, value]) => \`<\${tag} \${attr(value)}></\${tag}>\`;
+  const svg = (name) => icons[name] ? \`<svg \${attrs} aria-hidden="true">\${icons[name].map(node).join("")}</svg>\` : "";
+  globalThis.lucide = {
+    createIcons() {
+      document.querySelectorAll("i[data-lucide]").forEach((element) => {
+        element.outerHTML = svg(element.dataset.lucide);
+      });
+    },
+  };
+})();`;
 }
 
 function stripFrontmatter(markdown) {

@@ -30,13 +30,16 @@
         if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
       } catch {}
     </script>
+    <script>
+      __LUCIDE_ICONS__;
+    </script>
     <style>
       :root {
         color-scheme: light;
         --ink: #0d0d0d;
         --muted: #6b7280;
         --faint: #9ca3af;
-        --paper: #fafafa;
+        --paper: #f7f8fa;
         --panel: #ffffff;
         --panel-2: #f9fafb;
         --line: #e5e7eb;
@@ -46,8 +49,10 @@
         --accent: #0ea5e9;
         --success: #10b981;
         --warning: #f59e0b;
-        --shadow: 0 1px 3px rgb(0 0 0 / 0.1), 0 1px 2px rgb(0 0 0 / 0.06);
+        --shadow: 0 1px 3px rgb(0 0 0 / 0.08), 0 1px 2px rgb(0 0 0 / 0.04);
+        --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -1px rgb(0 0 0 / 0.06);
         --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -2px rgb(0 0 0 / 0.05);
+        --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 10px 10px -5px rgb(0 0 0 / 0.04);
         font-family:
           ui-sans-serif,
           -apple-system,
@@ -55,23 +60,31 @@
           "Segoe UI",
           system-ui,
           sans-serif;
+        font-size: 15px;
+        line-height: 1.6;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
       }
 
       :root[data-theme="dark"] {
         color-scheme: dark;
-        --ink: #f9fafb;
+        --ink: #e5e9f0;
         --muted: #9ca3af;
         --faint: #6b7280;
-        --paper: #0f1419;
-        --panel: #1a1f2e;
-        --panel-2: #151a27;
-        --line: #2d3648;
-        --line-strong: #3d4657;
-        --primary: #6b7ad6;
-        --primary-dark: #5e6ad2;
+        --paper: #0d1117;
+        --panel: #161b22;
+        --panel-2: #0d1117;
+        --line: #30363d;
+        --line-strong: #484f58;
+        --primary: #7c8adb;
+        --primary-dark: #6b7ad6;
         --accent: #38bdf8;
         --success: #34d399;
         --warning: #fbbf24;
+        --shadow: 0 1px 3px rgb(0 0 0 / 0.3), 0 1px 2px rgb(0 0 0 / 0.2);
+        --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.4), 0 2px 4px -1px rgb(0 0 0 / 0.3);
+        --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.5), 0 4px 6px -2px rgb(0 0 0 / 0.4);
+        --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.6), 0 10px 10px -5px rgb(0 0 0 / 0.5);
       }
 
       * {
@@ -97,62 +110,90 @@
         font: inherit;
       }
       button {
-        min-height: 32px;
+        min-height: 34px;
         border: 1px solid var(--line);
-        border-radius: 7px;
+        border-radius: 8px;
         background: var(--panel);
         color: var(--ink);
         cursor: pointer;
         font-weight: 500;
-        transition: all 0.18s ease;
-        padding: 0 12px;
+        transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+        padding: 0 14px;
+        font-size: 14px;
+        box-shadow: var(--shadow);
       }
       button:hover {
         background: var(--panel-2);
         border-color: var(--line-strong);
         transform: translateY(-1px);
+        box-shadow: var(--shadow-md);
+      }
+      button:active {
+        transform: translateY(0);
+        box-shadow: var(--shadow);
       }
       button.primary {
         border-color: var(--primary);
         background: var(--primary);
         color: #fff;
         font-weight: 600;
-        box-shadow: 0 2px 4px rgb(94 106 210 / 0.2);
+        box-shadow: 0 2px 6px rgb(94 106 210 / 0.25);
       }
       button.primary:hover {
         background: var(--primary-dark);
         border-color: var(--primary-dark);
-        box-shadow: 0 4px 8px rgb(94 106 210 / 0.3);
+        box-shadow: 0 4px 10px rgb(94 106 210 / 0.35);
       }
       button.ghost {
         border-color: transparent;
         background: transparent;
+        box-shadow: none;
       }
       button.ghost:hover {
         background: var(--panel-2);
+        box-shadow: none;
       }
       button.icon {
         width: 32px;
         padding: 0;
         font-weight: 600;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+      button.icon svg,
+      button svg {
+        width: 16px;
+        height: 16px;
+        stroke-width: 2;
+      }
+      button.primary svg {
+        color: #fff;
       }
       input,
       select,
       textarea {
         width: 100%;
         border: 1px solid var(--line);
-        border-radius: 7px;
+        border-radius: 8px;
         background: var(--panel);
         color: var(--ink);
-        padding: 8px 12px;
+        padding: 9px 14px;
         outline: none;
-        transition: all 0.18s ease;
+        transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+        font-size: 14px;
+        box-shadow: var(--shadow);
+      }
+      input:hover,
+      select:hover,
+      textarea:hover {
+        border-color: var(--line-strong);
       }
       input:focus,
       select:focus,
       textarea:focus {
         border-color: var(--primary);
-        box-shadow: 0 0 0 3px rgb(94 106 210 / 0.15);
+        box-shadow: 0 0 0 3px rgb(94 106 210 / 0.12);
       }
       textarea {
         min-height: 80px;
@@ -261,28 +302,34 @@
         position: sticky;
         top: 0;
         height: 100vh;
-        padding: 12px 8px;
+        padding: 16px 10px;
         border-right: 1px solid var(--line);
         background: var(--panel);
         display: flex;
         flex-direction: column;
         align-items: center;
-        gap: 4px;
+        gap: 6px;
+        box-shadow: var(--shadow);
       }
       .mark {
-        width: 40px;
-        height: 40px;
-        border-radius: 10px;
+        width: 44px;
+        height: 44px;
+        border-radius: 12px;
         display: grid;
         place-items: center;
-        margin-bottom: 8px;
+        margin-bottom: 12px;
         background: linear-gradient(145deg, #101827, #17243a);
-        box-shadow: var(--shadow);
+        box-shadow: var(--shadow-md);
         overflow: hidden;
+        transition: all 0.2s ease;
+      }
+      .mark:hover {
+        transform: scale(1.05);
+        box-shadow: var(--shadow-lg);
       }
       .mark img {
-        width: 34px;
-        height: 34px;
+        width: 36px;
+        height: 36px;
         object-fit: contain;
       }
       .rail button {
@@ -291,10 +338,20 @@
         padding: 0;
         font-size: 13px;
         font-weight: 600;
-        border-radius: 6px;
+        border-radius: 8px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .rail button svg {
+        width: 18px;
+        height: 18px;
       }
       .rail button.active {
         background: var(--panel-2);
+        color: var(--primary);
+      }
+      .rail button.active svg {
         color: var(--primary);
       }
       .rail button.theme-toggle {
@@ -307,20 +364,20 @@
 
       .shell {
         min-width: 0;
-        padding: 24px 32px 40px;
+        padding: 32px 40px 48px;
       }
       .top {
         display: grid;
         grid-template-columns: minmax(260px, 1fr) auto;
-        gap: 18px;
+        gap: 24px;
         align-items: start;
-        margin-bottom: 18px;
+        margin-bottom: 28px;
       }
       .title h1 {
         margin: 0;
-        font-size: clamp(28px, 4vw, 48px);
-        line-height: 1.1;
-        letter-spacing: -0.02em;
+        font-size: clamp(28px, 4vw, 40px);
+        line-height: 1.2;
+        letter-spacing: -0.03em;
         font-weight: 700;
       }
       .title p {
@@ -328,6 +385,7 @@
         color: var(--muted);
         max-width: 780px;
         line-height: 1.6;
+        font-size: 15px;
       }
       .status-strip {
         display: grid;
@@ -337,30 +395,39 @@
       }
       .metric {
         border: 1px solid var(--line);
-        border-radius: 8px;
+        border-radius: 10px;
         background: var(--panel);
-        padding: 12px 14px;
+        padding: 14px 16px;
+        box-shadow: var(--shadow);
+        transition: all 0.2s ease;
+      }
+      .metric:hover {
+        box-shadow: var(--shadow-md);
+        border-color: var(--line-strong);
       }
       .metric span {
         display: block;
         color: var(--muted);
         font-size: 12px;
         font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
       }
       .metric strong {
         display: block;
-        margin-top: 4px;
-        font-size: 24px;
+        margin-top: 6px;
+        font-size: 28px;
         font-weight: 700;
         color: var(--ink);
+        letter-spacing: -0.02em;
       }
 
       .toolbar {
         display: grid;
         grid-template-columns: minmax(220px, 1fr) auto auto auto auto;
-        gap: 9px;
+        gap: 12px;
         align-items: center;
-        margin-bottom: 14px;
+        margin-bottom: 24px;
       }
       .search-wrap {
         position: relative;
@@ -430,89 +497,114 @@
       .toolbar .segmented {
         display: flex;
         border: 1px solid var(--line);
-        border-radius: 6px;
+        border-radius: 8px;
         overflow: hidden;
         background: var(--panel);
-        padding: 2px;
-        gap: 2px;
+        padding: 3px;
+        gap: 3px;
+        box-shadow: var(--shadow);
       }
       .segmented button {
         border: 0;
-        border-radius: 4px;
+        border-radius: 6px;
         background: transparent;
-        padding: 0 12px;
+        padding: 0 14px;
         font-weight: 500;
+        box-shadow: none;
+        transition: all 0.15s ease;
       }
       .segmented button:hover {
         background: var(--panel-2);
+        box-shadow: none;
       }
       .segmented button.active {
-        background: var(--panel-2);
-        color: var(--ink);
+        background: var(--ink);
+        color: var(--panel);
         font-weight: 600;
-        box-shadow: var(--shadow);
+        box-shadow: var(--shadow-md);
+      }
+      .segmented button.active:hover {
+        background: var(--ink);
       }
 
       .board {
         display: grid;
-        grid-template-columns: repeat(4, minmax(248px, 1fr));
-        gap: 12px;
+        grid-template-columns: repeat(4, minmax(280px, 1fr));
+        gap: 16px;
         align-items: start;
       }
       .lane {
         min-height: 560px;
-        border-radius: 8px;
-        background: var(--panel-2);
-        overflow: hidden;
+        border-radius: 10px;
+        background: transparent;
+        overflow: visible;
       }
       .lane-head {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        padding: 12px 14px;
-        background: var(--panel-2);
-        font-weight: 600;
-        font-size: 14px;
-      }
-      .lane-head small {
-        color: var(--muted);
+        padding: 8px 12px 12px;
+        background: transparent;
         font-weight: 600;
         font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--muted);
+      }
+      .lane-head small {
+        color: var(--faint);
+        font-weight: 600;
+        font-size: 12px;
       }
       .cards {
         display: grid;
-        gap: 8px;
-        padding: 10px;
+        gap: 10px;
+        padding: 0;
       }
       .card {
         border: 1px solid var(--line);
-        border-radius: 8px;
+        border-radius: 10px;
         background: var(--panel);
-        padding: 12px;
+        padding: 14px 16px;
         display: grid;
-        gap: 10px;
+        gap: 12px;
         cursor: pointer;
-        transition: all 0.2s ease;
+        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        box-shadow: var(--shadow);
+        position: relative;
+        overflow: hidden;
+      }
+      .card::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 3px;
+        height: 100%;
+        background: transparent;
+        transition: background 0.2s ease;
       }
       .card:hover {
         border-color: var(--line-strong);
-        box-shadow: 0 4px 12px rgb(0 0 0 / 0.08);
-        transform: translateY(-2px);
+        box-shadow: var(--shadow-md);
+        transform: translateY(-1px);
       }
-      .card.running {
-        border-left: 3px solid var(--accent);
+      .card.running::before {
+        background: var(--accent);
       }
-      .card.review {
-        border-left: 3px solid var(--warning);
+      .card.review::before {
+        background: var(--warning);
       }
-      .card.done {
-        border-left: 3px solid var(--success);
+      .card.done::before {
+        background: var(--success);
       }
       .card h3 {
         margin: 0;
         font-size: 14px;
-        line-height: 1.4;
+        line-height: 1.5;
         font-weight: 600;
+        color: var(--ink);
+        letter-spacing: -0.01em;
       }
       .meta {
         display: flex;
@@ -523,20 +615,25 @@
         display: inline-flex;
         align-items: center;
         min-height: 22px;
-        border-radius: 4px;
-        padding: 3px 8px;
+        border-radius: 6px;
+        padding: 4px 10px;
         background: var(--panel-2);
         color: var(--muted);
-        font-size: 11px;
-        font-weight: 600;
+        font-size: 12px;
+        font-weight: 500;
+        letter-spacing: -0.01em;
+        border: 1px solid var(--line);
       }
       .chip.hot {
-        background: rgb(14 165 233 / 0.1);
+        background: rgb(14 165 233 / 0.12);
         color: var(--accent);
+        border-color: rgb(14 165 233 / 0.2);
+        font-weight: 600;
       }
       .chip.merge {
-        background: rgb(94 106 210 / 0.1);
+        background: rgb(94 106 210 / 0.12);
         color: var(--primary);
+        border-color: rgb(94 106 210 / 0.2);
       }
       .user-chip {
         justify-self: end;
@@ -622,8 +719,8 @@
         inset: 0;
         z-index: 20;
         display: none;
-        background: rgb(0 0 0 / 0.4);
-        backdrop-filter: blur(4px);
+        background: rgb(0 0 0 / 0.5);
+        backdrop-filter: blur(6px);
         padding: 0;
       }
       .drawer.open {
@@ -635,7 +732,7 @@
         height: 100%;
         border-left: 1px solid var(--line);
         background: var(--panel);
-        box-shadow: var(--shadow-lg);
+        box-shadow: var(--shadow-xl);
         display: grid;
         grid-template-rows: auto 1fr;
         overflow: hidden;
@@ -648,14 +745,15 @@
         align-items: center;
         justify-content: space-between;
         gap: 12px;
-        padding: 16px 20px;
+        padding: 20px 24px;
         border-bottom: 1px solid var(--line);
         background: var(--panel);
       }
       .panel-head h2 {
         margin: 0;
-        font-size: 18px;
-        font-weight: 600;
+        font-size: 20px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
       }
       .panel-body {
         min-height: 0;
@@ -964,7 +1062,35 @@
         font-size: 13px;
       }
 
-      @media (max-width: 1180px) {
+      @keyframes slideInRight {
+        from {
+          opacity: 0;
+          transform: translateX(100%);
+        }
+        to {
+          opacity: 1;
+          transform: translateX(0);
+        }
+      }
+
+      @keyframes fadeIn {
+        from {
+          opacity: 0;
+        }
+        to {
+          opacity: 1;
+        }
+      }
+
+      .drawer.open {
+        animation: fadeIn 0.2s ease;
+      }
+
+      .drawer.open .panel {
+        animation: slideInRight 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      }
+
+      @media (max-width: 1320px) {
         .top {
           grid-template-columns: 1fr;
         }
@@ -1052,12 +1178,27 @@
     <div class="app">
       <aside class="rail" aria-label="Primary">
         <div class="mark" title="Crabyard.ai"><img src="__CRABYARD_LOGO__" alt="" /></div>
-        <button class="active" data-view="board" title="Board">B</button>
-        <button data-view="admin" title="Admin">A</button>
-        <button data-view="logs" title="Logs">L</button>
+        <button class="active" data-view="board" title="Board" aria-label="Board">
+          <i data-lucide="layout-grid"></i>
+        </button>
+        <button data-view="admin" title="Admin" aria-label="Admin">
+          <i data-lucide="settings"></i>
+        </button>
+        <button data-view="logs" title="Logs" aria-label="Logs">
+          <i data-lucide="terminal"></i>
+        </button>
         <div class="spacer"></div>
-        <button class="theme-toggle" id="theme-toggle" title="Switch to light mode">L</button>
-        <button onclick="location.href = '/docs/spec'" title="Spec">S</button>
+        <button
+          class="theme-toggle"
+          id="theme-toggle"
+          title="Switch to light mode"
+          aria-label="Switch to light mode"
+        >
+          <i data-lucide="moon"></i>
+        </button>
+        <button onclick="location.href = '/docs/spec'" title="Spec" aria-label="Spec">
+          <i data-lucide="book-open"></i>
+        </button>
       </aside>
 
       <main class="shell">
@@ -1095,7 +1236,9 @@
       <section class="panel">
         <div class="panel-head">
           <h2>New card</h2>
-          <button class="icon" data-close="card-drawer">x</button>
+          <button class="icon" data-close="card-drawer" aria-label="Close new card">
+            <i data-lucide="x"></i>
+          </button>
         </div>
         <div class="panel-body">
           <form id="card-form" class="form-grid">
@@ -1148,7 +1291,9 @@
       <section class="panel wide">
         <div class="panel-head">
           <h2 id="run-title">Run</h2>
-          <button class="icon" data-close="run-drawer">x</button>
+          <button class="icon" data-close="run-drawer" aria-label="Close run">
+            <i data-lucide="x"></i>
+          </button>
         </div>
         <div class="panel-body">
           <div class="run-layout">
@@ -1171,7 +1316,9 @@
           </div>
           <div class="session-tools">
             <button id="show-all-sessions">Grid</button>
-            <button class="icon" data-close="sessions-drawer">x</button>
+            <button class="icon" data-close="sessions-drawer" aria-label="Close sessions">
+              <i data-lucide="x"></i>
+            </button>
           </div>
         </div>
         <div class="panel-body">
@@ -1184,7 +1331,9 @@
       <section class="panel wide">
         <div class="panel-head">
           <h2>Admin</h2>
-          <button class="icon" data-close="admin-drawer">x</button>
+          <button class="icon" data-close="admin-drawer" aria-label="Close admin">
+            <i data-lucide="x"></i>
+          </button>
         </div>
         <div class="panel-body">
           <div class="admin-grid">
@@ -1269,6 +1418,9 @@
         renderThemeToggle();
         renderRefPreview();
         renderSessionGrid();
+        if (typeof lucide !== "undefined" && lucide.createIcons) {
+          lucide.createIcons();
+        }
       }
 
       function renderMetrics() {
@@ -1467,10 +1619,13 @@
         document.getElementById(id).innerHTML = items
           .map(
             (item) => `
-        <div class="list-row"><span>${escapeHtml(item.label)}</span><button class="icon" data-remove="${kind}" data-value="${escapeHtml(item.value)}">x</button></div>
+        <div class="list-row"><span>${escapeHtml(item.label)}</span><button class="icon" data-remove="${kind}" data-value="${escapeHtml(item.value)}" aria-label="Remove ${escapeHtml(item.label)}"><i data-lucide="x"></i></button></div>
       `,
           )
           .join("");
+        if (typeof lucide !== "undefined" && lucide.createIcons) {
+          lucide.createIcons();
+        }
       }
 
       function renderUser() {
@@ -1492,9 +1647,13 @@
       function renderThemeToggle() {
         const button = document.getElementById("theme-toggle");
         const nextTheme = theme === "dark" ? "light" : "dark";
-        button.textContent = theme === "dark" ? "L" : "D";
+        const iconName = theme === "dark" ? "sun" : "moon";
+        button.innerHTML = `<i data-lucide="${iconName}"></i>`;
         button.title = `Switch to ${nextTheme} mode`;
         button.setAttribute("aria-label", `Switch to ${nextTheme} mode`);
+        if (typeof lucide !== "undefined" && lucide.createIcons) {
+          lucide.createIcons();
+        }
       }
 
       function setTheme(value) {
@@ -2202,6 +2361,10 @@
       }, 15000);
 
       loadState();
+
+      if (typeof lucide !== "undefined" && lucide.createIcons) {
+        lucide.createIcons();
+      }
     </script>
   </body>
 </html>
