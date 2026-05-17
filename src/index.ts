@@ -97,9 +97,39 @@ type Card = {
   createdAt: number;
   logs: string[];
   changes: CardChanges;
+  run: RunAttempt | null;
 };
 
 type DiffFileStatus = "added" | "deleted" | "modified" | "renamed";
+
+type RunStatus =
+  | "queued"
+  | "leasing"
+  | "running"
+  | "review"
+  | "completed"
+  | "failed"
+  | "stalled"
+  | "canceled";
+
+type RunAttempt = {
+  id: string;
+  cardId: string;
+  attempt: number;
+  runtime: string;
+  status: RunStatus;
+  controlIntent: string | null;
+  leaseId: string | null;
+  attachUrl: string | null;
+  vncUrl: string | null;
+  operator: string | null;
+  lastHeartbeatAt: number;
+  startedAt: number | null;
+  endedAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+  error: string | null;
+};
 
 type ChangedFile = {
   path: string;
@@ -174,6 +204,26 @@ type CardTable = {
   last_event: string | null;
   changed_files: string;
   diff_patch: string;
+  active_run_id: string | null;
+};
+
+type RunAttemptTable = {
+  id: string;
+  card_id: string;
+  attempt: number;
+  runtime: string;
+  status: RunStatus;
+  control_intent: string | null;
+  lease_id: string | null;
+  attach_url: string | null;
+  vnc_url: string | null;
+  operator: string | null;
+  last_heartbeat_at: number;
+  started_at: number | null;
+  ended_at: number | null;
+  created_at: number;
+  updated_at: number;
+  error: string | null;
 };
 
 type EventTable = {
@@ -198,6 +248,7 @@ type Database = {
   users: UserTable;
   sessions: SessionTable;
   cards: CardTable;
+  run_attempts: RunAttemptTable;
   events: EventTable;
   audit_events: AuditEventTable;
 };
@@ -213,6 +264,8 @@ const bootstrapSessionSeconds = 60 * 60;
 const githubSessionSeconds = 60 * 15;
 const lanes = ["Todo", "Running", "Human Review", "Done"];
 const preferredRepo = "openclaw/openclaw";
+const activeRunStatuses: readonly RunStatus[] = ["queued", "leasing", "running"];
+const defaultStallMs = 5 * 60 * 1000;
 
 class D1Dialect implements Dialect {
   constructor(private readonly d1: D1Database) {}
@@ -410,6 +463,14 @@ async function api(request: Request, env: RuntimeEnv): Promise<Response> {
   if (request.method === "POST" && url.pathname === "/api/cards") {
     requireRole(user, "maintainer");
     return json(await createCard(request, env, user), { status: 201 });
+  }
+
+  const runsMatch = url.pathname.match(/^\/api\/cards\/([^/]+)\/runs$/);
+  if (request.method === "GET" && runsMatch) {
+    const cardId = decodeURIComponent(runsMatch[1] ?? "");
+    const card = await readCard(env, cardId);
+    if (!card) throw notFound("card not found");
+    return json({ runs: await readRunsForCard(env, cardId) });
   }
 
   if (request.method === "PUT" && url.pathname === "/api/admin/policy") {
@@ -613,6 +674,7 @@ async function requireUser(request: Request, env: RuntimeEnv): Promise<User> {
 }
 
 async function readState(env: RuntimeEnv, user: User): Promise<Record<string, unknown>> {
+  await reconcileStalledRuns(env, Date.now());
   const db = database(env);
   const [settings, allow, repos, cards] = await Promise.all([
     readSettings(env),
@@ -683,6 +745,7 @@ async function createCard(request: Request, env: RuntimeEnv, user: User): Promis
           last_event: "card created",
           changed_files: "[]",
           diff_patch: "",
+          active_run_id: null,
         })
         .execute();
       await db
@@ -706,26 +769,80 @@ async function claimRunning(
   card: Card,
   now: number,
 ): Promise<boolean> {
-  await requireRepo(env, card.repo);
+  await reconcileStalledRuns(env, now);
+  const currentCard = (await readCard(env, card.id)) ?? card;
+  await requireRepo(env, currentCard.repo);
   const settings = await readSettings(env);
   const cap = numberSetting(settings.cap, 20);
   const db = database(env);
+  const existingRun =
+    currentCard.run && activeRunStatuses.includes(currentCard.run.status) ? currentCard.run : null;
+  if (existingRun) {
+    await heartbeatRun(env, existingRun.id, user, now, "heartbeat ok");
+    return true;
+  }
+
+  const attempt = await nextRunAttempt(env, currentCard.id);
+  const runId = `${currentCard.id}-R${attempt}`;
+  const runtime = selectRuntime(currentCard);
   const transition = await sql`
     UPDATE cards
-      SET lane = 'Running', started_at = ${now}, updated_at = ${now}, last_event = ${"run started"}
-      WHERE id = ${card.id}
-        AND lane <> 'Running'
-        AND (SELECT count(*) FROM cards WHERE lane = 'Running') < ${cap}
+      SET lane = 'Running',
+        active_run_id = ${runId},
+        started_at = COALESCE(started_at, ${now}),
+        updated_at = ${now},
+        last_event = ${"run queued"}
+      WHERE id = ${currentCard.id}
+        AND (active_run_id IS NULL OR active_run_id = '' OR active_run_id NOT IN (
+          SELECT id FROM run_attempts WHERE status IN ('queued', 'leasing', 'running')
+        ))
+        AND (lane = 'Running' OR (
+          SELECT count(*) FROM cards WHERE lane = 'Running' AND id <> ${currentCard.id}
+        ) < ${cap})
   `.execute(db);
   if ((transition.numAffectedRows ?? 0n) === 0n) {
-    await appendEvent(env, card.id, user, `capacity blocked at cap ${cap}`, now);
+    const activeCount = await db
+      .selectFrom("cards")
+      .select(sql<number>`count(*)`.as("count"))
+      .where("lane", "=", "Running")
+      .executeTakeFirst();
+    const message =
+      Number(activeCount?.count ?? 0) >= cap
+        ? `capacity blocked at cap ${cap}`
+        : "run already active";
+    await appendEvent(env, card.id, user, message, now);
     return false;
   }
-  await appendEvent(env, card.id, user, `scheduler claimed ${card.repo}`, now + 1);
-  await appendEvent(env, card.id, user, `runtime=${card.runtime} policy=${card.policy}`, now + 2);
-  if (card.changes.files.length === 0) {
-    await writeCardChanges(env, user, card, now + 3);
-  }
+  await db
+    .insertInto("run_attempts")
+    .values({
+      id: runId,
+      card_id: currentCard.id,
+      attempt,
+      runtime,
+      status: "queued",
+      control_intent: null,
+      lease_id: null,
+      attach_url: null,
+      vnc_url: null,
+      operator: null,
+      last_heartbeat_at: now,
+      started_at: now,
+      ended_at: null,
+      created_at: now,
+      updated_at: now,
+      error: null,
+    })
+    .onConflict((oc) => oc.doNothing())
+    .execute();
+  await appendEvent(env, currentCard.id, user, `scheduler queued ${currentCard.repo}`, now + 1);
+  await appendEvent(
+    env,
+    currentCard.id,
+    user,
+    `runtime=${runtime} policy=${currentCard.policy}`,
+    now + 2,
+  );
   return true;
 }
 
@@ -745,9 +862,11 @@ async function mutateCard(
       if (!(await claimRunning(env, user, card, now))) {
         return { card: (await readCard(env, id)) as Card };
       }
-    }
-    if (wasRunning && card.changes.files.length === 0) {
-      await writeCardChanges(env, user, card, now + 2);
+    } else if (card.run && activeRunStatuses.includes(card.run.status)) {
+      await heartbeatRun(env, card.run.id, user, now + 2, "heartbeat ok");
+      return { card: (await readCard(env, id)) as Card };
+    } else if (!(await claimRunning(env, user, card, now))) {
+      return { card: (await readCard(env, id)) as Card };
     }
     await appendEvent(env, card.id, user, "heartbeat ok", now + 3);
     return { card: (await readCard(env, id)) as Card };
@@ -760,7 +879,6 @@ async function mutateCard(
       return { card: (await readCard(env, id)) as Card };
     }
     const startedAt = nextLane === "Running" ? now : card.startedAt;
-    const changes = card.changes.files.length === 0 ? draftCardChanges(card) : null;
     await database(env)
       .updateTable("cards")
       .set({
@@ -768,12 +886,16 @@ async function mutateCard(
         started_at: startedAt,
         updated_at: now,
         last_event: `moved to ${nextLane}`,
-        ...(changes
-          ? { changed_files: JSON.stringify(changes.files), diff_patch: changes.patch }
-          : {}),
       })
       .where("id", "=", card.id)
       .execute();
+    if (
+      card.run &&
+      (activeRunStatuses.includes(card.run.status) ||
+        (card.run.status === "review" && nextLane === "Done"))
+    ) {
+      await finishRunForLane(env, card.run.id, nextLane, user, now + 1);
+    }
     await appendEvent(env, card.id, user, `moved to ${nextLane}`, now);
     return { card: (await readCard(env, id)) as Card };
   }
@@ -788,21 +910,19 @@ async function mutateCard(
   }
 
   if (action === "takeover") {
+    if (card.run) {
+      await database(env)
+        .updateTable("run_attempts")
+        .set({ operator: actor(user), control_intent: "takeover", updated_at: now })
+        .where("id", "=", card.run.id)
+        .execute();
+    }
     await appendEvent(env, card.id, user, "operator takeover granted", now);
     return { card: (await readCard(env, id)) as Card };
   }
 
   if (action === "stall") {
-    await database(env)
-      .updateTable("cards")
-      .set({
-        lane: "Human Review",
-        updated_at: now,
-        last_event: "stalled; workspace preserved",
-      })
-      .where("id", "=", card.id)
-      .execute();
-    await appendEvent(env, card.id, user, "stalled; workspace preserved", now);
+    await markCardStalled(env, card, user, now, "operator marked stalled");
     return { card: (await readCard(env, id)) as Card };
   }
 
@@ -1042,11 +1162,13 @@ async function readCards(env: RuntimeEnv): Promise<Card[]> {
       "started_at",
       "created_at",
       "changed_files",
+      "active_run_id",
     ])
     .orderBy("updated_at", "desc")
     .orderBy("created_at", "desc")
     .execute();
   if (!cards.length) return [];
+  const runs = await readActiveRunsForCards(env);
   const eventRows = (
     await sql<{ card_id: string; message: string; created_at: number }>`
       SELECT card_id, message, created_at
@@ -1079,6 +1201,7 @@ async function readCards(env: RuntimeEnv): Promise<Card[]> {
     createdAt: card.created_at,
     logs: logs.get(card.id) ?? [],
     changes: cardChanges(card.changed_files, ""),
+    run: card.active_run_id ? (runs.get(card.active_run_id) ?? null) : null,
   }));
 }
 
@@ -1100,10 +1223,12 @@ async function readCard(env: RuntimeEnv, id: string): Promise<Card | null> {
       "created_at",
       "changed_files",
       "diff_patch",
+      "active_run_id",
     ])
     .where("id", "=", id)
     .executeTakeFirst();
   if (!card) return null;
+  const runs = await readRunsByIds(env, card.active_run_id ? [card.active_run_id] : []);
   const eventRows = (
     await sql<{ message: string; created_at: number }>`
       SELECT message, created_at
@@ -1133,7 +1258,40 @@ async function readCard(env: RuntimeEnv, id: string): Promise<Card | null> {
       (row) => `${new Date(row.created_at).toLocaleTimeString("en-GB")} ${row.message}`,
     ),
     changes: cardChanges(card.changed_files, card.diff_patch),
+    run: card.active_run_id ? (runs.get(card.active_run_id) ?? null) : null,
   };
+}
+
+async function readRunsByIds(env: RuntimeEnv, ids: string[]): Promise<Map<string, RunAttempt>> {
+  const uniqueIds = [...new Set(ids)].filter(Boolean);
+  if (!uniqueIds.length) return new Map();
+  const rows = await database(env)
+    .selectFrom("run_attempts")
+    .selectAll()
+    .where("id", "in", uniqueIds)
+    .execute();
+  return new Map(rows.map((row) => [row.id, runAttempt(row)]));
+}
+
+async function readActiveRunsForCards(env: RuntimeEnv): Promise<Map<string, RunAttempt>> {
+  const rows = (
+    await sql<RunAttemptTable>`
+      SELECT run_attempts.*
+      FROM run_attempts
+      INNER JOIN cards ON cards.active_run_id = run_attempts.id
+    `.execute(database(env))
+  ).rows;
+  return new Map(rows.map((row) => [row.id, runAttempt(row)]));
+}
+
+async function readRunsForCard(env: RuntimeEnv, cardId: string): Promise<RunAttempt[]> {
+  const rows = await database(env)
+    .selectFrom("run_attempts")
+    .selectAll()
+    .where("card_id", "=", cardId)
+    .orderBy("attempt", "desc")
+    .execute();
+  return rows.map(runAttempt);
 }
 
 async function readSettings(env: RuntimeEnv): Promise<Record<string, string>> {
@@ -1215,6 +1373,15 @@ async function nextCardId(env: RuntimeEnv): Promise<string> {
   return `CY-${String((row?.max_id ?? 100) + 1)}`;
 }
 
+async function nextRunAttempt(env: RuntimeEnv, cardId: string): Promise<number> {
+  const row = await database(env)
+    .selectFrom("run_attempts")
+    .select(sql<number | null>`max(attempt)`.as("max_attempt"))
+    .where("card_id", "=", cardId)
+    .executeTakeFirst();
+  return (row?.max_attempt ?? 0) + 1;
+}
+
 async function requireRepo(env: RuntimeEnv, repo: string): Promise<void> {
   const row = await database(env)
     .selectFrom("repos")
@@ -1223,6 +1390,142 @@ async function requireRepo(env: RuntimeEnv, repo: string): Promise<void> {
     .where("enabled", "=", 1)
     .executeTakeFirst();
   if (!row) throw forbidden(`repo blocked by allowlist: ${repo}`);
+}
+
+async function reconcileStalledRuns(env: RuntimeEnv, now: number): Promise<void> {
+  const threshold = now - stallThresholdMs(await readSettings(env));
+  const staleRuns = await database(env)
+    .selectFrom("run_attempts")
+    .select(["id", "card_id"])
+    .where("status", "in", activeRunStatuses)
+    .where("last_heartbeat_at", "<", threshold)
+    .limit(25)
+    .execute();
+  if (!staleRuns.length) return;
+
+  const db = database(env);
+  const system = systemUser();
+  for (const run of staleRuns) {
+    const runUpdate = await db
+      .updateTable("run_attempts")
+      .set({
+        status: "stalled",
+        ended_at: now,
+        updated_at: now,
+        error: "heartbeat timeout",
+      })
+      .where("id", "=", run.id)
+      .where("status", "in", activeRunStatuses)
+      .where("last_heartbeat_at", "<", threshold)
+      .executeTakeFirst();
+    if ((runUpdate.numUpdatedRows ?? 0n) === 0n) continue;
+
+    await executeBatch(env, [
+      db
+        .updateTable("cards")
+        .set({
+          lane: "Human Review",
+          updated_at: now,
+          last_event: "stalled; heartbeat timeout",
+        })
+        .where("id", "=", run.card_id)
+        .where("active_run_id", "=", run.id),
+      eventInsert(db, run.card_id, actor(system), "stalled; heartbeat timeout", now),
+    ]);
+  }
+}
+
+async function heartbeatRun(
+  env: RuntimeEnv,
+  runId: string,
+  user: User,
+  now: number,
+  message: string,
+): Promise<void> {
+  const run = await database(env)
+    .selectFrom("run_attempts")
+    .select(["id", "card_id"])
+    .where("id", "=", runId)
+    .executeTakeFirst();
+  if (!run) return;
+  const db = database(env);
+  await executeBatch(env, [
+    db
+      .updateTable("run_attempts")
+      .set({ status: "running", last_heartbeat_at: now, updated_at: now })
+      .where("id", "=", runId)
+      .where("status", "in", activeRunStatuses),
+    eventInsert(db, run.card_id, actor(user), message, now),
+    db
+      .updateTable("cards")
+      .set({ updated_at: now, last_event: message })
+      .where("id", "=", run.card_id),
+  ]);
+}
+
+async function finishRunForLane(
+  env: RuntimeEnv,
+  runId: string,
+  lane: string,
+  user: User,
+  now: number,
+): Promise<void> {
+  const status: RunStatus =
+    lane === "Done" ? "completed" : lane === "Human Review" ? "review" : "canceled";
+  const run = await database(env)
+    .selectFrom("run_attempts")
+    .select(["id", "card_id"])
+    .where("id", "=", runId)
+    .executeTakeFirst();
+  if (!run) return;
+  const db = database(env);
+  await executeBatch(env, [
+    db
+      .updateTable("run_attempts")
+      .set({
+        status,
+        ended_at: now,
+        updated_at: now,
+        control_intent: status === "canceled" ? "cancel" : null,
+      })
+      .where("id", "=", runId),
+    eventInsert(db, run.card_id, actor(user), `run ${status}`, now),
+  ]);
+}
+
+async function markCardStalled(
+  env: RuntimeEnv,
+  card: Card,
+  user: User,
+  now: number,
+  reason: string,
+): Promise<void> {
+  const db = database(env);
+  const updates: CompilableQuery[] = [
+    db
+      .updateTable("cards")
+      .set({
+        lane: "Human Review",
+        updated_at: now,
+        last_event: "stalled; workspace preserved",
+      })
+      .where("id", "=", card.id),
+    eventInsert(db, card.id, actor(user), reason, now),
+  ];
+  if (card.run) {
+    updates.push(
+      db
+        .updateTable("run_attempts")
+        .set({
+          status: "stalled",
+          ended_at: now,
+          updated_at: now,
+          error: reason,
+        })
+        .where("id", "=", card.run.id),
+    );
+  }
+  await executeBatch(env, updates);
 }
 
 async function appendEvent(
@@ -1236,29 +1539,6 @@ async function appendEvent(
   await executeBatch(env, [
     eventInsert(db, cardId, actor(user), message, now),
     db.updateTable("cards").set({ updated_at: now, last_event: message }).where("id", "=", cardId),
-  ]);
-}
-
-async function writeCardChanges(
-  env: RuntimeEnv,
-  user: User,
-  card: Card,
-  now: number,
-): Promise<void> {
-  const changes = draftCardChanges(card);
-  const message = `diff ready +${changes.totals.additions} -${changes.totals.deletions} in ${changes.totals.files} files`;
-  const db = database(env);
-  await executeBatch(env, [
-    db
-      .updateTable("cards")
-      .set({
-        changed_files: JSON.stringify(changes.files),
-        diff_patch: changes.patch,
-        updated_at: now,
-        last_event: message,
-      })
-      .where("id", "=", card.id),
-    eventInsert(db, card.id, actor(user), message, now),
   ]);
 }
 
@@ -1414,43 +1694,49 @@ function isChangedFile(value: unknown): value is ChangedFile {
   );
 }
 
-function draftCardChanges(
-  card: Pick<Card, "id" | "prompt" | "repo" | "runtime" | "policy">,
-): CardChanges {
-  const slug = card.repo.split("/").at(-1) ?? "repo";
-  const files: ChangedFile[] = [
-    {
-      path: `packages/${slug}/runner.ts`,
-      status: "modified",
-      additions: 18,
-      deletions: 5,
-    },
-    {
-      path: `docs/${slug}-runbook.md`,
-      status: "added",
-      additions: 22,
-      deletions: 0,
-    },
-  ];
-  const headline = clean(card.prompt, 96) || "Codex run update";
-  const patch = [
-    `diff --git a/packages/${slug}/runner.ts b/packages/${slug}/runner.ts`,
-    `@@ -14,7 +14,11 @@ export async function runCard(card) {`,
-    `-  await startRuntime(card.runtime);`,
-    `+  const runtime = selectRuntime(card.runtime, card.policy);`,
-    `+  await startRuntime(runtime);`,
-    `+  await recordDiffDigest(card.id);`,
-    `   await streamLogs(card.id);`,
-    ` }`,
-    `diff --git a/docs/${slug}-runbook.md b/docs/${slug}-runbook.md`,
-    `new file mode 100644`,
-    `@@ -0,0 +1,4 @@`,
-    `+# ${card.id} runbook`,
-    `+Repo: ${card.repo}`,
-    `+Runtime: ${card.runtime}`,
-    `+Summary: ${headline}`,
-  ].join("\n");
-  return cardChanges(JSON.stringify(files), patch);
+function runAttempt(row: RunAttemptTable): RunAttempt {
+  return {
+    id: row.id,
+    cardId: row.card_id,
+    attempt: row.attempt,
+    runtime: row.runtime,
+    status: row.status,
+    controlIntent: row.control_intent,
+    leaseId: row.lease_id,
+    attachUrl: row.attach_url,
+    vncUrl: row.vnc_url,
+    operator: row.operator,
+    lastHeartbeatAt: row.last_heartbeat_at,
+    startedAt: row.started_at,
+    endedAt: row.ended_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    error: row.error,
+  };
+}
+
+function selectRuntime(card: Pick<Card, "runtime" | "prompt">): string {
+  if (card.runtime === "crabbox" || card.runtime === "container") return card.runtime;
+  return /\b(vnc|manual|takeover|gpu|perf|performance)\b/i.test(card.prompt)
+    ? "crabbox"
+    : "container";
+}
+
+function stallThresholdMs(settings: Record<string, string>): number {
+  const parsed = Number(settings.stall_ms);
+  return Number.isFinite(parsed) && parsed >= 60_000 ? parsed : defaultStallMs;
+}
+
+function systemUser(): User {
+  return {
+    subject: "system:crabyard",
+    login: "system",
+    email: null,
+    name: "Crabyard",
+    role: "owner",
+    allowed: true,
+    teams: [],
+  };
 }
 
 function cookies(request: Request): Map<string, string> {

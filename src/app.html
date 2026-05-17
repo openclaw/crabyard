@@ -1491,8 +1491,9 @@
                 : "";
         const live =
           card.lane === "Running"
-            ? `<span class="chip hot">live ${elapsed(card.startedAt)}</span>`
+            ? `<span class="chip hot">${escapeHtml(card.run?.status || "live")} ${elapsed(card.run?.lastHeartbeatAt || card.startedAt)}</span>`
             : "";
+        const runChip = card.run ? `<span class="chip">${escapeHtml(card.run.id)}</span>` : "";
         const runActions = canMaintain()
           ? `<button data-action="start" data-id="${card.id}">${card.lane === "Running" ? "Pulse" : "Start"}</button>
           <button data-action="attach" data-id="${card.id}">Attach</button>
@@ -1507,6 +1508,7 @@
           <span class="chip">${card.id}</span>
           <span class="chip">${escapeHtml(card.repo)}</span>
           <span class="chip">${card.runtime}</span>
+          ${runChip}
           <span class="chip merge">${card.policy}</span>
           ${live}
         </div>
@@ -1819,7 +1821,7 @@
           </div>
           <footer class="session-cell-foot">
             <span data-terminal-status="${escapeHtml(card.id)}">Ghostty WASM</span>
-            <span data-session-runtime-label="${escapeHtml(card.id)}">${escapeHtml(card.runtime === "crabbox" ? "VNC eligible" : "container")}</span>
+            <span data-session-runtime-label="${escapeHtml(card.id)}">${escapeHtml(runRuntime(card) === "crabbox" ? "VNC eligible" : "container")}</span>
           </footer>
         </article>`;
       }
@@ -1829,10 +1831,15 @@
         return `
           <span class="chip">${escapeHtml(card.id)}</span>
           <span class="chip">${escapeHtml(card.repo)}</span>
-          <span class="chip">${escapeHtml(card.runtime)}</span>
+          <span class="chip">${escapeHtml(card.run?.runtime || card.runtime)}</span>
+          ${card.run ? `<span class="chip">${escapeHtml(card.run.status)}</span>` : ""}
           <span class="chip merge">${escapeHtml(card.policy)}</span>
-          ${running ? `<span class="chip hot">live ${elapsed(card.startedAt)}</span>` : `<span class="chip">${escapeHtml(card.lane)}</span>`}
+          ${running ? `<span class="chip hot">live ${elapsed(card.run?.lastHeartbeatAt || card.startedAt)}</span>` : `<span class="chip">${escapeHtml(card.lane)}</span>`}
         `;
+      }
+
+      function runRuntime(card) {
+        return card.run?.runtime || card.runtime;
       }
 
       function refreshSessionCell(card) {
@@ -1846,7 +1853,7 @@
         }
         if (meta) meta.innerHTML = sessionMetaHtml(card);
         if (runtime)
-          runtime.textContent = card.runtime === "crabbox" ? "VNC eligible" : "container";
+          runtime.textContent = runRuntime(card) === "crabbox" ? "VNC eligible" : "container";
       }
 
       async function hydrateSessionTerminals() {
@@ -1968,10 +1975,12 @@
         <h3>Session</h3>
         <div class="kv">
           <span>Repo <strong>${escapeHtml(card.repo)}</strong></span>
-          <span>Runtime <strong>${card.runtime}</strong></span>
+          <span>Runtime <strong>${escapeHtml(runRuntime(card))}</strong></span>
+          <span>Run <strong>${escapeHtml(card.run?.id || "none")}</strong></span>
+          <span>Run state <strong>${escapeHtml(card.run?.status || "idle")}</strong></span>
           <span>Policy <strong>${card.policy}</strong></span>
           <span>State <strong>${card.lane}</strong></span>
-          <span>VNC <strong>${card.runtime === "crabbox" ? "available" : "not available"}</strong></span>
+          <span>VNC <strong>${runRuntime(card) === "crabbox" ? "available" : "not available"}</strong></span>
         </div>
         <button id="watch">Watch</button>
         ${maintainerControls}
