@@ -276,7 +276,7 @@ Create a new card.
 
 **Fields:**
 
-- `title` (required, max 140 chars)
+- `title` (optional, max 140 chars; generated from prompt when omitted)
 - `prompt` (required, max 4000 chars)
 - `repo` (required, must be allowlisted, format: `owner/repo`)
 - `source` (optional, one of: `Prompt`, `Issue`, `PR`, default: `Prompt`)

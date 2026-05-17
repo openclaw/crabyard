@@ -626,10 +626,10 @@ async function createCard(request: Request, env: RuntimeEnv, user: User): Promis
     runtime?: string;
     policy?: string;
   }>(request);
-  const title = clean(body.title, 140);
   const prompt = clean(body.prompt, 4000);
+  const title = clean(body.title, 140) || titleFromPrompt(prompt);
   const repo = normalizeRepo(body.repo);
-  if (!title || !prompt || !repo) throw badRequest("title, prompt, and repo are required");
+  if (!prompt || !repo) throw badRequest("prompt and repo are required");
   await requireRepo(env, repo);
 
   const source = oneOf(body.source, ["Prompt", "Issue", "PR"], "Prompt");
@@ -1477,6 +1477,14 @@ function clean(value: unknown, max: number): string {
   return String(value ?? "")
     .trim()
     .slice(0, max);
+}
+
+function titleFromPrompt(prompt: string): string {
+  const line = prompt
+    .split(/\r?\n/)
+    .map((part) => part.trim())
+    .find(Boolean);
+  return clean(line?.replace(/^#+\s*/, ""), 140) || "Untitled card";
 }
 
 function oneOf<T extends string>(value: unknown, options: readonly T[], fallback: T): T {

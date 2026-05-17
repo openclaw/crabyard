@@ -46,7 +46,7 @@ Add users/teams to the allowlist and enable repos:
 
 ### 3. Create Cards
 
-- **From prompt:** New card → enter title, prompt, select repo
+- **From prompt:** New card → enter prompt, select repo; title is optional
 - **From issue:** Search GitHub issues → create card
 - **From PR:** Search GitHub PRs → create card for review/fix
 

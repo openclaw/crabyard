@@ -420,7 +420,7 @@ Example: "openclaw health" → matches cards with "openclaw" in repo and "health
 **Via UI:**
 
 1. Click "New card"
-2. Fill form (source, repo, title, prompt, runtime, policy)
+2. Fill form (source, repo, prompt, optional title, runtime, policy)
 3. Click "Create"
 
 **Via API:**
