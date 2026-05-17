@@ -1,0 +1,708 @@
+---
+title: Admin
+layout: default
+permalink: /admin/
+description: "Access control, allowlists, policies, and administration for Crabyard."
+---
+
+# Admin
+
+Admin controls govern access, repos, runtime caps, and merge policies.
+
+## Roles
+
+### Owner
+
+Full administrative access.
+
+**Can:**
+
+- Manage user/team allowlists
+- Add/remove repos
+- Configure runtime caps
+- Set merge policies
+- Set log retention
+- View audit log
+- All maintainer actions
+
+**Use cases:**
+
+- Initial bootstrap admin
+- Org admins
+- Infrastructure team
+
+### Maintainer
+
+Operational access without policy control.
+
+**Can:**
+
+- Create cards
+- Start/stop runs
+- Attach to sessions
+- Take over runs
+- Approve direct merge (if policy allows)
+- View board and logs
+
+**Cannot:**
+
+- Manage allowlists
+- Add/remove repos
+- Change org policies
+
+**Use cases:**
+
+- Active contributors
+- Core team members
+- Trusted agents
+
+### Viewer
+
+Read-only access.
+
+**Can:**
+
+- View board
+- View logs
+- Attach in watch mode (read-only)
+
+**Cannot:**
+
+- Create cards
+- Start runs
+- Take over sessions
+- Change anything
+
+**Use cases:**
+
+- Observers
+- Stakeholders
+- Read-only audit access
+
+## Access Control
+
+### User Allowlist
+
+Add individual GitHub users.
+
+**Format:** `@login`
+
+**Example:**
+
+```
+@steipete
+@jane
+@octocat
+```
+
+**How to add:**
+
+1. Admin panel → Users and teams
+2. Enter `@login`
+3. Select role (viewer, maintainer, owner)
+4. Click Add
+
+**Role inheritance:**
+
+- User role determined by strongest match
+- Direct user entry overrides team membership
+
+### Team Allowlist
+
+Add GitHub teams (all members inherit access).
+
+**Format:** `@org/team`
+
+**Example:**
+
+```
+@openclaw/maintainers
+@openclaw/core
+```
+
+**How to add:**
+
+1. Admin panel → Users and teams
+2. Enter `@org/team`
+3. Select role
+4. Click Add
+
+**Team membership:**
+
+- Fetched from GitHub on each login
+- Team membership changes apply immediately (next session)
+- Removing team removes access for all members
+
+### Role Hierarchy
+
+```
+owner > maintainer > viewer
+```
+
+User's effective role = strongest match across:
+
+- Direct user allowlist entry
+- All team allowlist entries
+
+**Examples:**
+
+| User     | Allowlist Entries                                         | Effective Role |
+| -------- | --------------------------------------------------------- | -------------- |
+| @alice   | `@alice` → maintainer                                     | maintainer     |
+| @bob     | `@openclaw/core` → owner                                  | owner          |
+| @charlie | `@charlie` → viewer, `@openclaw/maintainers` → maintainer | maintainer     |
+| @dave    | (none)                                                    | (blocked)      |
+
+## Repo Allowlist
+
+Only allowlisted repos can be used for cards.
+
+**Format:** `owner/repo`
+
+**Examples:**
+
+```
+openclaw/crabyard
+openclaw/codex
+steipete/PSPDFKit
+```
+
+**How to add:**
+
+1. Admin panel → Repos
+2. Enter `owner/repo`
+3. Click Add
+
+**Effects:**
+
+- Repo appears in card creation dropdown
+- Cards can be created for this repo
+- Runs can execute against this repo
+
+**How to remove:**
+
+1. Find repo in Repos list
+2. Click X button
+3. Existing cards preserved
+4. New cards blocked until re-added
+
+**Bulk management:**
+
+- No bulk import (yet)
+- Add repos one at a time
+- Consider scripting via API for large orgs
+
+## Org Policies
+
+### Concurrent Cap
+
+Max number of simultaneous Running cards.
+
+**Default:** 20
+**Range:** 1-200
+
+**When cap reached:**
+
+- New cards queue in Todo
+- Scheduler claims as capacity frees
+- FIFO order (oldest first)
+
+**Planning:**
+
+```
+10 users × 2 cards = 20 cap
+5 heavy jobs + 15 light = 20 cap
+```
+
+**How to set:**
+
+1. Admin panel → Policy
+2. Enter new cap (1-200)
+3. Click Save policy
+
+**Recommendations:**
+
+- Start with 20
+- Monitor "Queue" metric
+- Increase if queue consistently >10
+- Decrease if costs too high
+
+### Log Retention
+
+How long to keep R2 logs and artifacts.
+
+**Options:**
+
+- 14 days
+- 30 days (default)
+- 60 days
+
+**Effects:**
+
+- After expiry, R2 logs deleted
+- D1 keeps minimal run summary
+- Terminal replay unavailable
+- Artifacts (screenshots, diffs) deleted
+
+**How to set:**
+
+1. Admin panel → Policy
+2. Select retention period
+3. Click Save policy
+
+**Cost considerations:**
+
+- Longer retention = higher R2 storage costs
+- 30 days sufficient for most cases
+- 60 days for compliance/audit requirements
+
+### Direct Merge Permission
+
+Who can auto-merge PRs when policy allows.
+
+**Options:**
+
+**Guarded (default):**
+
+- Maintainers can merge if all guardrails pass
+- Checks: repo allowlisted, all CI green, branch up to date, no takeover active
+
+**Disabled:**
+
+- No auto-merge allowed
+- All PRs require manual merge
+- Safest option
+
+**Maintainers only:**
+
+- Same as Guarded, explicitly labeled
+- Clarifies maintainer+ required
+
+**How to set:**
+
+1. Admin panel → Policy
+2. Select direct merge mode
+3. Click Save policy
+
+**Recommendations:**
+
+- Start with Disabled for new orgs
+- Move to Guarded after testing workflows
+- Never merge critical infra repos automatically
+
+## Auth
+
+### GitHub OAuth
+
+Recommended for production.
+
+**Setup:**
+
+1. Create GitHub OAuth app in your org
+2. Callback URL: `https://crabyard.openclaw.ai/auth/github/callback`
+3. Scopes: `read:user`, `read:org`
+4. Add secrets to Cloudflare Worker:
+   - `GITHUB_CLIENT_ID`
+   - `GITHUB_CLIENT_SECRET`
+5. Set `GITHUB_ORG` var (default: `openclaw`)
+
+**Session lifetime:**
+
+- 15 minutes
+- Re-login required after expiry
+
+**Benefits:**
+
+- Per-user attribution
+- Team membership sync
+- No shared tokens
+
+### Bootstrap Token
+
+Admin break-glass access.
+
+**Setup:**
+
+1. Generate strong random token: `openssl rand -hex 32`
+2. Set as `CRABYARD_BOOTSTRAP_TOKEN` secret in Cloudflare
+3. Share securely with initial admin
+
+**Session lifetime:**
+
+- 1 hour (non-refreshing)
+- Re-enter token to start new session
+
+**Security:**
+
+- Treat as root password
+- Rotate regularly
+- Never commit to git
+- Use only for initial setup and recovery
+
+**When to use:**
+
+- First-time setup (no users allowlisted yet)
+- GitHub OAuth broken
+- Emergency access
+
+**Recommended workflow:**
+
+1. Bootstrap admin logs in
+2. Adds own GitHub user to allowlist as owner
+3. Logs out bootstrap
+4. Logs in via GitHub OAuth
+5. Normal operations use GitHub OAuth only
+
+## Audit Log
+
+All admin actions logged to D1.
+
+**Logged events:**
+
+- User/team allowlist changes
+- Repo add/remove
+- Policy updates
+- Direct merges
+- Secret usage (values redacted)
+- Takeover events
+
+**Example entries:**
+
+```
+2026-05-17 14:32:01 @steipete allowlist updated @jane role=maintainer
+2026-05-17 14:35:12 @steipete repo allowlisted openclaw/crabyard
+2026-05-17 14:40:00 @steipete policy updated cap=30 retention=30 merge=guarded
+2026-05-17 15:10:45 @jane operator takeover granted for CY-101
+2026-05-17 15:45:00 @jane merged PR openclaw/crabyard#456 commit=abc123
+```
+
+**Retention:**
+
+- Audit log not subject to R2 retention policy
+- Kept indefinitely in D1 (until DB size limits)
+- Consider periodic export for compliance
+
+**Access:**
+
+- Owner role only
+- View in Admin panel → Audit log section (future UI)
+- Query D1 directly for now: `SELECT * FROM audit_events ORDER BY created_at DESC`
+
+## Secrets Management
+
+Secrets stored in Cloudflare Worker environment, never in D1/R2.
+
+### Secret Types
+
+**Bootstrap token:**
+
+- `CRABYARD_BOOTSTRAP_TOKEN`
+- Admin break-glass access
+- Rotate quarterly
+
+**GitHub OAuth:**
+
+- `GITHUB_CLIENT_ID`
+- `GITHUB_CLIENT_SECRET`
+- Rotate if leaked
+
+**GitHub App (future):**
+
+- Private key for repo operations
+- Scoped per repo
+- Rotate on security events
+
+**Crabbox credentials (future):**
+
+- API token for Crabbox broker
+- Scoped to org
+- Rotate monthly
+
+### Secret Access
+
+**At runtime:**
+
+- Worker binds secrets from environment
+- Never logged
+- Never returned in API responses
+- Never stored in D1/R2
+
+**Scoped delivery:**
+
+- Containers/Crabbox receive only scoped session tokens
+- No broad credentials passed to runtimes
+- Session tokens expire after run
+
+### Secret Rotation
+
+**How to rotate:**
+
+1. Generate new secret value
+2. Update Cloudflare Worker secret via dashboard or `wrangler secret put`
+3. Old sessions fail after expiry (15min-1hr)
+4. All new sessions use new secret
+
+**When to rotate:**
+
+- Quarterly (bootstrap token)
+- On security incident
+- On team member departure
+- On credential leak
+
+**Best practices:**
+
+- Store secrets in 1Password/Vault
+- Never commit to git
+- Never share via Slack/email
+- Use `wrangler secret put` (not env vars in code)
+
+## API
+
+### List Allowlist
+
+```bash
+GET /api/state
+```
+
+Returns full state (owner role only):
+
+```json
+{
+  "user": {...},
+  "allow": [
+    {"value": "@steipete", "role": "owner"},
+    {"value": "@openclaw/maintainers", "role": "maintainer"}
+  ],
+  "repos": ["openclaw/crabyard", "openclaw/codex"],
+  "cap": 20,
+  "retention": "30",
+  "merge": "guarded"
+}
+```
+
+### Add User/Team
+
+```bash
+POST /api/admin/allow
+{
+  "value": "@jane",
+  "role": "maintainer"
+}
+```
+
+Returns updated state.
+
+### Remove User/Team
+
+```bash
+DELETE /api/admin/allow/@jane
+```
+
+URL-encode value: `DELETE /api/admin/allow/%40jane`
+
+### Add Repo
+
+```bash
+POST /api/admin/repos
+{
+  "repo": "openclaw/crabyard"
+}
+```
+
+### Remove Repo
+
+```bash
+DELETE /api/admin/repos/openclaw%2Fcrabyard
+```
+
+URL-encode `owner/repo` → `owner%2Frepo`
+
+### Update Policy
+
+```bash
+PUT /api/admin/policy
+{
+  "cap": 30,
+  "retention": "60",
+  "merge": "disabled"
+}
+```
+
+All fields optional. Omitted fields unchanged.
+
+## Monitoring
+
+### Metrics
+
+Dashboard shows:
+
+- **Active:** Running cards count / cap
+- **Queue:** Todo cards count
+- **Review:** Human Review cards count
+- **Logs:** Retention period
+
+**Healthy state:**
+
+- Active < cap (capacity available)
+- Queue < 10 (not bottlenecked)
+- Review < 20 (not backlogged)
+
+**Warning signs:**
+
+- Active = cap consistently → Increase cap
+- Queue > 20 → Increase cap or reduce load
+- Review > 50 → Process reviews or adjust merge policy
+
+### Audit Review
+
+Owner should periodically review:
+
+- Recent allowlist changes (who added what)
+- Direct merges (which PRs auto-merged)
+- Takeover events (who took control of which runs)
+- Policy changes (who changed caps/retention/merge)
+
+**How to review:**
+
+```sql
+SELECT * FROM audit_events
+WHERE created_at > strftime('%s', 'now', '-7 days') * 1000
+ORDER BY created_at DESC;
+```
+
+Query D1 directly via `wrangler d1 execute`.
+
+## Best Practices
+
+### Allowlist Management
+
+**Start small:**
+
+- Add owners first
+- Add core team as maintainers
+- Add observers as viewers
+- Expand gradually
+
+**Use teams:**
+
+- Prefer `@org/team` over individual users
+- Easier to manage at scale
+- Automatic sync with GitHub membership
+
+**Review regularly:**
+
+- Quarterly audit of allowlist
+- Remove departed team members
+- Downgrade inactive members to viewer
+
+### Repo Management
+
+**Allowlist only active repos:**
+
+- Don't allowlist entire org
+- Add repos as needed
+- Remove deprecated/archived repos
+
+**Avoid wildcards:**
+
+- No `*` support (yet)
+- Explicit per-repo approval required
+- Prevents accidental access to sensitive repos
+
+### Policy Tuning
+
+**Concurrent cap:**
+
+- Start with 20
+- Monitor queue length
+- Increase if bottlenecked
+- Decrease if costs too high
+
+**Log retention:**
+
+- 30 days sufficient for most
+- Increase to 60 for compliance
+- Export logs to external storage for long-term retention
+
+**Direct merge:**
+
+- Start disabled
+- Enable guarded after workflow proven
+- Never auto-merge critical infrastructure
+
+### Security
+
+**Bootstrap token:**
+
+- Rotate quarterly
+- Store in 1Password/Vault
+- Use only for break-glass access
+
+**GitHub OAuth:**
+
+- Use org-owned OAuth app (not personal)
+- Scope to `read:user read:org` only
+- Rotate client secret on security events
+
+**Secrets:**
+
+- Never log or expose
+- Use Cloudflare secrets (not env vars)
+- Audit secret usage via audit log
+
+**Audit log:**
+
+- Review weekly (owner)
+- Export for compliance
+- Alert on suspicious patterns
+
+## Troubleshooting
+
+### User can't log in via GitHub
+
+**Cause:** Not in OpenClaw org or not allowlisted
+
+**Solution:**
+
+1. Verify user is in GitHub org
+2. Check allowlist for `@login` or `@org/team` entry
+3. Add if missing
+
+### Team allowlist not working
+
+**Cause:** GitHub team membership not synced
+
+**Solution:**
+
+- Team membership fetched fresh on each login
+- User must log out and back in to refresh teams
+- Verify team slug matches exactly (case-sensitive)
+
+### Repo not appearing in dropdown
+
+**Cause:** Repo not allowlisted
+
+**Solution:**
+
+1. Admin → Repos
+2. Add `owner/repo`
+3. Refresh page
+
+### Direct merge blocked
+
+**Cause:** Policy disabled or guardrails failed
+
+**Solution:**
+
+1. Check Admin → Policy → Direct merge setting
+2. Verify CI checks all green
+3. Verify branch up to date
+4. Check no active takeover
+5. User has maintainer+ role
+
+## Next Steps
+
+- [Quickstart](/quickstart/) – Bootstrap your first admin session
+- [Cards](/cards/) – Create and manage cards
+- [Runs](/runs/) – Monitor and debug runs
+- [API Reference](/api/) – Full REST and WebSocket API docs

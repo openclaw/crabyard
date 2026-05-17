@@ -8,7 +8,7 @@ const distRoot = new URL("../dist/", import.meta.url);
 const distApp = new URL("../dist/app/", import.meta.url);
 const distDocs = new URL("../dist/docs/", import.meta.url);
 
-const [appHtmlSource, specMarkdown, logoBytes] = await Promise.all([
+const [appHtmlSource, rawSpecMarkdown, logoBytes] = await Promise.all([
   readFile(appPath, "utf8"),
   readFile(specPath, "utf8"),
   readFile(logoPath),
@@ -16,6 +16,7 @@ const [appHtmlSource, specMarkdown, logoBytes] = await Promise.all([
 
 const logoDataUrl = `data:image/png;base64,${logoBytes.toString("base64")}`;
 const appHtml = appHtmlSource.replaceAll("__CRABYARD_LOGO__", logoDataUrl);
+const specMarkdown = stripFrontmatter(rawSpecMarkdown);
 const specHtml = renderSpecPage(specMarkdown);
 
 await mkdir(new URL("../src/", import.meta.url), { recursive: true });
@@ -40,6 +41,10 @@ if (process.argv.includes("--static")) {
 function redirectHtml(path) {
   const target = `https://crabyard.openclaw.ai${path}`;
   return `<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0; url=${target}"><title>Crabyard.ai</title><a href="${target}">Crabyard.ai</a>`;
+}
+
+function stripFrontmatter(markdown) {
+  return markdown.replace(/^---\n[\s\S]*?\n---\n+/, "");
 }
 
 function renderSpecPage(markdown) {

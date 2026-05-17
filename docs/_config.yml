@@ -1,0 +1,8 @@
+title: Crabyard.ai Docs
+description: OpenClaw Codex run control plane documentation.
+url: https://docs.crabyard.ai
+baseurl: ""
+permalink: pretty
+markdown: kramdown
+exclude:
+  - README.md

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add GitHub Pages documentation for docs.crabyard.ai.
 - Clear seeded and smoke-test cards from production boards.
 - Add Crabyard logo branding to the app and hide unavailable GitHub OAuth login.
 - Migrate Worker persistence to a typed Kysely D1 query layer.

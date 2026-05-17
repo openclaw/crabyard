@@ -1,3 +1,9 @@
+---
+layout: default
+title: Spec
+permalink: /spec/
+---
+
 # Crabyard.ai Spec
 
 Status: draft, initial deployed control plane backed by Cloudflare Worker and D1
@@ -688,7 +694,7 @@ Picker behavior:
 
 Target domain:
 
-- `https://crabyard.ai`
+- `https://crabyard.openclaw.ai`
 
 Current DNS expectation:
 
@@ -713,8 +719,8 @@ Initial deployable artifact:
 Required deploy checks:
 
 - `npx wrangler whoami` shows expected Cloudflare account.
-- `crabyard.ai` is routed to deployed Worker.
-- `curl -I https://crabyard.ai` returns 200 or redirect to canonical HTTPS.
+- `crabyard.openclaw.ai` is routed to deployed Worker.
+- `curl -I https://crabyard.openclaw.ai/healthz` returns 200.
 - `/docs/spec` renders this spec.
 
 ## Security
