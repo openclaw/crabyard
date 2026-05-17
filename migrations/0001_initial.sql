@@ -79,7 +79,7 @@ INSERT OR IGNORE INTO settings (key, value) VALUES
 
 INSERT OR IGNORE INTO allow_entries (value, role, created_at, updated_at) VALUES
   ('@steipete', 'owner', unixepoch() * 1000, unixepoch() * 1000),
-  ('@openclaw/maintainers', 'maintainer', unixepoch() * 1000, unixepoch() * 1000);
+  ('@openclaw/maintainer', 'maintainer', unixepoch() * 1000, unixepoch() * 1000);
 
 INSERT OR IGNORE INTO repos (repo, enabled, created_at, updated_at) VALUES
   ('openclaw/crabyard', 1, unixepoch() * 1000, unixepoch() * 1000),

@@ -191,7 +191,7 @@ Fetch current user info.
     "name": "Peter Steinberger",
     "role": "owner",
     "allowed": true,
-    "teams": ["@openclaw/core", "@openclaw/maintainers"]
+    "teams": ["@openclaw/core", "@openclaw/maintainer"]
   },
   "auth": {
     "github": true,
@@ -222,7 +222,7 @@ Fetch full app state (cards, allowlists, repos, policies).
   "merge": "guarded",
   "allow": [
     {"value": "@steipete", "role": "owner"},
-    {"value": "@openclaw/maintainers", "role": "maintainer"}
+    {"value": "@openclaw/maintainer", "role": "maintainer"}
   ],
   "repos": ["openclaw/crabyard", "openclaw/codex"],
   "cards": [

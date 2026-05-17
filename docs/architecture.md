@@ -145,7 +145,7 @@ GitHub-authenticated user with role.
   name: string | null
   role: Role              // viewer | maintainer | owner
   allowed: boolean
-  teams: string[]         // [@openclaw/maintainers, ...]
+  teams: string[]         // [@openclaw/maintainer, ...]
 }
 ```
 

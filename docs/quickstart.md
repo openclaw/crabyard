@@ -130,7 +130,7 @@ Now users can log in with GitHub instead of bootstrap token.
 Instead of individual users, add entire teams:
 
 1. Admin → Users and teams
-2. Enter team as `@org/team` (e.g., `@openclaw/maintainers`)
+2. Enter team as `@org/team` (e.g., `@openclaw/maintainer`)
 3. Select role: Maintainer
 4. All team members inherit access
 

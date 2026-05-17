@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Fix the default OpenClaw maintainer team allowlist slug.
 - Add a fullscreen Ghostty WASM Codex session grid for attach/watch/takeover workflows.
 - Add a persistent light/dark mode toggle to the app rail.
 - Make new card titles optional and derive blank titles from the prompt.

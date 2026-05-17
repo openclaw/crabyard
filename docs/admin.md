@@ -116,7 +116,7 @@ Add GitHub teams (all members inherit access).
 **Example:**
 
 ```
-@openclaw/maintainers
+@openclaw/maintainer
 @openclaw/core
 ```
 
@@ -146,12 +146,12 @@ User's effective role = strongest match across:
 
 **Examples:**
 
-| User     | Allowlist Entries                                         | Effective Role |
-| -------- | --------------------------------------------------------- | -------------- |
-| @alice   | `@alice` → maintainer                                     | maintainer     |
-| @bob     | `@openclaw/core` → owner                                  | owner          |
-| @charlie | `@charlie` → viewer, `@openclaw/maintainers` → maintainer | maintainer     |
-| @dave    | (none)                                                    | (blocked)      |
+| User     | Allowlist Entries                                        | Effective Role |
+| -------- | -------------------------------------------------------- | -------------- |
+| @alice   | `@alice` → maintainer                                    | maintainer     |
+| @bob     | `@openclaw/core` → owner                                 | owner          |
+| @charlie | `@charlie` → viewer, `@openclaw/maintainer` → maintainer | maintainer     |
+| @dave    | (none)                                                   | (blocked)      |
 
 ## Repo Allowlist
 
@@ -473,7 +473,7 @@ Returns full state (owner role only):
   "user": {...},
   "allow": [
     {"value": "@steipete", "role": "owner"},
-    {"value": "@openclaw/maintainers", "role": "maintainer"}
+    {"value": "@openclaw/maintainer", "role": "maintainer"}
   ],
   "repos": ["openclaw/crabyard", "openclaw/codex"],
   "cap": 20,
