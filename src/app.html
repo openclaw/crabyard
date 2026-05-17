@@ -1273,6 +1273,7 @@
             <label
               >Merge policy
               <select name="policy">
+                <option value="">repo default</option>
                 <option>open_pr</option>
                 <option>merge_when_green</option>
                 <option>fix_until_green_and_merge</option>
@@ -1386,6 +1387,14 @@
                 <span>VNC: <strong>Crabbox leases only</strong></span>
               </div>
             </section>
+            <section class="admin-box">
+              <h3>Workflows</h3>
+              <div class="form-grid">
+                <input id="workflow-repo-input" class="full" placeholder="openclaw/openclaw" />
+                <button id="refresh-workflow" class="primary full">Refresh CRABYARD.md</button>
+              </div>
+              <div class="list" id="workflow-list"></div>
+            </section>
           </div>
         </div>
       </section>
@@ -1395,7 +1404,15 @@
       const lanes = ["Todo", "Running", "Human Review", "Done"];
       let filter = "all";
       let activeRunId = null;
-      let state = { cards: [], allow: [], repos: [], cap: 20, retention: "30", merge: "guarded" };
+      let state = {
+        cards: [],
+        allow: [],
+        repos: [],
+        workflows: [],
+        cap: 20,
+        retention: "30",
+        merge: "guarded",
+      };
       let signedIn = false;
       let authMethods = { github: false, token: false };
       let stateRetryTimer = null;
@@ -1607,6 +1624,7 @@
           state.repos.map((repo) => ({ label: repo, value: repo })),
           "repo",
         );
+        renderWorkflowList();
         const owner = state.user?.role === "owner";
         document
           .querySelectorAll(
@@ -1615,6 +1633,28 @@
           .forEach((element) => {
             element.disabled = !owner;
           });
+      }
+
+      function renderWorkflowList() {
+        const workflows = state.workflows || [];
+        const list = document.getElementById("workflow-list");
+        if (!workflows.length) {
+          list.innerHTML = `<div class="empty">No workflow evaluations</div>`;
+          return;
+        }
+        list.innerHTML = workflows
+          .map((workflow) => {
+            const config = workflow.config || {};
+            const detail = [
+              config.runtime ? `runtime=${config.runtime}` : "",
+              config.policy ? `policy=${config.policy}` : "",
+              workflow.error || "",
+            ]
+              .filter(Boolean)
+              .join(" ");
+            return `<div class="list-row"><span>${escapeHtml(workflow.repo)} - ${escapeHtml(workflow.status)}${detail ? `<br><small>${escapeHtml(detail)}</small>` : ""}</span></div>`;
+          })
+          .join("");
       }
 
       function renderList(id, items, kind) {
@@ -2129,6 +2169,10 @@
           if (input.value.trim()) addRepo(input.value.trim());
           input.value = "";
         }
+        if (target.id === "refresh-workflow") {
+          const input = document.getElementById("workflow-repo-input");
+          refreshWorkflow(input.value.trim());
+        }
         if (target.id === "save-policy") {
           const rawCap = Number(document.getElementById("cap-input").value);
           updatePolicy({
@@ -2294,7 +2338,7 @@
             repo: match.repo,
             source: match.source,
             runtime: "auto",
-            policy: "open_pr",
+            policy: "",
           },
         });
         refPreview = { number: "", loading: false, matches: [], error: "" };
@@ -2319,6 +2363,11 @@
 
       async function removeRepo(repo) {
         state = await api(`/api/admin/repos/${encodeURIComponent(repo)}`, { method: "DELETE" });
+        render();
+      }
+
+      async function refreshWorkflow(repo) {
+        state = await api("/api/admin/workflows/evaluate", { method: "POST", body: { repo } });
         render();
       }
 
