@@ -1643,7 +1643,7 @@ function bridgeWebSockets(
           closePair(left, right, 1008, "terminal control revoked");
           return;
         }
-        right.send(data);
+        right.send(await webSocketMessageData(data));
       });
   });
   right.addEventListener("message", (event) => {
@@ -1652,7 +1652,7 @@ function bridgeWebSockets(
       .catch(() => undefined)
       .then(async () => {
         if (left.readyState !== WebSocket.OPEN || right.readyState !== WebSocket.OPEN) return;
-        left.send(data);
+        left.send(await webSocketMessageData(data));
       });
   });
   left.addEventListener("close", (event) => {
@@ -1671,6 +1671,23 @@ function bridgeWebSockets(
     stopControlCheck();
     closePair(right, left, 1011, "peer error");
   });
+}
+
+async function webSocketMessageData(data: unknown): Promise<string | ArrayBuffer> {
+  if (typeof data === "string" || data instanceof ArrayBuffer) return data;
+  if (data instanceof Uint8Array) {
+    return new Uint8Array(data).buffer;
+  }
+  if (data instanceof Blob) return await data.arrayBuffer();
+  if (
+    data &&
+    typeof data === "object" &&
+    "arrayBuffer" in data &&
+    typeof data.arrayBuffer === "function"
+  ) {
+    return await data.arrayBuffer();
+  }
+  return String(data);
 }
 
 function closePeer(event: CloseEvent, to: WebSocket): void {
