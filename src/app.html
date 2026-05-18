@@ -2517,8 +2517,16 @@
 
       document.addEventListener("keydown", (event) => {
         if (event.key !== "Escape" || event.isComposing) return;
+        if (isTerminalKeyTarget(event)) return;
         if (closeTopDrawer()) event.preventDefault();
       });
+
+      function isTerminalKeyTarget(event) {
+        const active = document.activeElement;
+        return Boolean(
+          event.target?.closest?.(".ghostty-terminal") || active?.closest?.(".ghostty-terminal"),
+        );
+      }
 
       document.getElementById("search").addEventListener("input", () => {
         renderBoard();

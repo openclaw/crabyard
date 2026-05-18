@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Keep Escape routed to focused Codex terminals instead of closing the session drawer.
 - Enable the experimental Codex goals feature in provisioned interactive sessions.
 - Fix interactive Codex session provisioning to show the terminal immediately and stream live PTY bytes into Ghostty.
 - Add a Cloudflare container runner backend for standalone interactive session provisioning.
