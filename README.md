@@ -145,6 +145,12 @@ Configure these in Cloudflare Workers dashboard:
 - `CRABYARD_INTERACTIVE_PROVISION_TOKEN` – Optional bearer token sent to the interactive provision endpoint; required when backend URLs below are configured
 - `CRABYARD_RUNTIME_PROVISION_URL` – Optional generic backend URL used by `/api/provision/interactive`
 - `CRABYARD_RUNTIME_PROVISION_TOKEN` – Optional bearer token sent to the generic runtime backend
+- `CRABYARD_CLOUDFLARE_RUNNER_URL` – Optional Crabbox Cloudflare container runner URL used by `/api/provision/interactive`
+- `CRABYARD_CLOUDFLARE_RUNNER_TOKEN` – Optional bearer token sent to the Cloudflare runner
+- `CRABYARD_CLOUDFLARE_RUNNER_INSTANCE_TYPE` – Optional runner instance type, default `standard-4`
+- `CRABYARD_CLOUDFLARE_RUNNER_WORKDIR` – Optional base workdir for provisioned sandboxes, default `/workspace/crabyard`
+- `CRABYARD_CLOUDFLARE_RUNNER_TTL_SECONDS` – Optional sandbox TTL, default `14400`
+- `CRABYARD_CLOUDFLARE_RUNNER_IDLE_SECONDS` – Optional idle timeout, default `1800`
 - `CRABYARD_CLAWFLEET_URL` – Optional ClawFleet dashboard/API URL used by `/api/provision/interactive` for `crabbox` sessions
 - `CRABYARD_CLAWFLEET_TOKEN` – Optional bearer token sent to ClawFleet
 - `CRABYARD_CLAWFLEET_PUBLIC_URL` – Optional public ClawFleet URL used when building attach/VNC links

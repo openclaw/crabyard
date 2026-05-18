@@ -34,6 +34,12 @@ type RuntimeEnv = Env & {
   CRABYARD_INTERACTIVE_PROVISION_TOKEN?: string;
   CRABYARD_RUNTIME_PROVISION_URL?: string;
   CRABYARD_RUNTIME_PROVISION_TOKEN?: string;
+  CRABYARD_CLOUDFLARE_RUNNER_URL?: string;
+  CRABYARD_CLOUDFLARE_RUNNER_TOKEN?: string;
+  CRABYARD_CLOUDFLARE_RUNNER_INSTANCE_TYPE?: string;
+  CRABYARD_CLOUDFLARE_RUNNER_WORKDIR?: string;
+  CRABYARD_CLOUDFLARE_RUNNER_TTL_SECONDS?: string;
+  CRABYARD_CLOUDFLARE_RUNNER_IDLE_SECONDS?: string;
   CRABYARD_CLAWFLEET_URL?: string;
   CRABYARD_CLAWFLEET_TOKEN?: string;
   CRABYARD_CLAWFLEET_PUBLIC_URL?: string;
@@ -236,6 +242,14 @@ type ClawFleetInstancePayload = {
   status?: string;
   novnc_port?: number;
   gateway_port?: number;
+};
+
+type CloudflareSandboxPayload = {
+  id?: string;
+  state?: string;
+  workdir?: string;
+  instanceType?: string;
+  labels?: Record<string, string>;
 };
 
 type ChangedFile = {
@@ -1151,6 +1165,9 @@ async function provisionInteractiveEndpoint(
   if (env.CRABYARD_RUNTIME_PROVISION_URL) {
     return forwardRuntimeProvision(env, payload);
   }
+  if (payload.runtime === "container" && env.CRABYARD_CLOUDFLARE_RUNNER_URL) {
+    return provisionWithCloudflareRunner(env, payload);
+  }
   if (env.CRABYARD_CLAWFLEET_URL) {
     return provisionWithClawFleet(env, payload);
   }
@@ -1164,7 +1181,11 @@ async function provisionInteractiveEndpoint(
 }
 
 function authorizeProvisionEndpoint(request: Request, env: RuntimeEnv): void {
-  const hasBackend = Boolean(env.CRABYARD_RUNTIME_PROVISION_URL || env.CRABYARD_CLAWFLEET_URL);
+  const hasBackend = Boolean(
+    env.CRABYARD_RUNTIME_PROVISION_URL ||
+    env.CRABYARD_CLOUDFLARE_RUNNER_URL ||
+    env.CRABYARD_CLAWFLEET_URL,
+  );
   if (!env.CRABYARD_INTERACTIVE_PROVISION_TOKEN) {
     if (hasBackend) {
       throw serviceUnavailable("interactive provision token is not configured");
@@ -1200,6 +1221,67 @@ async function forwardRuntimeProvision(
     (await response.json().catch(() => ({}))) as Record<string, unknown>,
     "interactive provision failed: invalid runtime response",
   );
+}
+
+async function provisionWithCloudflareRunner(
+  env: RuntimeEnv,
+  session: InteractiveProvisionRequest,
+): Promise<InteractiveProvisionResult> {
+  if (!env.CRABYARD_CLOUDFLARE_RUNNER_TOKEN) {
+    return failedProvision("cloudflare runner token is not configured");
+  }
+
+  const runnerUrl = env.CRABYARD_CLOUDFLARE_RUNNER_URL as string;
+  const sandboxId = clean(`crabyard-${session.id}`.toLowerCase().replace(/[^a-z0-9_-]/g, "-"), 64);
+  const workdir = cloudflareRunnerWorkdir(env, session);
+  const instanceType = cloudflareRunnerInstanceType(env);
+  let response: Response;
+  try {
+    response = await fetch(joinUrl(runnerUrl, "/v1/sandboxes"), {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${env.CRABYARD_CLOUDFLARE_RUNNER_TOKEN}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        id: sandboxId,
+        leaseId: sandboxId,
+        repo: session.repo,
+        branch: session.branch,
+        workdir,
+        instanceType,
+        ttlSeconds: clampedSeconds(env.CRABYARD_CLOUDFLARE_RUNNER_TTL_SECONDS, 14_400),
+        idleTimeoutSeconds: clampedSeconds(env.CRABYARD_CLOUDFLARE_RUNNER_IDLE_SECONDS, 1_800),
+        labels: {
+          app: "crabyard",
+          session: session.id,
+          repo: session.repo,
+          branch: session.branch,
+          owner: session.owner,
+          runtime: session.runtime,
+          command: session.command,
+        },
+      }),
+    });
+  } catch (error) {
+    return failedProvision(`cloudflare runner provision failed: ${clean(String(error), 240)}`);
+  }
+  if (!response.ok) {
+    return failedProvision(`cloudflare runner provision failed: HTTP ${response.status}`);
+  }
+
+  const body = (await response.json().catch(() => ({}))) as CloudflareSandboxPayload;
+  const state = clean(body.state, 80);
+  const ready = state === "running" || state === "healthy";
+  return {
+    status: ready ? "ready" : "provisioning",
+    leaseId: `cloudflare:${clean(body.id, 120) || sandboxId}`,
+    attachUrl: null,
+    vncUrl: null,
+    message: ready
+      ? `cloudflare sandbox ready (${clean(body.instanceType, 80) || instanceType}); PTY bridge pending`
+      : `cloudflare sandbox ${state || "provisioning"}`,
+  };
 }
 
 async function provisionWithClawFleet(
@@ -1274,6 +1356,31 @@ function failedProvision(message: string): InteractiveProvisionResult {
     vncUrl: null,
     message,
   };
+}
+
+function cloudflareRunnerWorkdir(env: RuntimeEnv, session: InteractiveProvisionRequest): string {
+  const base = clean(env.CRABYARD_CLOUDFLARE_RUNNER_WORKDIR, 160) || "/workspace/crabyard";
+  const suffix = session.id.toLowerCase().replace(/[^a-z0-9_-]/g, "-");
+  return `${base.replace(/\/+$/, "")}/${suffix}`;
+}
+
+function cloudflareRunnerInstanceType(env: RuntimeEnv): string {
+  return (
+    optionalOneOf(env.CRABYARD_CLOUDFLARE_RUNNER_INSTANCE_TYPE, [
+      "lite",
+      "basic",
+      "standard-1",
+      "standard-2",
+      "standard-3",
+      "standard-4",
+    ] as const) ?? "standard-4"
+  );
+}
+
+function clampedSeconds(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(86_400, Math.max(300, Math.trunc(parsed)));
 }
 
 async function createCard(request: Request, env: RuntimeEnv, user: User): Promise<{ card: Card }> {

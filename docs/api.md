@@ -225,13 +225,14 @@ Provision hook used by `CRABYARD_INTERACTIVE_PROVISION_URL`. It accepts the same
 Auth:
 
 - If `CRABYARD_INTERACTIVE_PROVISION_TOKEN` is set, callers must send `Authorization: Bearer <token>`.
-- The token is required when `CRABYARD_RUNTIME_PROVISION_URL` or `CRABYARD_CLAWFLEET_URL` is configured; backend-enabled deployments fail closed without it.
+- The token is required when `CRABYARD_RUNTIME_PROVISION_URL`, `CRABYARD_CLOUDFLARE_RUNNER_URL`, or `CRABYARD_CLAWFLEET_URL` is configured; backend-enabled deployments fail closed without it.
 
 Backends:
 
 - `CRABYARD_RUNTIME_PROVISION_URL`: forwards the session payload to a generic runtime adapter.
+- `CRABYARD_CLOUDFLARE_RUNNER_URL`: creates a Crabbox Cloudflare container sandbox and returns its lease reference.
 - `CRABYARD_CLAWFLEET_URL`: creates a ClawFleet OpenClaw instance and returns console/noVNC links.
-- ClawFleet handles `crabbox` sessions only; `container` sessions require `CRABYARD_RUNTIME_PROVISION_URL`.
+- ClawFleet handles `crabbox` sessions only; use `CRABYARD_RUNTIME_PROVISION_URL` or `CRABYARD_CLOUDFLARE_RUNNER_URL` for `container` sessions.
 - If neither backend is configured, returns `pending_adapter` with a message that the route is live.
 
 ### POST /api/interactive-sessions

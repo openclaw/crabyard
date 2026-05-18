@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add a Cloudflare container runner backend for standalone interactive session provisioning.
 - Add a built-in interactive provision endpoint with generic runtime and ClawFleet adapter backends.
 - Add standalone interactive Codex CLI sessions with Ghostty grid attach and an external runtime provision hook.
 - Document the real deployed control-plane status, runtime adapter boundary, workflow config, and test stack.

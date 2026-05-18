@@ -94,7 +94,16 @@ Maintainers can create a standalone Codex CLI session without making a board car
 
 If `CRABYARD_INTERACTIVE_PROVISION_URL` is not set, new sessions stay `pending_adapter` and remain visible in the Ghostty grid. If it is set, Crabyard posts the session request to that endpoint with optional bearer auth from `CRABYARD_INTERACTIVE_PROVISION_TOKEN`; the response can set `status`, `leaseId`, `attachUrl`, `vncUrl`, and `message`.
 
-Crabyard also ships a built-in provision hook at `/api/provision/interactive`. Point `CRABYARD_INTERACTIVE_PROVISION_URL` at that route to use Worker-side backend selection. Set `CRABYARD_INTERACTIVE_PROVISION_TOKEN` for backend-enabled deployments; the route fails closed without it when a backend is configured. The route delegates to `CRABYARD_RUNTIME_PROVISION_URL` when set, or creates a ClawFleet OpenClaw instance for `crabbox` sessions through `CRABYARD_CLAWFLEET_URL`; without either backend it returns `pending_adapter` with a clear setup message.
+Crabyard also ships a built-in provision hook at `/api/provision/interactive`. Point `CRABYARD_INTERACTIVE_PROVISION_URL` at that route to use Worker-side backend selection. Set `CRABYARD_INTERACTIVE_PROVISION_TOKEN` for backend-enabled deployments; the route fails closed without it when a backend is configured. The route delegates to `CRABYARD_RUNTIME_PROVISION_URL` when set, creates a Cloudflare Container sandbox for `container` sessions through `CRABYARD_CLOUDFLARE_RUNNER_URL` when configured, or creates a ClawFleet OpenClaw instance for `crabbox` sessions through `CRABYARD_CLAWFLEET_URL`; without a matching backend it returns `pending_adapter` with a clear setup message.
+
+Cloudflare runner configuration:
+
+- `CRABYARD_CLOUDFLARE_RUNNER_URL`: Crabbox Cloudflare container runner base URL.
+- `CRABYARD_CLOUDFLARE_RUNNER_TOKEN`: runner bearer token.
+- `CRABYARD_CLOUDFLARE_RUNNER_INSTANCE_TYPE`: `lite`, `basic`, `standard-1`, `standard-2`, `standard-3`, or `standard-4`; default `standard-4`.
+- `CRABYARD_CLOUDFLARE_RUNNER_WORKDIR`: base workspace path; default `/workspace/crabyard`.
+- `CRABYARD_CLOUDFLARE_RUNNER_TTL_SECONDS`: default `14400`.
+- `CRABYARD_CLOUDFLARE_RUNNER_IDLE_SECONDS`: default `1800`.
 
 ## Run APIs
 
