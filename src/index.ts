@@ -12,6 +12,7 @@ import {
   type Generated,
   type QueryResult,
 } from "kysely";
+import { getSandbox, type Sandbox as CloudflareSandbox } from "@cloudflare/sandbox";
 import {
   APP_HTML,
   GHOSTTY_BROWSER_EXTERNAL_JS,
@@ -25,6 +26,7 @@ type Role = "viewer" | "maintainer" | "owner";
 
 type RuntimeEnv = Env & {
   DB: D1Database;
+  SANDBOX?: DurableObjectNamespace<CloudflareSandbox>;
   CRABYARD_BOOTSTRAP_TOKEN?: string;
   GITHUB_CLIENT_ID?: string;
   GITHUB_CLIENT_SECRET?: string;
@@ -45,7 +47,12 @@ type RuntimeEnv = Env & {
   CRABYARD_CLAWFLEET_URL?: string;
   CRABYARD_CLAWFLEET_TOKEN?: string;
   CRABYARD_CLAWFLEET_PUBLIC_URL?: string;
+  OPENAI_API_KEY?: string;
+  OPENAI_BASE_URL?: string;
+  OPENAI_ORG_ID?: string;
 };
+
+export { Sandbox } from "@cloudflare/sandbox";
 
 type User = {
   subject: string;
@@ -436,6 +443,7 @@ const bootstrapSessionSeconds = 60 * 60;
 const githubSessionSeconds = 60 * 15;
 const lanes = ["Todo", "Running", "Human Review", "Done"];
 const preferredRepo = "openclaw/openclaw";
+const sandboxLeasePrefix = "sandbox:";
 const activeRunStatuses: readonly RunStatus[] = ["queued", "leasing", "running"];
 const interactiveSessionStatuses: readonly InteractiveSessionStatus[] = [
   "provisioning",
@@ -1122,6 +1130,10 @@ async function interactiveSessionPty(
     throw badRequest(`session is ${session.status}`);
   }
 
+  if (session.leaseId?.startsWith(sandboxLeasePrefix) && env.SANDBOX) {
+    return interactiveSandboxTerminal(request, env, user, session);
+  }
+
   const target = interactiveTerminalTarget(env, session);
   if (!target) throw serviceUnavailable("PTY bridge is not configured for this session");
 
@@ -1165,6 +1177,44 @@ async function interactiveSessionPty(
   await appendInteractiveSessionEvent(env, id, user, "PTY terminal connected", now);
 
   return new Response(null, { status: 101, webSocket: client });
+}
+
+async function interactiveSandboxTerminal(
+  request: Request,
+  env: RuntimeEnv,
+  user: User,
+  session: InteractiveSession,
+): Promise<Response> {
+  if (!env.SANDBOX) throw serviceUnavailable("Sandbox binding is not configured");
+  const sandboxId =
+    session.leaseId?.slice(sandboxLeasePrefix.length) || sandboxIdForSession(session.id);
+  const sandbox = getSandbox(env.SANDBOX, sandboxId);
+  const terminalSession = await sandbox.getSession(sandboxTerminalSessionId(session.id));
+  const now = Date.now();
+  await database(env)
+    .updateTable("interactive_sessions")
+    .set({
+      status:
+        session.status === "ready" || session.status === "detached" ? "attached" : session.status,
+      last_seen_at: now,
+      updated_at: now,
+      last_event: "Cloudflare Sandbox terminal connected",
+    })
+    .where("id", "=", session.id)
+    .where("status", "!=", "stopped")
+    .execute();
+  await appendInteractiveSessionEvent(
+    env,
+    session.id,
+    user,
+    "Cloudflare Sandbox terminal connected",
+    now,
+  );
+  return terminalSession.terminal(request, {
+    cols: terminalSize(request, "cols", 120),
+    rows: terminalSize(request, "rows", 34),
+    shell: sandboxStartupScriptPath(session),
+  });
 }
 
 function interactiveTerminalTarget(
@@ -1273,6 +1323,7 @@ async function provisionInteractiveSession(
   env: RuntimeEnv,
   session: InteractiveProvisionRequest,
 ): Promise<InteractiveProvisionResult | null> {
+  if (env.SANDBOX) return provisionWithSandbox(env, session);
   if (!env.CRABYARD_INTERACTIVE_PROVISION_URL) return null;
   let response: Response;
   try {
@@ -1343,6 +1394,9 @@ async function provisionInteractiveEndpoint(
   }
 
   const payload = { id, repo, branch, runtime, command, prompt, owner };
+  if (env.SANDBOX) {
+    return provisionWithSandbox(env, payload);
+  }
   if (env.CRABYARD_RUNTIME_PROVISION_URL) {
     return forwardRuntimeProvision(env, payload);
   }
@@ -1363,6 +1417,7 @@ async function provisionInteractiveEndpoint(
 
 function authorizeProvisionEndpoint(request: Request, env: RuntimeEnv): void {
   const hasBackend = Boolean(
+    env.SANDBOX ||
     env.CRABYARD_RUNTIME_PROVISION_URL ||
     env.CRABYARD_CLOUDFLARE_RUNNER_URL ||
     env.CRABYARD_CLAWFLEET_URL,
@@ -1375,6 +1430,133 @@ function authorizeProvisionEndpoint(request: Request, env: RuntimeEnv): void {
   }
   const expected = `Bearer ${env.CRABYARD_INTERACTIVE_PROVISION_TOKEN}`;
   if (request.headers.get("authorization") !== expected) throw unauthorized();
+}
+
+async function provisionWithSandbox(
+  env: RuntimeEnv,
+  session: InteractiveProvisionRequest,
+): Promise<InteractiveProvisionResult> {
+  if (!env.SANDBOX) {
+    return failedProvision("Cloudflare Sandbox binding is not configured");
+  }
+  if (!env.OPENAI_API_KEY) {
+    return failedProvision("OPENAI_API_KEY is not configured for Cloudflare Sandbox Codex");
+  }
+
+  const sandboxId = sandboxIdForSession(session.id);
+  const workdir = sandboxWorkdir(session.id);
+  const terminalSessionId = sandboxTerminalSessionId(session.id);
+  const sandbox = getSandbox(env.SANDBOX, sandboxId);
+  try {
+    await sandbox.mkdir(workdir, { recursive: true });
+    await prepareSandboxWorkspace(sandbox, session, workdir);
+    await writeSandboxStartupScript(sandbox, session, workdir);
+    await sandbox.createSession({
+      id: terminalSessionId,
+      cwd: workdir,
+      env: sandboxSessionEnv(env, session),
+      commandTimeoutMs: 60 * 60 * 1000,
+    });
+  } catch (error) {
+    const message = clean(error instanceof Error ? error.message : String(error), 240);
+    return failedProvision(`Cloudflare Sandbox provision failed: ${message}`);
+  }
+
+  return {
+    status: "ready",
+    leaseId: `${sandboxLeasePrefix}${sandboxId}`,
+    attachUrl: `/api/interactive-sessions/${encodeURIComponent(session.id)}/pty`,
+    vncUrl: null,
+    message: `Cloudflare Sandbox ready for ${session.repo}`,
+  };
+}
+
+async function prepareSandboxWorkspace(
+  sandbox: ReturnType<typeof getSandbox>,
+  session: InteractiveProvisionRequest,
+  workdir: string,
+): Promise<void> {
+  const repoUrl = `https://github.com/${session.repo}.git`;
+  const quotedRepoUrl = shellQuote(repoUrl);
+  const quotedBranch = shellQuote(session.branch);
+  const quotedWorkdir = shellQuote(workdir);
+  const quotedPrompt = shellQuote(session.prompt);
+  await sandbox.exec(
+    [
+      "set -eu",
+      `mkdir -p ${quotedWorkdir}`,
+      `if [ ! -d ${quotedWorkdir}/.git ]; then`,
+      `  tmp="${workdir}.clone.$$"`,
+      `  rm -rf "$tmp"`,
+      `  git clone --depth 1 --branch ${quotedBranch} ${quotedRepoUrl} "$tmp" || git clone --depth 1 ${quotedRepoUrl} "$tmp"`,
+      `  cp -a "$tmp"/. ${quotedWorkdir}/`,
+      `  rm -rf "$tmp"`,
+      "fi",
+      `cd ${quotedWorkdir}`,
+      "git remote set-url origin " + quotedRepoUrl + " || true",
+      "git fetch --depth 1 origin " + quotedBranch + " || true",
+      "git checkout " + quotedBranch + " || true",
+      "git pull --ff-only origin " + quotedBranch + " || true",
+      quotedPrompt
+        ? `printf '%s\n' ${quotedPrompt} > .crabyard-initial-prompt.txt`
+        : "rm -f .crabyard-initial-prompt.txt",
+    ].join("\n"),
+    { timeout: 120_000 },
+  );
+}
+
+async function writeSandboxStartupScript(
+  sandbox: ReturnType<typeof getSandbox>,
+  session: InteractiveProvisionRequest,
+  workdir: string,
+): Promise<void> {
+  const scriptPath = sandboxStartupScriptPath(session);
+  const script = `#!/usr/bin/env bash
+set -e
+export TERM="\${TERM:-xterm-256color}"
+export COLORTERM="\${COLORTERM:-truecolor}"
+export CRABYARD_SESSION_ID=${shellQuote(session.id)}
+export CRABYARD_REPO=${shellQuote(session.repo)}
+export CRABYARD_BRANCH=${shellQuote(session.branch)}
+export CRABYARD_RUNTIME=${shellQuote(session.runtime)}
+cd ${shellQuote(workdir)}
+printf '\\033[1;36mCrabyard %s\\033[0m %s on %s\\n' "$CRABYARD_SESSION_ID" "$CRABYARD_REPO" "$CRABYARD_BRANCH"
+if [ -s .crabyard-initial-prompt.txt ]; then
+  printf '\\033[2mInitial prompt is saved in .crabyard-initial-prompt.txt\\033[0m\\n'
+fi
+if [ -n "\${OPENAI_API_KEY:-}" ]; then
+  mkdir -p "$HOME/.codex"
+  printf 'preferred_auth_method = "apikey"\\n' > "$HOME/.codex/config.toml"
+  printf '%s' "$OPENAI_API_KEY" | codex login --with-api-key >/dev/null 2>&1 || true
+else
+  printf 'OPENAI_API_KEY is not configured for this session.\\n'
+fi
+if command -v ${shellFirstWord(session.command)} >/dev/null 2>&1; then
+  exec ${session.command}
+fi
+if command -v codex >/dev/null 2>&1; then
+  exec codex
+fi
+printf 'Codex CLI is not installed in this image. Opening bash.\\n'
+exec /bin/bash -l
+`;
+  await sandbox.writeFile(scriptPath, script);
+  await sandbox.exec(`chmod +x ${shellQuote(scriptPath)}`, { timeout: 10_000 });
+}
+
+function sandboxSessionEnv(
+  env: RuntimeEnv,
+  session: InteractiveProvisionRequest,
+): Record<string, string | undefined> {
+  return {
+    CRABYARD_SESSION_ID: session.id,
+    CRABYARD_REPO: session.repo,
+    CRABYARD_BRANCH: session.branch,
+    CRABYARD_RUNTIME: session.runtime,
+    OPENAI_API_KEY: env.OPENAI_API_KEY,
+    OPENAI_BASE_URL: env.OPENAI_BASE_URL,
+    OPENAI_ORG_ID: env.OPENAI_ORG_ID,
+  };
 }
 
 async function forwardRuntimeProvision(
@@ -3111,6 +3293,39 @@ function httpToWebSocketUrl(rawUrl: string): string {
 
 function bearer(token: string | undefined): string | null {
   return token ? `Bearer ${token}` : null;
+}
+
+function sandboxIdForSession(id: string): string {
+  return clean(`crabyard-${id}`.toLowerCase().replace(/[^a-z0-9_-]/g, "-"), 63);
+}
+
+function sandboxTerminalSessionId(id: string): string {
+  return clean(`terminal-${id}`.toLowerCase().replace(/[^a-z0-9_-]/g, "-"), 80);
+}
+
+function sandboxWorkdir(id: string): string {
+  return `/workspace/${sandboxIdForSession(id)}`;
+}
+
+function sandboxStartupScriptPath(
+  session: Pick<InteractiveSession | InteractiveProvisionRequest, "id">,
+): string {
+  return `/workspace/.crabyard-start-${sandboxIdForSession(session.id)}.sh`;
+}
+
+function terminalSize(request: Request, name: "cols" | "rows", fallback: number): number {
+  const url = new URL(request.url);
+  const value = Number(url.searchParams.get(name));
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(300, Math.max(10, Math.trunc(value)));
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\"'\"'")}'`;
+}
+
+function shellFirstWord(command: string): string {
+  return shellQuote(command.trim().split(/\s+/, 1)[0] || "codex");
 }
 
 function directPortUrl(base: string, port: unknown, path: string): string | null {

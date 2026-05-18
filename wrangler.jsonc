@@ -3,6 +3,7 @@
   "name": "crabyard-ai",
   "main": "src/index.ts",
   "compatibility_date": "2026-05-17",
+  "compatibility_flags": ["nodejs_compat"],
   "build": {
     "command": "node scripts/generate-assets.mjs",
   },
@@ -12,6 +13,28 @@
       "binding": "DB",
       "database_name": "crabyard-ai",
       "database_id": "0866ed65-a568-4d9f-a78a-aec41fe75e06",
+    },
+  ],
+  "containers": [
+    {
+      "class_name": "Sandbox",
+      "image": "./Dockerfile",
+      "instance_type": "standard-2",
+      "max_instances": 20,
+    },
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "SANDBOX",
+        "class_name": "Sandbox",
+      },
+    ],
+  },
+  "migrations": [
+    {
+      "tag": "sandbox-v1",
+      "new_sqlite_classes": ["Sandbox"],
     },
   ],
   "workers_dev": true,

@@ -1313,8 +1313,8 @@
             <label
               >Runtime
               <select name="runtime">
-                <option>crabbox</option>
                 <option>container</option>
+                <option>crabbox</option>
               </select>
             </label>
             <label
@@ -2152,6 +2152,7 @@
 
       function connectTerminalSocket(session, host, term) {
         const socket = new WebSocket(terminalSocketUrl(session));
+        socket.binaryType = "arraybuffer";
         host.socket = socket;
         setTerminalStatus(session.id, "Connecting PTY");
         socket.addEventListener("open", () => {
@@ -2160,7 +2161,7 @@
         });
         socket.addEventListener("message", async (event) => {
           if (typeof event.data === "string") {
-            term.write(event.data);
+            handleTerminalControlMessage(session.id, event.data);
             return;
           }
           const bytes = new Uint8Array(await event.data.arrayBuffer());
@@ -2173,8 +2174,20 @@
         socket.addEventListener("error", () => setTerminalStatus(session.id, "PTY error"));
       }
 
+      function handleTerminalControlMessage(id, data) {
+        try {
+          const message = JSON.parse(data);
+          if (message?.type === "ready") setTerminalStatus(id, "Live PTY");
+          if (message?.type === "exit") setTerminalStatus(id, `PTY exited ${message.code ?? ""}`);
+        } catch {
+          const host = terminalHosts.get(id);
+          host?.term?.write(data);
+        }
+      }
+
       function sendTerminalInput(host, data) {
-        if (host.socket?.readyState === WebSocket.OPEN) host.socket.send(data);
+        if (host.socket?.readyState !== WebSocket.OPEN) return;
+        host.socket.send(typeof data === "string" ? new TextEncoder().encode(data) : data);
       }
 
       function isStaleTerminalMount(session, mount, mountEpoch) {

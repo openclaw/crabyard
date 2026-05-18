@@ -1,5 +1,6 @@
 interface Env {
   DB: D1Database;
+  SANDBOX: DurableObjectNamespace<import("@cloudflare/sandbox").Sandbox>;
   CRABYARD_BOOTSTRAP_TOKEN?: string;
   GITHUB_CLIENT_ID?: string;
   GITHUB_CLIENT_SECRET?: string;
@@ -20,4 +21,7 @@ interface Env {
   CRABYARD_CLAWFLEET_URL?: string;
   CRABYARD_CLAWFLEET_TOKEN?: string;
   CRABYARD_CLAWFLEET_PUBLIC_URL?: string;
+  OPENAI_API_KEY?: string;
+  OPENAI_BASE_URL?: string;
+  OPENAI_ORG_ID?: string;
 }

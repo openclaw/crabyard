@@ -11,6 +11,7 @@
     "check": "pnpm build && pnpm lint && pnpm format"
   },
   "dependencies": {
+    "@cloudflare/sandbox": "0.10.1",
     "ghostty-web": "0.4.0",
     "kysely": "^0.29.2",
     "lucide-static": "^1.16.0"

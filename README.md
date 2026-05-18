@@ -21,11 +21,12 @@ Crabyard gives OpenClaw maintainers a Linear-like board where each card represen
 - **Cloudflare Workers** for the app, API, auth, GitHub lookup, and docs routes.
 - **D1 + Kysely** for typed persistence: users, sessions, allowlists, repos, cards, events, run attempts, interactive sessions, diffs, and repo workflow evaluations.
 - **Ghostty WebAssembly** for the fullscreen attach grid and run log replay.
+- **Cloudflare Sandbox containers** for standalone interactive Codex CLI workspaces with live PTY attach.
 - **Runtime adapter descriptors** for Container and Crabbox selection, capability display, interactive provision handoff, and guarded takeover.
-- **Provision endpoint** at `/api/provision/interactive` that can delegate to a generic runtime adapter or ClawFleet.
+- **Provision endpoint** at `/api/provision/interactive` that can use the built-in Sandbox backend or delegate to a generic runtime adapter or ClawFleet.
 - **GitHub API** for OAuth, org/team membership, and issue/PR previews across enabled repos.
 
-Container leasing, Crabbox PTY/VNC transport, R2 archival, Durable Object fanout, and merge automation are adapter targets, not faked in the current Worker.
+Autonomous card execution, Crabbox VNC transport, R2 archival, Durable Object fanout, and merge automation are adapter targets, not faked in the current Worker.
 
 ## Quick Start
 
@@ -156,6 +157,7 @@ Configure these in Cloudflare Workers dashboard:
 - `CRABYARD_CLAWFLEET_URL` – Optional ClawFleet dashboard/API URL used by `/api/provision/interactive` for `crabbox` sessions
 - `CRABYARD_CLAWFLEET_TOKEN` – Optional bearer token sent to ClawFleet
 - `CRABYARD_CLAWFLEET_PUBLIC_URL` – Optional public ClawFleet URL used when building attach/VNC links
+- `OPENAI_API_KEY` – Required for built-in Cloudflare Sandbox Codex CLI sessions; passed only into the sandbox session environment
 
 ### Verify Deployment
 
@@ -249,9 +251,9 @@ Full documentation available at [docs.crabyard.ai](https://docs.crabyard.ai):
 
 Active development. See [CHANGELOG.md](CHANGELOG.md) for recent updates.
 
-Current phase: MVP deployed with auth, board UI, admin controls, card management, Kysely-backed D1 persistence, durable run attempts, repo workflow evaluation, card diffs, Ghostty WASM terminal grid, and an authenticated PTY WebSocket bridge route for interactive sessions.
+Current phase: MVP deployed with auth, board UI, admin controls, card management, Kysely-backed D1 persistence, durable run attempts, repo workflow evaluation, card diffs, Ghostty WASM terminal grid, authenticated PTY WebSocket proxying, and first-party Cloudflare Sandbox Codex CLI sessions.
 
-Next: bind the Cloudflare Container or Crabbox runner to the PTY bridge contract in production.
+Next: bind autonomous card execution and merge automation to the same runtime layer.
 
 ## License
 
