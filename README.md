@@ -22,6 +22,7 @@ Crabyard gives OpenClaw maintainers a Linear-like board where each card represen
 - **D1 + Kysely** for typed persistence: users, sessions, allowlists, repos, cards, events, run attempts, interactive sessions, diffs, and repo workflow evaluations.
 - **Ghostty WebAssembly** for the fullscreen attach grid and run log replay.
 - **Runtime adapter descriptors** for Container and Crabbox selection, capability display, interactive provision handoff, and guarded takeover.
+- **Provision endpoint** at `/api/provision/interactive` that can delegate to a generic runtime adapter or ClawFleet.
 - **GitHub API** for OAuth, org/team membership, and issue/PR previews across enabled repos.
 
 Container leasing, Crabbox PTY/VNC transport, R2 archival, Durable Object fanout, and merge automation are adapter targets, not faked in the current Worker.
@@ -141,7 +142,12 @@ Configure these in Cloudflare Workers dashboard:
 - `GITHUB_ORG` – GitHub org for membership check (default: `openclaw`)
 - `GITHUB_TOKEN` – GitHub token for all enabled repo issue/PR previews and private repo `CRABYARD.md` refreshes (optional; public/default repo paths work without it)
 - `CRABYARD_INTERACTIVE_PROVISION_URL` – Optional adapter endpoint for standalone Codex CLI workspaces
-- `CRABYARD_INTERACTIVE_PROVISION_TOKEN` – Optional bearer token sent to the interactive provision endpoint
+- `CRABYARD_INTERACTIVE_PROVISION_TOKEN` – Optional bearer token sent to the interactive provision endpoint; required when backend URLs below are configured
+- `CRABYARD_RUNTIME_PROVISION_URL` – Optional generic backend URL used by `/api/provision/interactive`
+- `CRABYARD_RUNTIME_PROVISION_TOKEN` – Optional bearer token sent to the generic runtime backend
+- `CRABYARD_CLAWFLEET_URL` – Optional ClawFleet dashboard/API URL used by `/api/provision/interactive` for `crabbox` sessions
+- `CRABYARD_CLAWFLEET_TOKEN` – Optional bearer token sent to ClawFleet
+- `CRABYARD_CLAWFLEET_PUBLIC_URL` – Optional public ClawFleet URL used when building attach/VNC links
 
 ### Verify Deployment
 

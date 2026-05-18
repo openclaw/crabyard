@@ -218,6 +218,22 @@ Returns all run attempts for a card, newest first.
 
 ## Interactive Sessions
 
+### POST /api/provision/interactive
+
+Provision hook used by `CRABYARD_INTERACTIVE_PROVISION_URL`. It accepts the same session request payload as the external adapter contract and returns normalized provision status.
+
+Auth:
+
+- If `CRABYARD_INTERACTIVE_PROVISION_TOKEN` is set, callers must send `Authorization: Bearer <token>`.
+- The token is required when `CRABYARD_RUNTIME_PROVISION_URL` or `CRABYARD_CLAWFLEET_URL` is configured; backend-enabled deployments fail closed without it.
+
+Backends:
+
+- `CRABYARD_RUNTIME_PROVISION_URL`: forwards the session payload to a generic runtime adapter.
+- `CRABYARD_CLAWFLEET_URL`: creates a ClawFleet OpenClaw instance and returns console/noVNC links.
+- ClawFleet handles `crabbox` sessions only; `container` sessions require `CRABYARD_RUNTIME_PROVISION_URL`.
+- If neither backend is configured, returns `pending_adapter` with a message that the route is live.
+
 ### POST /api/interactive-sessions
 
 Maintainer+. Creates a standalone Codex CLI workspace request.

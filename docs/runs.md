@@ -94,6 +94,8 @@ Maintainers can create a standalone Codex CLI session without making a board car
 
 If `CRABYARD_INTERACTIVE_PROVISION_URL` is not set, new sessions stay `pending_adapter` and remain visible in the Ghostty grid. If it is set, Crabyard posts the session request to that endpoint with optional bearer auth from `CRABYARD_INTERACTIVE_PROVISION_TOKEN`; the response can set `status`, `leaseId`, `attachUrl`, `vncUrl`, and `message`.
 
+Crabyard also ships a built-in provision hook at `/api/provision/interactive`. Point `CRABYARD_INTERACTIVE_PROVISION_URL` at that route to use Worker-side backend selection. Set `CRABYARD_INTERACTIVE_PROVISION_TOKEN` for backend-enabled deployments; the route fails closed without it when a backend is configured. The route delegates to `CRABYARD_RUNTIME_PROVISION_URL` when set, or creates a ClawFleet OpenClaw instance for `crabbox` sessions through `CRABYARD_CLAWFLEET_URL`; without either backend it returns `pending_adapter` with a clear setup message.
+
 ## Run APIs
 
 Start or pulse:

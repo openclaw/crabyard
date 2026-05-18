@@ -32,6 +32,11 @@ type RuntimeEnv = Env & {
   GITHUB_ORG?: string;
   CRABYARD_INTERACTIVE_PROVISION_URL?: string;
   CRABYARD_INTERACTIVE_PROVISION_TOKEN?: string;
+  CRABYARD_RUNTIME_PROVISION_URL?: string;
+  CRABYARD_RUNTIME_PROVISION_TOKEN?: string;
+  CRABYARD_CLAWFLEET_URL?: string;
+  CRABYARD_CLAWFLEET_TOKEN?: string;
+  CRABYARD_CLAWFLEET_PUBLIC_URL?: string;
 };
 
 type User = {
@@ -224,6 +229,13 @@ type InteractiveProvisionResult = {
   attachUrl: string | null;
   vncUrl: string | null;
   message: string;
+};
+
+type ClawFleetInstancePayload = {
+  name?: string;
+  status?: string;
+  novnc_port?: number;
+  gateway_port?: number;
 };
 
 type ChangedFile = {
@@ -611,6 +623,10 @@ async function api(request: Request, env: RuntimeEnv): Promise<Response> {
 
   if (request.method === "GET" && url.pathname === "/api/auth") {
     return json({ auth: authMethods(env) });
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/provision/interactive") {
+    return json(await provisionInteractiveEndpoint(request, env));
   }
 
   const user = await requireUser(request, env);
@@ -1109,6 +1125,154 @@ async function provisionInteractiveSession(
     attachUrl: clean(body.attachUrl ?? body.attach_url, 1000) || null,
     vncUrl: clean(body.vncUrl ?? body.vnc_url, 1000) || null,
     message: clean(body.message, 500) || `interactive workspace ${status}`,
+  };
+}
+
+async function provisionInteractiveEndpoint(
+  request: Request,
+  env: RuntimeEnv,
+): Promise<InteractiveProvisionResult> {
+  authorizeProvisionEndpoint(request, env);
+  const session = await readJson<Partial<InteractiveProvisionRequest>>(request);
+  const id = clean(session.id, 120);
+  const repo = normalizeRepo(session.repo);
+  const branch = clean(session.branch, 120) || "main";
+  const runtime = oneOf(session.runtime, ["crabbox", "container"], "crabbox") as
+    | "crabbox"
+    | "container";
+  const command = clean(session.command, 240) || "codex";
+  const prompt = clean(session.prompt, 4000);
+  const owner = clean(session.owner, 240);
+  if (!id || !repo || !owner) {
+    return failedProvision("interactive provision failed: invalid session request");
+  }
+
+  const payload = { id, repo, branch, runtime, command, prompt, owner };
+  if (env.CRABYARD_RUNTIME_PROVISION_URL) {
+    return forwardRuntimeProvision(env, payload);
+  }
+  if (env.CRABYARD_CLAWFLEET_URL) {
+    return provisionWithClawFleet(env, payload);
+  }
+  return {
+    status: "pending_adapter",
+    leaseId: null,
+    attachUrl: null,
+    vncUrl: null,
+    message: "provision route live; runtime backend not configured",
+  };
+}
+
+function authorizeProvisionEndpoint(request: Request, env: RuntimeEnv): void {
+  const hasBackend = Boolean(env.CRABYARD_RUNTIME_PROVISION_URL || env.CRABYARD_CLAWFLEET_URL);
+  if (!env.CRABYARD_INTERACTIVE_PROVISION_TOKEN) {
+    if (hasBackend) {
+      throw serviceUnavailable("interactive provision token is not configured");
+    }
+    return;
+  }
+  const expected = `Bearer ${env.CRABYARD_INTERACTIVE_PROVISION_TOKEN}`;
+  if (request.headers.get("authorization") !== expected) throw unauthorized();
+}
+
+async function forwardRuntimeProvision(
+  env: RuntimeEnv,
+  session: InteractiveProvisionRequest,
+): Promise<InteractiveProvisionResult> {
+  let response: Response;
+  try {
+    const headers = new Headers({ "content-type": "application/json" });
+    if (env.CRABYARD_RUNTIME_PROVISION_TOKEN) {
+      headers.set("authorization", `Bearer ${env.CRABYARD_RUNTIME_PROVISION_TOKEN}`);
+    }
+    response = await fetch(env.CRABYARD_RUNTIME_PROVISION_URL as string, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(session),
+    });
+  } catch (error) {
+    return failedProvision(`interactive provision failed: ${clean(String(error), 240)}`);
+  }
+  if (!response.ok) {
+    return failedProvision(`interactive provision failed: runtime HTTP ${response.status}`);
+  }
+  return provisionResultFromBody(
+    (await response.json().catch(() => ({}))) as Record<string, unknown>,
+    "interactive provision failed: invalid runtime response",
+  );
+}
+
+async function provisionWithClawFleet(
+  env: RuntimeEnv,
+  session: InteractiveProvisionRequest,
+): Promise<InteractiveProvisionResult> {
+  if (session.runtime !== "crabbox") {
+    return {
+      status: "pending_adapter",
+      leaseId: null,
+      attachUrl: null,
+      vncUrl: null,
+      message: "container runtime requires CRABYARD_RUNTIME_PROVISION_URL",
+    };
+  }
+
+  let response: Response;
+  try {
+    const headers = new Headers({ "content-type": "application/json" });
+    if (env.CRABYARD_CLAWFLEET_TOKEN) {
+      headers.set("authorization", `Bearer ${env.CRABYARD_CLAWFLEET_TOKEN}`);
+    }
+    response = await fetch(joinUrl(env.CRABYARD_CLAWFLEET_URL as string, "/api/v1/instances"), {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ count: 1, runtime_type: "openclaw" }),
+    });
+  } catch (error) {
+    return failedProvision(`clawfleet provision failed: ${clean(String(error), 240)}`);
+  }
+  if (!response.ok) {
+    return failedProvision(`clawfleet provision failed: HTTP ${response.status}`);
+  }
+
+  const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+  const instances = Array.isArray(body.data) ? body.data : [];
+  const instance = (instances[0] ?? {}) as ClawFleetInstancePayload;
+  const name = clean(instance.name, 120);
+  if (!name) return failedProvision("clawfleet provision failed: missing instance name");
+
+  const publicUrl = env.CRABYARD_CLAWFLEET_PUBLIC_URL || env.CRABYARD_CLAWFLEET_URL || "";
+  const status = instance.status === "running" ? "ready" : "provisioning";
+  return {
+    status,
+    leaseId: `clawfleet:${name}`,
+    attachUrl: joinUrl(publicUrl, `/console/${encodeURIComponent(name)}/`),
+    vncUrl: directPortUrl(publicUrl, instance.novnc_port, "/vnc.html?autoconnect=1&resize=remote"),
+    message: `clawfleet instance ${name} ${status}`,
+  };
+}
+
+function provisionResultFromBody(
+  body: Record<string, unknown>,
+  invalidMessage: string,
+): InteractiveProvisionResult {
+  const status = optionalOneOf(body.status, interactiveSessionStatuses);
+  if (!status) return failedProvision(invalidMessage);
+  return {
+    status,
+    leaseId: clean(body.leaseId ?? body.lease_id, 240) || null,
+    attachUrl: clean(body.attachUrl ?? body.attach_url, 1000) || null,
+    vncUrl: clean(body.vncUrl ?? body.vnc_url, 1000) || null,
+    message: clean(body.message, 500) || `interactive workspace ${status}`,
+  };
+}
+
+function failedProvision(message: string): InteractiveProvisionResult {
+  return {
+    status: "failed",
+    leaseId: null,
+    attachUrl: null,
+    vncUrl: null,
+    message,
   };
 }
 
@@ -2624,6 +2788,26 @@ function clean(value: unknown, max: number): string {
   return String(value ?? "")
     .trim()
     .slice(0, max);
+}
+
+function joinUrl(base: string, path: string): string {
+  try {
+    return new URL(path, base.endsWith("/") ? base : `${base}/`).toString();
+  } catch {
+    return "";
+  }
+}
+
+function directPortUrl(base: string, port: unknown, path: string): string | null {
+  const parsedPort = Number(port);
+  if (!Number.isInteger(parsedPort) || parsedPort <= 0) return null;
+  try {
+    const url = new URL(path, base.endsWith("/") ? base : `${base}/`);
+    url.port = String(parsedPort);
+    return url.toString();
+  } catch {
+    return null;
+  }
 }
 
 function titleFromPrompt(prompt: string): string {
