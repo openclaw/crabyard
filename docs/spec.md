@@ -6,7 +6,7 @@ permalink: /spec/
 
 # Crabyard.ai Spec
 
-Status: draft. Deployed subset: Cloudflare Worker, D1/Kysely persistence, GitHub OAuth, admin allowlists, card/run state, repo workflow evaluation, issue/PR previews, diffs, Cloudflare container sandbox provisioning, Ghostty WASM grid, and authenticated PTY WebSocket proxying for interactive sessions.
+Status: draft. Deployed subset: Cloudflare Worker, D1/Kysely persistence, GitHub OAuth, admin allowlists, card/run state, repo workflow evaluation, issue/PR previews, diffs, Cloudflare container sandbox provisioning, Ghostty WASM grid, read-only session share links, and authenticated PTY WebSocket proxying for interactive sessions.
 
 Crabyard.ai is a Cloudflare-native control plane for running Codex sessions in cloud workspaces. It gives OpenClaw maintainers a Linear-like board where each card represents an intent, a live run, and its durable history.
 
@@ -49,6 +49,7 @@ Implemented now:
 - D1 `run_attempts` with heartbeat, stall reconciliation, runtime selection reason, lease fields, operator intent, and runtime capabilities.
 - Runtime adapter descriptor for Container and Crabbox policy.
 - Ghostty WASM fullscreen session grid with D1 event replay and text fallback.
+- Focused Codex session URLs with public read-only share links and owner-approved control requests.
 - `CRABYARD.md` fetch/parse/evaluate admin surface.
 - Card diff metadata and compact patch preview.
 - Worker docs route at `/docs/` plus GitHub Pages docs.
@@ -240,6 +241,8 @@ Attach modes:
 
 - Watch: user sees live terminal/events, no input.
 - Take over: user can type into the Codex CLI PTY session or steer app-server turn.
+- Share: link recipients can read persisted session scrollback without signing in.
+- Request control: signed-in viewers can ask the session owner/maintainer for writable terminal access.
 
 When a user takes over:
 

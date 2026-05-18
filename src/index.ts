@@ -227,6 +227,17 @@ type InteractiveSession = {
   updatedAt: number;
   lastSeenAt: number;
   stoppedAt: number | null;
+  shareMode: "private" | "link_read";
+  shareTokenPreview: string | null;
+  controlRequestedBy: string | null;
+  controlRequestedAt: number | null;
+  controller: string | null;
+  controlGrantedAt: number | null;
+  controlExpiresAt: number | null;
+  canControl?: boolean;
+  canManage?: boolean;
+  canRequestControl?: boolean;
+  sharedReadOnly?: boolean;
   logs: string[];
 };
 
@@ -382,6 +393,14 @@ type InteractiveSessionTable = {
   updated_at: number;
   last_seen_at: number;
   stopped_at: number | null;
+  share_mode: "private" | "link_read";
+  share_token_hash: string | null;
+  share_token_preview: string | null;
+  control_requested_by: string | null;
+  control_requested_at: number | null;
+  controller: string | null;
+  control_granted_at: number | null;
+  control_expires_at: number | null;
 };
 
 type RepoWorkflowTable = {
@@ -624,7 +643,12 @@ export default {
         return await api(request, env);
       }
 
-      if (url.pathname === "/" || url.pathname === "/app" || url.pathname === "/app/") {
+      if (
+        url.pathname === "/" ||
+        url.pathname === "/app" ||
+        url.pathname === "/app/" ||
+        url.pathname.startsWith("/app/sessions/")
+      ) {
         return text(APP_HTML, "text/html; charset=utf-8", { vary: "Accept" });
       }
 
@@ -660,6 +684,17 @@ async function api(request: Request, env: RuntimeEnv): Promise<Response> {
     return json(await provisionInteractiveEndpoint(request, env));
   }
 
+  const sharedSessionMatch = url.pathname.match(/^\/api\/shared-sessions\/([^/]+)$/);
+  if (request.method === "GET" && sharedSessionMatch) {
+    return json(
+      await readSharedInteractiveSession(
+        env,
+        decodeURIComponent(sharedSessionMatch[1] ?? ""),
+        url.searchParams.get("token") ?? "",
+      ),
+    );
+  }
+
   const user = await requireUser(request, env);
 
   if (request.method === "GET" && url.pathname === "/api/session") {
@@ -680,15 +715,27 @@ async function api(request: Request, env: RuntimeEnv): Promise<Response> {
     return json(await createInteractiveSession(request, env, user), { status: 201 });
   }
 
+  const interactiveSessionReadMatch = url.pathname.match(/^\/api\/interactive-sessions\/([^/]+)$/);
+  if (request.method === "GET" && interactiveSessionReadMatch) {
+    requireRole(user, "viewer");
+    const session = await readInteractiveSession(
+      env,
+      decodeURIComponent(interactiveSessionReadMatch[1] ?? ""),
+    );
+    if (!session) throw notFound("interactive session not found");
+    return json({ session: decorateInteractiveSession(session, user, env) });
+  }
+
   const interactiveSessionMatch = url.pathname.match(
     /^\/api\/interactive-sessions\/([^/]+)\/actions$/,
   );
   if (request.method === "POST" && interactiveSessionMatch) {
     const body = await readJson<{ action?: string }>(request);
     const action = body.action ?? "";
-    requireRole(user, action === "attach" ? "viewer" : "maintainer");
+    requireRole(user, "viewer");
     return json(
       await mutateInteractiveSession(
+        request,
         env,
         user,
         decodeURIComponent(interactiveSessionMatch[1] ?? ""),
@@ -936,7 +983,7 @@ async function readState(env: RuntimeEnv, user: User): Promise<Record<string, un
       : Promise.resolve([]),
     db.selectFrom("repos").select("repo").where("enabled", "=", 1).orderBy("repo").execute(),
     readCards(env),
-    readInteractiveSessions(env),
+    readInteractiveSessions(env, user),
     user.role === "owner" ? readWorkflowSummaries(env) : Promise.resolve([]),
   ]);
   const repoNames = sortRepos(repos.map((row) => row.repo));
@@ -1002,6 +1049,14 @@ async function createInteractiveSession(
           updated_at: now,
           last_seen_at: now,
           stopped_at: null,
+          share_mode: "private",
+          share_token_hash: null,
+          share_token_preview: null,
+          control_requested_by: null,
+          control_requested_at: null,
+          controller: null,
+          control_granted_at: null,
+          control_expires_at: null,
         })
         .execute();
       await appendInteractiveSessionEvent(env, id, user, "interactive workspace requested", now);
@@ -1052,7 +1107,13 @@ async function createInteractiveSession(
         `interactive session created ${id} repo=${repo} runtime=${runtime}`,
         now,
       );
-      return { session: (await readInteractiveSession(env, id)) as InteractiveSession };
+      return {
+        session: decorateInteractiveSession(
+          (await readInteractiveSession(env, id)) as InteractiveSession,
+          user,
+          env,
+        ),
+      };
     } catch (error) {
       if (!isConstraintError(error) || attempt === 2) throw error;
     }
@@ -1061,15 +1122,21 @@ async function createInteractiveSession(
 }
 
 async function mutateInteractiveSession(
+  request: Request,
   env: RuntimeEnv,
   user: User,
   id: string,
   action: string,
-): Promise<{ session: InteractiveSession }> {
+): Promise<{ session: InteractiveSession; shareUrl?: string }> {
   const session = await readInteractiveSession(env, id);
   if (!session) throw notFound("interactive session not found");
   const now = Date.now();
+  const userActor = actor(user);
+  const canManage = canManageInteractiveSession(user, session);
   if (action === "attach") {
+    if (!canControlInteractiveSession(user, session, now, canGrantDelegatedControl(env, session))) {
+      throw forbidden("terminal control has not been granted");
+    }
     if (["expired", "failed", "stopped"].includes(session.status)) {
       throw badRequest(`session is ${session.status}`);
     }
@@ -1093,15 +1160,215 @@ async function mutateInteractiveSession(
       .where("status", "!=", "stopped")
       .execute();
     await appendInteractiveSessionEvent(env, id, user, message, now);
-    return { session: (await readInteractiveSession(env, id)) as InteractiveSession };
+    return {
+      session: decorateInteractiveSession(
+        (await readInteractiveSession(env, id)) as InteractiveSession,
+        user,
+        env,
+      ),
+    };
+  }
+
+  if (action === "share_link") {
+    if (!canManage) throw forbidden("only the session owner or maintainer can share");
+    const token = shareToken();
+    const tokenHash = await sha256(token);
+    const preview = token.slice(0, 8);
+    await database(env)
+      .updateTable("interactive_sessions")
+      .set({
+        share_mode: "link_read",
+        share_token_hash: tokenHash,
+        share_token_preview: preview,
+        updated_at: now,
+        last_event: "read-only share link enabled",
+      })
+      .where("id", "=", id)
+      .execute();
+    await appendInteractiveSessionEvent(env, id, user, "read-only share link enabled", now);
+    await audit(env, user, `interactive session share enabled ${id}`, now);
+    return {
+      session: decorateInteractiveSession(
+        (await readInteractiveSession(env, id)) as InteractiveSession,
+        user,
+        env,
+      ),
+      shareUrl: shareUrl(request, id, token),
+    };
+  }
+
+  if (action === "disable_share") {
+    if (!canManage) throw forbidden("only the session owner or maintainer can disable sharing");
+    await database(env)
+      .updateTable("interactive_sessions")
+      .set({
+        share_mode: "private",
+        share_token_hash: null,
+        share_token_preview: null,
+        control_requested_by: null,
+        control_requested_at: null,
+        controller: null,
+        control_granted_at: null,
+        control_expires_at: null,
+        updated_at: now,
+        last_event: "session sharing disabled",
+      })
+      .where("id", "=", id)
+      .execute();
+    await appendInteractiveSessionEvent(env, id, user, "session sharing disabled", now);
+    await audit(env, user, `interactive session share disabled ${id}`, now);
+    return {
+      session: decorateInteractiveSession(
+        (await readInteractiveSession(env, id)) as InteractiveSession,
+        user,
+        env,
+      ),
+    };
+  }
+
+  if (action === "request_control") {
+    if (!canGrantDelegatedControl(env, session)) {
+      throw badRequest("delegated terminal control requires a revocable PTY bridge");
+    }
+    if (canControlInteractiveSession(user, session, now, canGrantDelegatedControl(env, session))) {
+      return { session: decorateInteractiveSession(session, user, env) };
+    }
+    if (["expired", "failed", "stopped"].includes(session.status)) {
+      throw badRequest(`session is ${session.status}`);
+    }
+    await database(env)
+      .updateTable("interactive_sessions")
+      .set({
+        control_requested_by: userActor,
+        control_requested_at: now,
+        updated_at: now,
+        last_event: `${userActor} requested terminal control`,
+      })
+      .where("id", "=", id)
+      .execute();
+    await appendInteractiveSessionEvent(
+      env,
+      id,
+      user,
+      `${userActor} requested terminal control`,
+      now,
+    );
+    return {
+      session: decorateInteractiveSession(
+        (await readInteractiveSession(env, id)) as InteractiveSession,
+        user,
+        env,
+      ),
+    };
+  }
+
+  if (action === "approve_control") {
+    if (!canManage) throw forbidden("only the session owner or maintainer can approve control");
+    if (!session.controlRequestedBy) throw badRequest("no pending control request");
+    if (!canGrantDelegatedControl(env, session)) {
+      throw badRequest("delegated terminal control requires a revocable PTY bridge");
+    }
+    const expires = now + 30 * 60 * 1000;
+    await database(env)
+      .updateTable("interactive_sessions")
+      .set({
+        controller: session.controlRequestedBy,
+        control_granted_at: now,
+        control_expires_at: expires,
+        control_requested_by: null,
+        control_requested_at: null,
+        updated_at: now,
+        last_event: `control granted to ${session.controlRequestedBy}`,
+      })
+      .where("id", "=", id)
+      .execute();
+    await appendInteractiveSessionEvent(
+      env,
+      id,
+      user,
+      `control granted to ${session.controlRequestedBy}`,
+      now,
+    );
+    await audit(
+      env,
+      user,
+      `interactive session control granted ${id} to ${session.controlRequestedBy}`,
+      now,
+    );
+    return {
+      session: decorateInteractiveSession(
+        (await readInteractiveSession(env, id)) as InteractiveSession,
+        user,
+        env,
+      ),
+    };
+  }
+
+  if (action === "deny_control") {
+    if (!canManage) throw forbidden("only the session owner or maintainer can deny control");
+    const requester = session.controlRequestedBy;
+    await database(env)
+      .updateTable("interactive_sessions")
+      .set({
+        control_requested_by: null,
+        control_requested_at: null,
+        updated_at: now,
+        last_event: requester
+          ? `control request denied for ${requester}`
+          : "control request denied",
+      })
+      .where("id", "=", id)
+      .execute();
+    await appendInteractiveSessionEvent(
+      env,
+      id,
+      user,
+      requester ? `control request denied for ${requester}` : "control request denied",
+      now,
+    );
+    return {
+      session: decorateInteractiveSession(
+        (await readInteractiveSession(env, id)) as InteractiveSession,
+        user,
+        env,
+      ),
+    };
+  }
+
+  if (action === "revoke_control") {
+    if (!canManage) throw forbidden("only the session owner or maintainer can revoke control");
+    await database(env)
+      .updateTable("interactive_sessions")
+      .set({
+        controller: null,
+        control_granted_at: null,
+        control_expires_at: null,
+        updated_at: now,
+        last_event: "terminal control revoked",
+      })
+      .where("id", "=", id)
+      .execute();
+    await appendInteractiveSessionEvent(env, id, user, "terminal control revoked", now);
+    await audit(env, user, `interactive session control revoked ${id}`, now);
+    return {
+      session: decorateInteractiveSession(
+        (await readInteractiveSession(env, id)) as InteractiveSession,
+        user,
+        env,
+      ),
+    };
   }
 
   if (action === "stop") {
+    if (!canManage) throw forbidden("only the session owner or maintainer can stop");
     await database(env)
       .updateTable("interactive_sessions")
       .set({
         status: "stopped",
         stopped_at: now,
+        controller: null,
+        control_requested_by: null,
+        control_requested_at: null,
         updated_at: now,
         last_event: "interactive workspace stopped",
       })
@@ -1110,7 +1377,13 @@ async function mutateInteractiveSession(
       .execute();
     await appendInteractiveSessionEvent(env, id, user, "interactive workspace stopped", now);
     await audit(env, user, `interactive session stopped ${id}`, now);
-    return { session: (await readInteractiveSession(env, id)) as InteractiveSession };
+    return {
+      session: decorateInteractiveSession(
+        (await readInteractiveSession(env, id)) as InteractiveSession,
+        user,
+        env,
+      ),
+    };
   }
 
   throw badRequest("unknown action");
@@ -1131,9 +1404,21 @@ async function interactiveSessionPty(
   if (["expired", "failed", "stopped"].includes(session.status)) {
     throw badRequest(`session is ${session.status}`);
   }
+  if (
+    !canControlInteractiveSession(user, session, Date.now(), canGrantDelegatedControl(env, session))
+  ) {
+    throw forbidden("terminal control has not been granted");
+  }
+  const canManage = canManageInteractiveSession(user, session);
 
   if (session.leaseId?.startsWith(sandboxLeasePrefix) && env.SANDBOX) {
-    return interactiveSandboxTerminal(request, env, user, session);
+    return interactiveSandboxTerminal(
+      request,
+      env,
+      user,
+      session,
+      canManage ? undefined : () => canControlInteractiveSessionById(env, user, id),
+    );
   }
 
   const target = interactiveTerminalTarget(env, session);
@@ -1161,7 +1446,11 @@ async function interactiveSessionPty(
 
   server.accept();
   upstream.accept();
-  bridgeWebSockets(server, upstream);
+  bridgeWebSockets(
+    server,
+    upstream,
+    canManage ? undefined : () => canControlInteractiveSessionById(env, user, id),
+  );
 
   const now = Date.now();
   await database(env)
@@ -1186,6 +1475,7 @@ async function interactiveSandboxTerminal(
   env: RuntimeEnv,
   user: User,
   session: InteractiveSession,
+  canSendLeft?: () => Promise<boolean>,
 ): Promise<Response> {
   if (!env.SANDBOX) throw serviceUnavailable("Sandbox binding is not configured");
   const sandboxId =
@@ -1212,11 +1502,21 @@ async function interactiveSandboxTerminal(
     "Cloudflare Sandbox terminal connected",
     now,
   );
-  return terminalSession.terminal(request, {
+  const upstreamResponse = await terminalSession.terminal(request, {
     cols: terminalSize(request, "cols", 120),
     rows: terminalSize(request, "rows", 34),
     shell: sandboxStartupScriptPath(session),
   });
+  const upstream = upstreamResponse.webSocket;
+  if (!upstream || upstreamResponse.status !== 101) return upstreamResponse;
+
+  const pair = new WebSocketPair();
+  const client = pair[0];
+  const server = pair[1];
+  server.accept();
+  upstream.accept();
+  bridgeWebSockets(server, upstream, canSendLeft);
+  return new Response(null, { status: 101, webSocket: client });
 }
 
 function interactiveTerminalTarget(
@@ -1295,30 +1595,97 @@ function interactiveTerminalHeaders(
   return headers;
 }
 
-function bridgeWebSockets(left: WebSocket, right: WebSocket): void {
+function bridgeWebSockets(
+  left: WebSocket,
+  right: WebSocket,
+  canSendLeft?: () => Promise<boolean>,
+): void {
+  let leftInputQueue = Promise.resolve();
+  let rightOutputQueue = Promise.resolve();
+  let controlCheckTimer: ReturnType<typeof setInterval> | undefined;
+  let controlCheckInFlight: Promise<void> | undefined;
+  let leftCanSend = true;
+  const stopControlCheck = () => {
+    if (controlCheckTimer !== undefined) clearInterval(controlCheckTimer);
+    controlCheckTimer = undefined;
+  };
+  const verifyControl = async () => {
+    const canSend = canSendLeft ? await canSendLeft().catch(() => false) : true;
+    leftCanSend = canSend;
+    if (!canSend) {
+      stopControlCheck();
+      closePair(left, right, 1008, "terminal control revoked");
+      return false;
+    }
+    return true;
+  };
+  const scheduleControlCheck = () => {
+    if (controlCheckInFlight) return;
+    controlCheckInFlight = verifyControl()
+      .then(() => undefined)
+      .finally(() => {
+        controlCheckInFlight = undefined;
+      });
+  };
+  if (canSendLeft) {
+    controlCheckTimer = setInterval(() => {
+      scheduleControlCheck();
+    }, 5000);
+    scheduleControlCheck();
+  }
   left.addEventListener("message", (event) => {
-    if (right.readyState === WebSocket.OPEN) right.send(event.data);
+    const data = event.data;
+    leftInputQueue = leftInputQueue
+      .catch(() => undefined)
+      .then(async () => {
+        if (left.readyState !== WebSocket.OPEN || right.readyState !== WebSocket.OPEN) return;
+        if (!leftCanSend || !(await verifyControl())) {
+          closePair(left, right, 1008, "terminal control revoked");
+          return;
+        }
+        right.send(data);
+      });
   });
   right.addEventListener("message", (event) => {
-    if (left.readyState === WebSocket.OPEN) left.send(event.data);
+    const data = event.data;
+    rightOutputQueue = rightOutputQueue
+      .catch(() => undefined)
+      .then(async () => {
+        if (left.readyState !== WebSocket.OPEN || right.readyState !== WebSocket.OPEN) return;
+        left.send(data);
+      });
   });
-  const close = (event: CloseEvent, to: WebSocket) => {
-    if (to.readyState === WebSocket.OPEN || to.readyState === WebSocket.CONNECTING) {
-      to.close(event.code || 1000, event.reason || "peer closed");
-    }
-  };
-  left.addEventListener("close", (event) => close(event, right));
-  right.addEventListener("close", (event) => close(event, left));
+  left.addEventListener("close", (event) => {
+    stopControlCheck();
+    closePeer(event, right);
+  });
+  right.addEventListener("close", (event) => {
+    stopControlCheck();
+    closePeer(event, left);
+  });
   left.addEventListener("error", () => {
-    if (right.readyState === WebSocket.OPEN || right.readyState === WebSocket.CONNECTING) {
-      right.close(1011, "peer error");
-    }
+    stopControlCheck();
+    closePair(left, right, 1011, "peer error");
   });
   right.addEventListener("error", () => {
-    if (left.readyState === WebSocket.OPEN || left.readyState === WebSocket.CONNECTING) {
-      left.close(1011, "peer error");
-    }
+    stopControlCheck();
+    closePair(right, left, 1011, "peer error");
   });
+}
+
+function closePeer(event: CloseEvent, to: WebSocket): void {
+  if (to.readyState === WebSocket.OPEN || to.readyState === WebSocket.CONNECTING) {
+    to.close(event.code || 1000, event.reason || "peer closed");
+  }
+}
+
+function closePair(left: WebSocket, right: WebSocket, code: number, reason: string): void {
+  if (left.readyState === WebSocket.OPEN || left.readyState === WebSocket.CONNECTING) {
+    left.close(code, reason);
+  }
+  if (right.readyState === WebSocket.OPEN || right.readyState === WebSocket.CONNECTING) {
+    right.close(code, reason);
+  }
 }
 
 async function provisionInteractiveSession(
@@ -2503,7 +2870,10 @@ async function readRunsForCard(env: RuntimeEnv, cardId: string): Promise<RunAtte
   return rows.map(runAttempt);
 }
 
-async function readInteractiveSessions(env: RuntimeEnv): Promise<InteractiveSession[]> {
+async function readInteractiveSessions(
+  env: RuntimeEnv,
+  user?: User,
+): Promise<InteractiveSession[]> {
   const rows = await database(env)
     .selectFrom("interactive_sessions")
     .selectAll()
@@ -2515,7 +2885,9 @@ async function readInteractiveSessions(env: RuntimeEnv): Promise<InteractiveSess
     env,
     rows.map((row) => row.id),
   );
-  return rows.map((row) => interactiveSession(row, logs.get(row.id) ?? []));
+  return rows.map((row) =>
+    decorateInteractiveSession(interactiveSession(row, logs.get(row.id) ?? []), user, env),
+  );
 }
 
 async function readInteractiveSession(
@@ -2530,6 +2902,39 @@ async function readInteractiveSession(
   if (!row) return null;
   const logs = await readInteractiveSessionLogs(env, [id]);
   return interactiveSession(row, logs.get(id) ?? []);
+}
+
+async function readSharedInteractiveSession(
+  env: RuntimeEnv,
+  id: string,
+  token: string,
+): Promise<{ session: InteractiveSession }> {
+  const row = await database(env)
+    .selectFrom("interactive_sessions")
+    .selectAll()
+    .where("id", "=", id)
+    .where("share_mode", "=", "link_read")
+    .executeTakeFirst();
+  if (!row || !row.share_token_hash || !token) throw notFound("shared session not found");
+  if ((await sha256(token)) !== row.share_token_hash) throw notFound("shared session not found");
+  const logs = await readInteractiveSessionLogs(env, [id]);
+  const session = interactiveSession(row, logs.get(id) ?? []);
+  const activeController = activeDelegatedController(session, Date.now());
+  return {
+    session: {
+      ...session,
+      leaseId: null,
+      attachUrl: null,
+      vncUrl: null,
+      controller: activeController,
+      controlGrantedAt: activeController ? session.controlGrantedAt : null,
+      controlExpiresAt: activeController ? session.controlExpiresAt : null,
+      canControl: false,
+      canManage: false,
+      canRequestControl: false,
+      sharedReadOnly: true,
+    },
+  };
 }
 
 async function readInteractiveSessionLogs(
@@ -3030,8 +3435,104 @@ function interactiveSession(row: InteractiveSessionTable, logs: string[]): Inter
     updatedAt: row.updated_at,
     lastSeenAt: row.last_seen_at,
     stoppedAt: row.stopped_at,
+    shareMode: row.share_mode,
+    shareTokenPreview: row.share_token_preview,
+    controlRequestedBy: row.control_requested_by,
+    controlRequestedAt: row.control_requested_at,
+    controller: row.controller,
+    controlGrantedAt: row.control_granted_at,
+    controlExpiresAt: row.control_expires_at,
     logs,
   };
+}
+
+function decorateInteractiveSession(
+  session: InteractiveSession,
+  user?: User,
+  env?: RuntimeEnv,
+): InteractiveSession {
+  if (!user) return session;
+  const now = Date.now();
+  const delegatedControl = env ? canGrantDelegatedControl(env, session) : true;
+  const canManage = canManageInteractiveSession(user, session);
+  const canControl = canControlInteractiveSession(user, session, now, delegatedControl);
+  const activeController = activeDelegatedController(session, now);
+  return {
+    ...session,
+    leaseId: canControl ? session.leaseId : null,
+    attachUrl: canControl ? session.attachUrl : null,
+    vncUrl: canControl ? session.vncUrl : null,
+    controller: activeController,
+    controlGrantedAt: activeController ? session.controlGrantedAt : null,
+    controlExpiresAt: activeController ? session.controlExpiresAt : null,
+    canManage,
+    canControl,
+    canRequestControl: delegatedControl && !canControl,
+  };
+}
+
+function canManageInteractiveSession(user: User, session: InteractiveSession): boolean {
+  const userActor = actor(user);
+  return session.owner === userActor || user.role === "maintainer" || user.role === "owner";
+}
+
+function canControlInteractiveSession(
+  user: User,
+  session: InteractiveSession,
+  now: number,
+  delegatedControl = true,
+): boolean {
+  if (canManageInteractiveSession(user, session)) return true;
+  if (!delegatedControl) return false;
+  const userActor = actor(user);
+  return (
+    session.controller === userActor &&
+    typeof session.controlExpiresAt === "number" &&
+    session.controlExpiresAt > now
+  );
+}
+
+function activeDelegatedController(session: InteractiveSession, now: number): string | null {
+  if (!session.controller) return null;
+  if (typeof session.controlExpiresAt !== "number" || session.controlExpiresAt <= now) return null;
+  return session.controller;
+}
+
+async function canControlInteractiveSessionById(
+  env: RuntimeEnv,
+  user: User,
+  id: string,
+): Promise<boolean> {
+  const row = await database(env)
+    .selectFrom("interactive_sessions")
+    .selectAll()
+    .where("id", "=", id)
+    .executeTakeFirst();
+  if (!row) return false;
+  const session = interactiveSession(row, []);
+  if (["expired", "failed", "stopped"].includes(session.status)) return false;
+  return canControlInteractiveSession(
+    user,
+    session,
+    Date.now(),
+    canGrantDelegatedControl(env, session),
+  );
+}
+
+function canGrantDelegatedControl(env: RuntimeEnv, session: InteractiveSession): boolean {
+  if (!env.SANDBOX && session.leaseId?.startsWith(sandboxLeasePrefix)) return false;
+  return true;
+}
+
+function shareToken(): string {
+  const first = crypto.randomUUID().replaceAll("-", "");
+  const second = crypto.randomUUID().replaceAll("-", "");
+  return `${first}${second}`;
+}
+
+function shareUrl(request: Request, id: string, token: string): string {
+  const url = new URL(request.url);
+  return `${url.origin}/app/sessions/${encodeURIComponent(id)}?token=${encodeURIComponent(token)}`;
 }
 
 function repoWorkflow(row: RepoWorkflowTable): RepoWorkflow {

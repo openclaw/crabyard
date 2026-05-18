@@ -218,6 +218,21 @@ Returns all run attempts for a card, newest first.
 
 ## Interactive Sessions
 
+### GET /api/shared-sessions/:id?token=:token
+
+Public read-only endpoint for a generated session share link. Returns the shared interactive session, D1 event scrollback, and `sharedReadOnly: true`. Invalid, disabled, or rotated tokens return `404`.
+
+```json
+{
+  "session": {
+    "id": "IS-105",
+    "sharedReadOnly": true,
+    "canControl": false,
+    "logs": []
+  }
+}
+```
+
 ### POST /api/provision/interactive
 
 Provision hook used by `CRABYARD_INTERACTIVE_PROVISION_URL`. It accepts the same session request payload as the external adapter contract and returns normalized provision status.
@@ -237,7 +252,7 @@ Backends:
 
 ### GET /api/interactive-sessions/:id/pty
 
-Viewer+. Same-origin WebSocket endpoint used by the Ghostty WASM terminal. Crabyard authenticates the browser session, verifies the interactive session is still attachable, then proxies PTY bytes to the configured runner.
+Viewer+. Same-origin WebSocket endpoint used by the Ghostty WASM terminal. Crabyard authenticates the browser session, verifies the interactive session is still attachable, verifies terminal control, then proxies PTY bytes to the configured runner. Owners and maintainers have control by default; other viewers require an approved control request.
 
 Target resolution:
 
@@ -275,14 +290,21 @@ If `CRABYARD_INTERACTIVE_PROVISION_URL` is configured, the Worker posts the requ
 
 Actions:
 
-- `attach`: viewer, mark seen/attached and return the session.
-- `stop`: maintainer, mark stopped.
+- `attach`: viewer with control, mark seen/attached and return the session.
+- `share_link`: owner/maintainer, enable or rotate a public read-only share URL; response includes `shareUrl` once.
+- `disable_share`: owner/maintainer, disable the share URL and clear pending/granted control.
+- `request_control`: viewer, request writable terminal control.
+- `approve_control`: owner/maintainer, grant pending requester 30 minutes of writable terminal control.
+- `deny_control`: owner/maintainer, clear a pending control request.
+- `revoke_control`: owner/maintainer, revoke active delegated control.
+- `stop`: owner/maintainer, mark stopped.
 
 Response:
 
 ```json
 {
-  "session": {}
+  "session": {},
+  "shareUrl": "https://crabyard.openclaw.ai/app/sessions/IS-105?token=..."
 }
 ```
 

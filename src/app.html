@@ -1477,6 +1477,12 @@
       let refPreviewTimer = null;
       let refPreviewSeq = 0;
       let focusedSessionId = null;
+      const loginReturnKey = "crabyard-login-return";
+      restoreSessionReturnUrl();
+      const initialSessionLink = parseSessionLink();
+      let sharedSessionId = initialSessionLink.id;
+      let sharedToken = initialSessionLink.token;
+      let initialSessionOpened = false;
       let ghosttyModulePromise = null;
       let terminalEpoch = 0;
       const terminalHosts = new Map();
@@ -1739,9 +1745,12 @@
 
       function renderUser() {
         const user = state.user;
-        const label = user
-          ? (user.login || user.email || user.subject) + " / " + user.role
-          : "Signed out";
+        const label =
+          !signedIn && sharedToken
+            ? "Sign in for control"
+            : user
+              ? (user.login || user.email || user.subject) + " / " + user.role
+              : "Signed out";
         document.getElementById("user-button").textContent = label;
       }
 
@@ -1801,6 +1810,7 @@
         if (id === "sessions-drawer") {
           terminalEpoch += 1;
           focusedSessionId = null;
+          if (!sharedToken) setSessionUrl(null);
           const grid = document.getElementById("session-grid");
           if (grid) grid.dataset.sessionKey = "";
           disposeMissingTerminals(new Set());
@@ -1814,6 +1824,7 @@
         });
         activeRunId = null;
         focusedSessionId = null;
+        if (!sharedToken) setSessionUrl(null);
         terminalEpoch += 1;
         disposeMissingTerminals(new Set());
       }
@@ -1887,6 +1898,8 @@
 
       function openSessionGrid(id = focusedSessionId) {
         if (id) focusedSessionId = id;
+        const urlSessionId = findInteractiveSession(focusedSessionId) ? focusedSessionId : null;
+        if (urlSessionId || !sharedToken) setSessionUrl(urlSessionId);
         openDrawer("sessions-drawer");
         renderSessionGrid();
       }
@@ -1944,7 +1957,7 @@
 
       function sessionRenderKey(session) {
         return session.kind === "interactive"
-          ? `${session.id}:${session.status}:${session.leaseId || ""}:${session.attachUrl || ""}`
+          ? `${session.id}:${session.status}:${session.leaseId || ""}:${session.attachUrl || ""}:${session.shareMode || ""}:${session.canControl ? "control" : "view"}:${session.controlRequestedBy || ""}:${session.controller || ""}`
           : `${session.id}:${session.lane}:${session.run?.status || ""}`;
       }
 
@@ -1988,14 +2001,38 @@
       function renderInteractiveSessionControls(session) {
         if (isOptimisticInteractiveSession(session)) return "";
         const stopped = ["stopped", "expired", "failed"].includes(session.status);
+        const canManageSession = session.canManage || canMaintain();
+        const canControlSession = session.canControl || canManageSession;
+        const shareButton = canManageSession
+          ? `<button data-interactive-share="${session.id}">${session.shareMode === "link_read" ? "New link" : "Share"}</button>`
+          : "";
+        const unshareButton =
+          canManageSession && session.shareMode === "link_read"
+            ? `<button data-interactive-unshare="${session.id}">Unshare</button>`
+            : "";
+        const requestButton =
+          session.canRequestControl && !session.sharedReadOnly && !stopped
+            ? `<button data-interactive-request-control="${session.id}">${
+                session.controlRequestedBy ? "Control requested" : "Request control"
+              }</button>`
+            : "";
+        const reviewButtons =
+          canManageSession && session.controlRequestedBy
+            ? `<button class="primary" data-interactive-approve-control="${session.id}">Allow</button><button data-interactive-deny-control="${session.id}">Deny</button>`
+            : "";
+        const revokeButton =
+          canManageSession && session.controller
+            ? `<button data-interactive-revoke-control="${session.id}">Revoke</button>`
+            : "";
         const stopButton =
-          canMaintain() && !stopped
+          canManageSession && !stopped
             ? `<button class="danger" data-interactive-stop="${session.id}">Stop</button>`
             : "";
-        const attachButton = stopped
-          ? ""
-          : `<button data-interactive-attach="${session.id}">Attach</button>`;
-        return `${attachButton}${stopButton}`;
+        const attachButton =
+          stopped || !canControlSession
+            ? ""
+            : `<button data-interactive-attach="${session.id}">Attach</button>`;
+        return `${shareButton}${unshareButton}${requestButton}${reviewButtons}${revokeButton}${attachButton}${stopButton}`;
       }
 
       function isOptimisticInteractiveSession(session) {
@@ -2011,6 +2048,9 @@
             <span class="chip">${escapeHtml(session.runtime)}</span>
             <span class="chip merge">${escapeHtml(session.status)}</span>
             <span class="chip">${escapeHtml(session.branch)}</span>
+            ${session.shareMode === "link_read" || session.sharedReadOnly ? `<span class="chip">shared</span>` : ""}
+            ${session.controller ? `<span class="chip">control ${escapeHtml(session.controller)}</span>` : ""}
+            ${session.controlRequestedBy ? `<span class="chip hot">request ${escapeHtml(session.controlRequestedBy)}</span>` : ""}
             ${live ? `<span class="chip hot">seen ${elapsed(session.lastSeenAt || session.updatedAt)}</span>` : ""}
           `;
         }
@@ -2162,6 +2202,8 @@
       function shouldConnectLiveTerminal(session) {
         return (
           session.kind === "interactive" &&
+          session.canControl === true &&
+          session.sharedReadOnly !== true &&
           ["ready", "attached", "detached"].includes(session.status)
         );
       }
@@ -2275,6 +2317,16 @@
           if (session.vncUrl) header.push(`vnc ${session.vncUrl}`);
           if (session.status === "pending_adapter") {
             header.push("runtime adapter not configured yet");
+          }
+          if (session.sharedReadOnly) header.push("read-only shared view");
+          if (session.shareMode === "link_read" && !session.sharedReadOnly) {
+            header.push(`share read-only link ${session.shareTokenPreview || "enabled"}`);
+          }
+          if (session.controlRequestedBy) {
+            header.push(`control requested by ${session.controlRequestedBy}`);
+          }
+          if (session.controller) {
+            header.push(`controller ${session.controller}`);
           }
           if (session.prompt) header.push("", session.prompt);
           const logs =
@@ -2479,10 +2531,12 @@
         if (target.dataset.action === "attach") attachCard(target.dataset.id);
         if (target.dataset.sessionFocus) {
           focusedSessionId = target.dataset.sessionFocus;
+          setSessionUrl(findInteractiveSession(focusedSessionId) ? focusedSessionId : null);
           renderSessionGrid();
         }
         if (target.dataset.sessionUnfocus !== undefined || target.id === "show-all-sessions") {
           focusedSessionId = null;
+          if (!sharedToken) setSessionUrl(null);
           renderSessionGrid();
         }
         if (target.dataset.sessionDetails) openRunDetails(target.dataset.sessionDetails);
@@ -2491,6 +2545,18 @@
         if (target.dataset.interactiveAttach)
           attachInteractiveSession(target.dataset.interactiveAttach);
         if (target.dataset.interactiveStop) stopInteractiveSession(target.dataset.interactiveStop);
+        if (target.dataset.interactiveShare)
+          shareInteractiveSession(target.dataset.interactiveShare);
+        if (target.dataset.interactiveUnshare)
+          interactiveSessionAction(target.dataset.interactiveUnshare, "disable_share");
+        if (target.dataset.interactiveRequestControl)
+          interactiveSessionAction(target.dataset.interactiveRequestControl, "request_control");
+        if (target.dataset.interactiveApproveControl)
+          interactiveSessionAction(target.dataset.interactiveApproveControl, "approve_control");
+        if (target.dataset.interactiveDenyControl)
+          interactiveSessionAction(target.dataset.interactiveDenyControl, "deny_control");
+        if (target.dataset.interactiveRevokeControl)
+          interactiveSessionAction(target.dataset.interactiveRevokeControl, "revoke_control");
         if (target.dataset.createRef) createRefCard(Number(target.dataset.createRef));
         if (target.dataset.remove === "allow") removeAllow(target.dataset.value);
         if (target.dataset.remove === "repo") removeRepo(target.dataset.value);
@@ -2521,7 +2587,10 @@
         if (target.id === "watch") appendRun("watch");
         if (target.id === "stall") appendRun("stall");
         if (target.id === "theme-toggle") setTheme(theme === "dark" ? "light" : "dark");
-        if (target.id === "user-button") logout();
+        if (target.id === "user-button") {
+          if (signedIn) logout();
+          else void beginLogin();
+        }
       });
 
       document.addEventListener("keydown", (event) => {
@@ -2630,7 +2699,7 @@
       });
 
       document.getElementById("github-login").addEventListener("click", () => {
-        location.href = "/login/github";
+        void beginLogin();
       });
 
       async function loadState() {
@@ -2654,9 +2723,18 @@
           document.body.classList.remove("locked");
           document.getElementById("login-screen").hidden = true;
           render();
+          await openInitialSessionLink();
           refreshActiveTerminal();
         } catch (error) {
           if (error.status === 401 || error.status === 403) {
+            if (sharedSessionId && sharedToken) {
+              try {
+                await loadSharedSession();
+              } catch (sharedError) {
+                await showSharedLinkError(sharedError);
+              }
+              return;
+            }
             await loadAuthMethods();
             signedIn = false;
             document.body.classList.add("locked");
@@ -2672,6 +2750,68 @@
             }, 5000);
           }
         }
+      }
+
+      async function loadSharedSession() {
+        const result = await api(
+          `/api/shared-sessions/${encodeURIComponent(sharedSessionId)}?token=${encodeURIComponent(sharedToken)}`,
+          { authOptional: true },
+        );
+        await loadAuthMethods();
+        state = {
+          user: { subject: "shared", login: "shared link", role: "viewer" },
+          auth: authMethods,
+          org: "OpenClaw",
+          cap: 20,
+          retention: "30",
+          merge: "guarded",
+          allow: [],
+          repos: [result.session.repo],
+          workflows: [],
+          cards: [],
+          interactiveSessions: [result.session],
+        };
+        signedIn = false;
+        document.body.classList.remove("locked");
+        document.getElementById("login-screen").hidden = true;
+        focusedSessionId = result.session.id;
+        render();
+        openSessionGrid(result.session.id);
+      }
+
+      async function loadLinkedInteractiveSession(id) {
+        const result = await api(`/api/interactive-sessions/${encodeURIComponent(id)}`);
+        replaceInteractiveSession(result.session);
+        initialSessionOpened = true;
+        focusedSessionId = result.session.id;
+        render();
+        openSessionGrid(result.session.id);
+      }
+
+      async function showSharedLinkError(error) {
+        await loadAuthMethods();
+        signedIn = false;
+        document.body.classList.add("locked");
+        document.getElementById("login-screen").hidden = false;
+        showLogin(
+          error?.status === 404
+            ? "Shared session link is invalid or expired."
+            : error?.message || "Shared session could not be loaded.",
+        );
+      }
+
+      async function beginLogin() {
+        try {
+          if (sharedSessionId) sessionStorage.setItem(loginReturnKey, location.href);
+        } catch {}
+        if (!authMethods.github && !authMethods.token) await loadAuthMethods();
+        if (authMethods.github) {
+          location.href = "/login/github";
+          return;
+        }
+        document.body.classList.add("locked");
+        document.getElementById("login-screen").hidden = false;
+        showLogin("Sign in to request terminal control.");
       }
 
       async function loadAuthMethods() {
@@ -2697,6 +2837,31 @@
         replaceCard(result.card);
         render();
         if (activeRunId === id) refreshActiveTerminal();
+      }
+
+      async function interactiveSessionAction(id, action) {
+        const result = await api(`/api/interactive-sessions/${encodeURIComponent(id)}/actions`, {
+          method: "POST",
+          body: { action },
+        });
+        replaceInteractiveSession(result.session);
+        render();
+        openSessionGrid(id);
+        return result;
+      }
+
+      async function shareInteractiveSession(id) {
+        const result = await interactiveSessionAction(id, "share_link");
+        if (result.shareUrl) {
+          let copied = false;
+          try {
+            if (navigator.clipboard) {
+              await navigator.clipboard.writeText(result.shareUrl);
+              copied = true;
+            }
+          } catch {}
+          if (!copied) window.prompt("Copy share link", result.shareUrl);
+        }
       }
 
       function scheduleRefPreview() {
@@ -2860,9 +3025,82 @@
           updatedAt: now,
           lastSeenAt: now,
           stoppedAt: null,
+          shareMode: "private",
+          shareTokenPreview: null,
+          controlRequestedBy: null,
+          controlRequestedAt: null,
+          controller: null,
+          controlGrantedAt: null,
+          controlExpiresAt: null,
+          canControl: true,
+          canManage: true,
+          canRequestControl: false,
           logs: ["Provisioning Cloudflare Sandbox...", "Starting Codex CLI..."],
           title: `${repo} · ${branch}`,
         };
+      }
+
+      function parseSessionLink() {
+        const match = location.pathname.match(/^\/app\/sessions\/([^/]+)$/);
+        return {
+          id: match ? decodeURIComponent(match[1]) : null,
+          token: new URLSearchParams(location.search).get("token"),
+        };
+      }
+
+      function restoreSessionReturnUrl() {
+        try {
+          const saved = sessionStorage.getItem(loginReturnKey);
+          if (!saved || !history.replaceState) return;
+          const url = new URL(saved, location.origin);
+          if (url.origin !== location.origin || !url.pathname.startsWith("/app/sessions/")) return;
+          if (location.pathname !== "/app" && location.pathname !== "/app/") return;
+          sessionStorage.removeItem(loginReturnKey);
+          history.replaceState(null, "", `${url.pathname}${url.search}`);
+        } catch {}
+      }
+
+      function setSessionUrl(id) {
+        if (!history.replaceState) return;
+        if (id) {
+          const url = new URL(location.href);
+          url.pathname = `/app/sessions/${encodeURIComponent(id)}`;
+          url.search = "";
+          if (sharedToken && id === sharedSessionId) url.searchParams.set("token", sharedToken);
+          history.replaceState(null, "", url);
+          return;
+        }
+        const url = new URL(location.href);
+        url.pathname = "/app";
+        url.search = "";
+        history.replaceState(null, "", url);
+      }
+
+      async function openInitialSessionLink() {
+        if (!sharedSessionId) return;
+        if (!findInteractiveSession(sharedSessionId)) {
+          if (signedIn && (!initialSessionOpened || focusedSessionId === sharedSessionId)) {
+            try {
+              await loadLinkedInteractiveSession(sharedSessionId);
+            } catch (error) {
+              if (error.status !== 403 && error.status !== 404) throw error;
+              sharedSessionId = null;
+              sharedToken = null;
+              focusedSessionId = null;
+              initialSessionOpened = true;
+              setSessionUrl(null);
+            }
+          } else if (!signedIn && sharedToken && !document.body.classList.contains("locked")) {
+            await loadSharedSession();
+          } else if (!initialSessionOpened) {
+            setSessionUrl(null);
+          }
+          return;
+        }
+        if (initialSessionOpened && focusedSessionId !== sharedSessionId) return;
+        initialSessionOpened = true;
+        focusedSessionId = sharedSessionId;
+        openSessionGrid(sharedSessionId);
       }
 
       function showLogin(message) {
@@ -2873,6 +3111,15 @@
 
       setInterval(() => {
         if (signedIn) loadState();
+        else if (sharedSessionId && sharedToken && !document.body.classList.contains("locked")) {
+          loadSharedSession().catch((error) => {
+            if (error.status === 403 || error.status === 404) {
+              void showSharedLinkError(error);
+              return;
+            }
+            console.warn("Shared session refresh failed", error);
+          });
+        }
       }, 15000);
 
       loadState();

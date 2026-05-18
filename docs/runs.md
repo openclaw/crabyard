@@ -86,6 +86,7 @@ Attach opens a fullscreen Ghostty WASM grid. Current behavior:
 - Replays D1 event logs into the terminal surface while a live PTY is unavailable.
 - Falls back to a text terminal if Ghostty cannot initialize.
 - Supports focused fullscreen card view.
+- Supports focused share URLs with public read-only event scrollback and owner-approved writable control requests for signed-in viewers.
 
 The Take over action records `controlIntent = "takeover"` and operator only for active runs with takeover capability.
 
@@ -115,6 +116,13 @@ Runner PTY contract:
 - Browser-to-runner messages are terminal input bytes.
 - Runner-to-browser messages are terminal output bytes.
 - The bridge receives `x-crabyard-session`, `x-crabyard-repo`, and `x-crabyard-runtime` headers plus session query parameters.
+
+Session sharing:
+
+- `Share` creates a public read-only URL at `/app/sessions/:id?token=...`.
+- The share token is stored as a hash; generating a new link rotates the old one.
+- Public viewers can scroll the persisted session event buffer without signing in.
+- Writable PTY access still requires a signed-in allowlisted viewer and owner/maintainer approval.
 
 ## Run APIs
 
