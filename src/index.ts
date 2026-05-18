@@ -40,6 +40,8 @@ type RuntimeEnv = Env & {
   CRABYARD_CLOUDFLARE_RUNNER_WORKDIR?: string;
   CRABYARD_CLOUDFLARE_RUNNER_TTL_SECONDS?: string;
   CRABYARD_CLOUDFLARE_RUNNER_IDLE_SECONDS?: string;
+  CRABYARD_PTY_BRIDGE_URL?: string;
+  CRABYARD_PTY_BRIDGE_TOKEN?: string;
   CRABYARD_CLAWFLEET_URL?: string;
   CRABYARD_CLAWFLEET_TOKEN?: string;
   CRABYARD_CLAWFLEET_PUBLIC_URL?: string;
@@ -235,6 +237,11 @@ type InteractiveProvisionResult = {
   attachUrl: string | null;
   vncUrl: string | null;
   message: string;
+};
+
+type InteractiveTerminalTarget = {
+  url: string;
+  authorization: string | null;
 };
 
 type ClawFleetInstancePayload = {
@@ -680,6 +687,17 @@ async function api(request: Request, env: RuntimeEnv): Promise<Response> {
     );
   }
 
+  const interactivePtyMatch = url.pathname.match(/^\/api\/interactive-sessions\/([^/]+)\/pty$/);
+  if (request.method === "GET" && interactivePtyMatch) {
+    requireRole(user, "viewer");
+    return interactiveSessionPty(
+      request,
+      env,
+      user,
+      decodeURIComponent(interactivePtyMatch[1] ?? ""),
+    );
+  }
+
   if (request.method === "POST" && url.pathname === "/api/cards") {
     requireRole(user, "maintainer");
     return json(await createCard(request, env, user), { status: 201 });
@@ -1086,6 +1104,169 @@ async function mutateInteractiveSession(
   }
 
   throw badRequest("unknown action");
+}
+
+async function interactiveSessionPty(
+  request: Request,
+  env: RuntimeEnv,
+  user: User,
+  id: string,
+): Promise<Response> {
+  if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
+    throw badRequest("websocket upgrade required");
+  }
+
+  const session = await readInteractiveSession(env, id);
+  if (!session) throw notFound("interactive session not found");
+  if (["expired", "failed", "stopped"].includes(session.status)) {
+    throw badRequest(`session is ${session.status}`);
+  }
+
+  const target = interactiveTerminalTarget(env, session);
+  if (!target) throw serviceUnavailable("PTY bridge is not configured for this session");
+
+  const pair = new WebSocketPair();
+  const client = pair[0];
+  const server = pair[1];
+  let upstreamResponse: Response;
+  try {
+    upstreamResponse = await fetch(target.url, {
+      headers: interactiveTerminalHeaders(session, target.authorization),
+    });
+  } catch (error) {
+    server.accept();
+    server.close(1011, `PTY bridge failed: ${clean(String(error), 120)}`);
+    return new Response(null, { status: 101, webSocket: client });
+  }
+  const upstream = upstreamResponse.webSocket;
+  if (!upstream || upstreamResponse.status !== 101) {
+    server.accept();
+    server.close(1011, `PTY bridge HTTP ${upstreamResponse.status}`);
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  server.accept();
+  upstream.accept();
+  bridgeWebSockets(server, upstream);
+
+  const now = Date.now();
+  await database(env)
+    .updateTable("interactive_sessions")
+    .set({
+      status:
+        session.status === "ready" || session.status === "detached" ? "attached" : session.status,
+      last_seen_at: now,
+      updated_at: now,
+      last_event: "PTY terminal connected",
+    })
+    .where("id", "=", id)
+    .where("status", "!=", "stopped")
+    .execute();
+  await appendInteractiveSessionEvent(env, id, user, "PTY terminal connected", now);
+
+  return new Response(null, { status: 101, webSocket: client });
+}
+
+function interactiveTerminalTarget(
+  env: RuntimeEnv,
+  session: InteractiveSession,
+): InteractiveTerminalTarget | null {
+  if (env.CRABYARD_PTY_BRIDGE_URL) {
+    const url = interactiveBridgeUrl(env.CRABYARD_PTY_BRIDGE_URL, session);
+    if (!url) return null;
+    return {
+      url,
+      authorization: bearer(env.CRABYARD_PTY_BRIDGE_TOKEN),
+    };
+  }
+
+  if (session.attachUrl && /^wss?:\/\//i.test(session.attachUrl)) {
+    return { url: session.attachUrl, authorization: null };
+  }
+
+  if (session.leaseId?.startsWith("cloudflare:") && env.CRABYARD_CLOUDFLARE_RUNNER_URL) {
+    const sandboxId = session.leaseId.slice("cloudflare:".length);
+    const url = addQuery(
+      joinUrl(
+        env.CRABYARD_CLOUDFLARE_RUNNER_URL,
+        `/v1/sandboxes/${encodeURIComponent(sandboxId)}/pty`,
+      ),
+      terminalQuery(session),
+    );
+    if (!url) return null;
+    return {
+      url,
+      authorization: bearer(env.CRABYARD_CLOUDFLARE_RUNNER_TOKEN),
+    };
+  }
+
+  return null;
+}
+
+function interactiveBridgeUrl(base: string, session: InteractiveSession): string {
+  const replacements: Record<string, string> = {
+    id: session.id,
+    leaseId: session.leaseId ?? "",
+    repo: session.repo,
+    branch: session.branch,
+    runtime: session.runtime,
+  };
+  let url = base;
+  for (const [key, value] of Object.entries(replacements)) {
+    url = url.replaceAll(`{${key}}`, encodeURIComponent(value));
+  }
+  return addQuery(httpToWebSocketUrl(url), terminalQuery(session));
+}
+
+function terminalQuery(session: InteractiveSession): Record<string, string> {
+  return {
+    sessionId: session.id,
+    leaseId: session.leaseId ?? "",
+    repo: session.repo,
+    branch: session.branch,
+    runtime: session.runtime,
+    command: session.command,
+  };
+}
+
+function interactiveTerminalHeaders(
+  session: InteractiveSession,
+  authorization: string | null,
+): Headers {
+  const headers = new Headers({
+    upgrade: "websocket",
+    "x-crabyard-session": session.id,
+    "x-crabyard-repo": session.repo,
+    "x-crabyard-runtime": session.runtime,
+  });
+  if (authorization) headers.set("authorization", authorization);
+  return headers;
+}
+
+function bridgeWebSockets(left: WebSocket, right: WebSocket): void {
+  left.addEventListener("message", (event) => {
+    if (right.readyState === WebSocket.OPEN) right.send(event.data);
+  });
+  right.addEventListener("message", (event) => {
+    if (left.readyState === WebSocket.OPEN) left.send(event.data);
+  });
+  const close = (event: CloseEvent, to: WebSocket) => {
+    if (to.readyState === WebSocket.OPEN || to.readyState === WebSocket.CONNECTING) {
+      to.close(event.code || 1000, event.reason || "peer closed");
+    }
+  };
+  left.addEventListener("close", (event) => close(event, right));
+  right.addEventListener("close", (event) => close(event, left));
+  left.addEventListener("error", () => {
+    if (right.readyState === WebSocket.OPEN || right.readyState === WebSocket.CONNECTING) {
+      right.close(1011, "peer error");
+    }
+  });
+  right.addEventListener("error", () => {
+    if (left.readyState === WebSocket.OPEN || left.readyState === WebSocket.CONNECTING) {
+      left.close(1011, "peer error");
+    }
+  });
 }
 
 async function provisionInteractiveSession(
@@ -2903,6 +3084,33 @@ function joinUrl(base: string, path: string): string {
   } catch {
     return "";
   }
+}
+
+function addQuery(rawUrl: string, params: Record<string, string>): string {
+  try {
+    const url = new URL(rawUrl);
+    for (const [key, value] of Object.entries(params)) {
+      if (value) url.searchParams.set(key, value);
+    }
+    return url.toString();
+  } catch {
+    return "";
+  }
+}
+
+function httpToWebSocketUrl(rawUrl: string): string {
+  try {
+    const url = new URL(rawUrl);
+    if (url.protocol === "http:") url.protocol = "ws:";
+    if (url.protocol === "https:") url.protocol = "wss:";
+    return url.toString();
+  } catch {
+    return "";
+  }
+}
+
+function bearer(token: string | undefined): string | null {
+  return token ? `Bearer ${token}` : null;
 }
 
 function directPortUrl(base: string, port: unknown, path: string): string | null {

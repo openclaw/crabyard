@@ -7,7 +7,7 @@ description: "System design, data model, and runtime architecture for Crabyard.a
 
 # Architecture
 
-Crabyard is a Cloudflare Worker backed by D1. The deployed Worker is the control plane: auth, repo gates, cards, run attempts, workflow evaluation, issue/PR lookup, docs, and the Ghostty WASM attach grid all run there today.
+Crabyard is a Cloudflare Worker backed by D1. The deployed Worker is the control plane: auth, repo gates, cards, run attempts, workflow evaluation, issue/PR lookup, docs, the Ghostty WASM attach grid, and the same-origin PTY WebSocket proxy all run there today.
 
 Container leases, Crabbox PTY/VNC, R2 archival, Durable Object fanout, and merge automation are represented by adapter metadata and product docs, but are not bound to external executors yet.
 
@@ -144,7 +144,7 @@ GitHub OAuth uses `read:user read:org`, verifies active org membership, maps tea
 
 - Cloudflare Container lease binding for autonomous Codex runs.
 - Crabbox lease binding for VNC/manual/heavy sessions.
-- Live PTY/app-server transport behind the Ghostty grid.
+- Runner-side PTY/app-server process hosting behind the Ghostty grid.
 - R2 terminal/artifact archival with retention cleanup.
 - Durable Object fanout for lower-latency live streams.
 - Merge automation handoff once runtime output and PR state are real.

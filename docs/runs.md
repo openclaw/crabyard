@@ -82,11 +82,12 @@ Attach opens a fullscreen Ghostty WASM grid. Current behavior:
 - Shows one or more Codex session tiles.
 - Includes standalone interactive Codex CLI sessions created from New session.
 - Uses the local `ghostty-web` bundle served by the Worker.
-- Replays D1 event logs into the terminal surface.
+- Streams live PTY bytes through `/api/interactive-sessions/:id/pty` when a bridge is configured.
+- Replays D1 event logs into the terminal surface while a live PTY is unavailable.
 - Falls back to a text terminal if Ghostty cannot initialize.
 - Supports focused fullscreen card view.
 
-Live PTY byte streaming and interactive stdin are not wired yet. The Take over action records `controlIntent = "takeover"` and operator only for active runs with takeover capability.
+The Take over action records `controlIntent = "takeover"` and operator only for active runs with takeover capability.
 
 ## Interactive CLI Sessions
 
@@ -104,6 +105,16 @@ Cloudflare runner configuration:
 - `CRABYARD_CLOUDFLARE_RUNNER_WORKDIR`: base workspace path; default `/workspace/crabyard`.
 - `CRABYARD_CLOUDFLARE_RUNNER_TTL_SECONDS`: default `14400`.
 - `CRABYARD_CLOUDFLARE_RUNNER_IDLE_SECONDS`: default `1800`.
+- `CRABYARD_PTY_BRIDGE_URL`: optional explicit PTY bridge WebSocket URL/template. Templates support `{id}`, `{leaseId}`, `{repo}`, `{branch}`, and `{runtime}`.
+- `CRABYARD_PTY_BRIDGE_TOKEN`: optional bearer token sent only from Crabyard to the bridge.
+
+Runner PTY contract:
+
+- Crabyard accepts the browser WebSocket on `/api/interactive-sessions/:id/pty`.
+- Crabyard connects upstream to the configured bridge with `Upgrade: websocket`.
+- Browser-to-runner messages are terminal input bytes.
+- Runner-to-browser messages are terminal output bytes.
+- The bridge receives `x-crabyard-session`, `x-crabyard-repo`, and `x-crabyard-runtime` headers plus session query parameters.
 
 ## Run APIs
 

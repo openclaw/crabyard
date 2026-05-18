@@ -235,6 +235,18 @@ Backends:
 - ClawFleet handles `crabbox` sessions only; use `CRABYARD_RUNTIME_PROVISION_URL` or `CRABYARD_CLOUDFLARE_RUNNER_URL` for `container` sessions.
 - If neither backend is configured, returns `pending_adapter` with a message that the route is live.
 
+### GET /api/interactive-sessions/:id/pty
+
+Viewer+. Same-origin WebSocket endpoint used by the Ghostty WASM terminal. Crabyard authenticates the browser session, verifies the interactive session is still attachable, then proxies PTY bytes to the configured runner.
+
+Target resolution:
+
+- `CRABYARD_PTY_BRIDGE_URL`: explicit bridge WebSocket URL/template. Templates support `{id}`, `{leaseId}`, `{repo}`, `{branch}`, and `{runtime}`. Crabyard appends `sessionId`, `leaseId`, `repo`, `branch`, `runtime`, and `command` query parameters.
+- `attachUrl`: if the provision adapter returned a `ws://` or `wss://` URL, Crabyard proxies to it.
+- `CRABYARD_CLOUDFLARE_RUNNER_URL`: for `cloudflare:<sandbox>` leases, Crabyard proxies to `/v1/sandboxes/:sandbox/pty` on the runner.
+
+If `CRABYARD_PTY_BRIDGE_TOKEN` or `CRABYARD_CLOUDFLARE_RUNNER_TOKEN` is set, Crabyard sends it as a bearer token only to the upstream bridge/runner. The browser never receives runner credentials.
+
 ### POST /api/interactive-sessions
 
 Maintainer+. Creates a standalone Codex CLI workspace request.

@@ -1935,7 +1935,7 @@
 
       function sessionRenderKey(session) {
         return session.kind === "interactive"
-          ? `${session.id}:${session.status}`
+          ? `${session.id}:${session.status}:${session.leaseId || ""}:${session.attachUrl || ""}`
           : `${session.id}:${session.lane}:${session.run?.status || ""}`;
       }
 
@@ -2084,6 +2084,13 @@
         const existing = terminalHosts.get(session.id);
         const text = terminalText(session);
         if (existing?.mount === mount) {
+          if (existing.live) {
+            setTerminalStatus(
+              session.id,
+              existing.socket?.readyState === WebSocket.OPEN ? "Live PTY" : "PTY bridge",
+            );
+            return;
+          }
           if (existing.text !== text) {
             updateMountedTerminal(existing, text);
             existing.text = text;
@@ -2098,8 +2105,9 @@
           if (isStaleTerminalMount(session, mount, mountEpoch)) return;
           if (!mod?.Terminal) throw new Error("Ghostty module missing Terminal");
           mount.innerHTML = "";
+          const live = shouldConnectLiveTerminal(session);
           const term = new mod.Terminal({
-            disableStdin: true,
+            disableStdin: !live,
             fontSize: focusedSessionId === session.id ? 14 : 13,
             theme: { background: "#101827", foreground: "#e5e7eb" },
           });
@@ -2111,15 +2119,62 @@
             if (typeof fit.observeResize === "function") fit.observeResize();
           }
           term.write(text);
-          terminalHosts.set(session.id, { mount, term, fit, text });
-          setTerminalStatus(session.id, "Ghostty WASM");
+          const host = { mount, term, fit, text, live, socket: null, dataSub: null };
+          if (live && typeof term.onData === "function") {
+            host.dataSub = term.onData((data) => sendTerminalInput(host, data));
+          }
+          terminalHosts.set(session.id, host);
+          if (live) {
+            connectTerminalSocket(session, host, term);
+          } else {
+            setTerminalStatus(session.id, "Ghostty WASM");
+          }
         } catch (error) {
           if (isStaleTerminalMount(session, mount, mountEpoch)) return;
           mount.innerHTML = `<pre class="terminal-fallback">${escapeHtml(text)}</pre>`;
-          terminalHosts.set(session.id, { mount, term: null, text });
+          terminalHosts.set(session.id, { mount, term: null, text, live: false, socket: null });
           setTerminalStatus(session.id, "Text fallback");
           console.warn("Ghostty terminal unavailable", error);
         }
+      }
+
+      function shouldConnectLiveTerminal(session) {
+        return (
+          session.kind === "interactive" &&
+          ["ready", "attached", "detached"].includes(session.status)
+        );
+      }
+
+      function terminalSocketUrl(session) {
+        const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+        return `${protocol}//${location.host}/api/interactive-sessions/${encodeURIComponent(session.id)}/pty`;
+      }
+
+      function connectTerminalSocket(session, host, term) {
+        const socket = new WebSocket(terminalSocketUrl(session));
+        host.socket = socket;
+        setTerminalStatus(session.id, "Connecting PTY");
+        socket.addEventListener("open", () => {
+          setTerminalStatus(session.id, "Live PTY");
+          term.focus?.();
+        });
+        socket.addEventListener("message", async (event) => {
+          if (typeof event.data === "string") {
+            term.write(event.data);
+            return;
+          }
+          const bytes = new Uint8Array(await event.data.arrayBuffer());
+          term.write(bytes);
+        });
+        socket.addEventListener("close", (event) => {
+          const reason = event.reason || (event.code === 1000 ? "closed" : `closed ${event.code}`);
+          setTerminalStatus(session.id, `PTY ${reason}`);
+        });
+        socket.addEventListener("error", () => setTerminalStatus(session.id, "PTY error"));
+      }
+
+      function sendTerminalInput(host, data) {
+        if (host.socket?.readyState === WebSocket.OPEN) host.socket.send(data);
       }
 
       function isStaleTerminalMount(session, mount, mountEpoch) {
@@ -2199,6 +2254,9 @@
 
       function disposeTerminal(id) {
         const host = terminalHosts.get(id);
+        if (host?.socket && host.socket.readyState < WebSocket.CLOSING)
+          host.socket.close(1000, "unmounted");
+        if (host?.dataSub && typeof host.dataSub.dispose === "function") host.dataSub.dispose();
         if (host?.fit && typeof host.fit.dispose === "function") host.fit.dispose();
         if (host?.term && typeof host.term.dispose === "function") host.term.dispose();
         terminalHosts.delete(id);

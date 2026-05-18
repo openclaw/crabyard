@@ -151,6 +151,8 @@ Configure these in Cloudflare Workers dashboard:
 - `CRABYARD_CLOUDFLARE_RUNNER_WORKDIR` – Optional base workdir for provisioned sandboxes, default `/workspace/crabyard`
 - `CRABYARD_CLOUDFLARE_RUNNER_TTL_SECONDS` – Optional sandbox TTL, default `14400`
 - `CRABYARD_CLOUDFLARE_RUNNER_IDLE_SECONDS` – Optional idle timeout, default `1800`
+- `CRABYARD_PTY_BRIDGE_URL` – Optional WebSocket PTY bridge URL/template for live Ghostty attach; supports `{id}`, `{leaseId}`, `{repo}`, `{branch}`, and `{runtime}`
+- `CRABYARD_PTY_BRIDGE_TOKEN` – Optional bearer token sent from Crabyard to the PTY bridge
 - `CRABYARD_CLAWFLEET_URL` – Optional ClawFleet dashboard/API URL used by `/api/provision/interactive` for `crabbox` sessions
 - `CRABYARD_CLAWFLEET_TOKEN` – Optional bearer token sent to ClawFleet
 - `CRABYARD_CLAWFLEET_PUBLIC_URL` – Optional public ClawFleet URL used when building attach/VNC links
@@ -247,9 +249,9 @@ Full documentation available at [docs.crabyard.ai](https://docs.crabyard.ai):
 
 Active development. See [CHANGELOG.md](CHANGELOG.md) for recent updates.
 
-Current phase: MVP deployed with auth, board UI, admin controls, card management, Kysely-backed D1 persistence, durable run attempts, repo workflow evaluation, card diffs, and Ghostty WASM terminal grid.
+Current phase: MVP deployed with auth, board UI, admin controls, card management, Kysely-backed D1 persistence, durable run attempts, repo workflow evaluation, card diffs, Ghostty WASM terminal grid, and an authenticated PTY WebSocket bridge route for interactive sessions.
 
-Next: Cloudflare Container or Crabbox lease binding plus Codex app-server/PTY transport integration.
+Next: bind the Cloudflare Container or Crabbox runner to the PTY bridge contract in production.
 
 ## License
 
