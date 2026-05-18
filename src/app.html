@@ -1486,6 +1486,27 @@
       let ghosttyModulePromise = null;
       let terminalEpoch = 0;
       const terminalHosts = new Map();
+      let terminalHubSocket = null;
+      let terminalHubReconnectTimer = null;
+      const terminalMessageType = {
+        hello: 1,
+        welcome: 2,
+        subscribe: 10,
+        unsubscribe: 11,
+        output: 20,
+        event: 22,
+        error: 23,
+        input: 30,
+        resize: 32,
+        controlRevoked: 53,
+        ping: 60,
+        pong: 61,
+      };
+      const terminalSubscribeFlags = {
+        output: 1 << 0,
+        snapshot: 1 << 1,
+        events: 1 << 2,
+      };
 
       function render() {
         renderMetrics();
@@ -2139,16 +2160,23 @@
         const text = terminalText(session);
         if (existing?.mount === mount) {
           if (existing.live) {
+            syncTerminalInputState(session, existing, existing.term);
             if (existing.terminalExited) {
               setTerminalStatus(session.id, existing.terminalExitLabel || "PTY exited");
               return;
             }
-            if (!existing.socket || existing.socket.readyState >= WebSocket.CLOSING) {
+            if (!terminalHubSocket || terminalHubSocket.readyState >= WebSocket.CLOSING) {
               connectTerminalSocket(session, existing, existing.term);
+            } else if (!existing.subscribed) {
+              subscribeTerminalHost(session, existing, existing.term);
             }
             setTerminalStatus(
               session.id,
-              existing.socket?.readyState === WebSocket.OPEN ? "Live PTY" : "PTY bridge",
+              terminalHubSocket?.readyState === WebSocket.OPEN
+                ? existing.canInput
+                  ? "Live PTY"
+                  : "Read-only PTY"
+                : "PTY bridge",
             );
             return;
           }
@@ -2167,8 +2195,9 @@
           if (!mod?.Terminal) throw new Error("Ghostty module missing Terminal");
           mount.innerHTML = "";
           const live = shouldConnectLiveTerminal(session);
+          const canInput = canSendTerminalInput(session);
           const term = new mod.Terminal({
-            disableStdin: !live,
+            disableStdin: !canInput,
             fontSize: focusedSessionId === session.id ? 14 : 13,
             theme: { background: "#101827", foreground: "#e5e7eb" },
           });
@@ -2180,8 +2209,18 @@
             if (typeof fit.observeResize === "function") fit.observeResize();
           }
           if (!live) term.write(text);
-          const host = { mount, term, fit, text, live, socket: null, dataSub: null };
-          if (live && typeof term.onData === "function") {
+          const host = {
+            mount,
+            term,
+            fit,
+            text,
+            live,
+            canInput,
+            sessionId: session.id,
+            subscribed: false,
+            dataSub: null,
+          };
+          if (canInput && typeof term.onData === "function") {
             host.dataSub = term.onData((data) => sendTerminalInput(host, data));
           }
           terminalHosts.set(session.id, host);
@@ -2202,70 +2241,273 @@
       function shouldConnectLiveTerminal(session) {
         return (
           session.kind === "interactive" &&
+          (session.canControl === true ||
+            session.sharedReadOnly === true ||
+            (sharedToken && session.id === sharedSessionId)) &&
+          ["ready", "attached", "detached"].includes(session.status)
+        );
+      }
+
+      function canSendTerminalInput(session) {
+        return (
+          session.kind === "interactive" &&
           session.canControl === true &&
           session.sharedReadOnly !== true &&
           ["ready", "attached", "detached"].includes(session.status)
         );
       }
 
-      function terminalSocketUrl(session, term) {
+      function terminalSocketUrl() {
         const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-        const url = new URL(
-          `${protocol}//${location.host}/api/interactive-sessions/${encodeURIComponent(session.id)}/pty`,
-        );
-        if (term?.cols) url.searchParams.set("cols", String(term.cols));
-        if (term?.rows) url.searchParams.set("rows", String(term.rows));
+        const url = new URL(`${protocol}//${location.host}/api/terminal/ws`);
+        if (sharedSessionId && sharedToken) {
+          url.searchParams.set("shareSession", sharedSessionId);
+          url.searchParams.set("token", sharedToken);
+        }
         return url.toString();
       }
 
       function connectTerminalSocket(session, host, term) {
-        const socket = new WebSocket(terminalSocketUrl(session, term));
-        socket.binaryType = "arraybuffer";
-        host.socket = socket;
-        setTerminalStatus(session.id, "Connecting PTY");
-        socket.addEventListener("open", () => {
-          setTerminalStatus(session.id, "Live PTY");
-          term.focus?.();
-        });
-        socket.addEventListener("message", async (event) => {
-          if (typeof event.data === "string") {
-            handleTerminalControlMessage(host, session.id, event.data);
-            return;
-          }
-          const buffer =
-            event.data instanceof ArrayBuffer ? event.data : await event.data.arrayBuffer();
-          const bytes = new Uint8Array(buffer);
-          term.write(bytes);
-        });
-        socket.addEventListener("close", (event) => {
-          if (host.terminalExited) {
-            setTerminalStatus(session.id, host.terminalExitLabel || "PTY exited");
-            return;
-          }
-          const reason = event.reason || (event.code === 1000 ? "closed" : `closed ${event.code}`);
-          setTerminalStatus(session.id, `PTY ${reason}`);
-        });
-        socket.addEventListener("error", () => setTerminalStatus(session.id, "PTY error"));
+        host.sessionId = session.id;
+        syncTerminalInputState(session, host, term);
+        host.live = true;
+        ensureTerminalHub();
+        subscribeTerminalHost(session, host, term);
       }
 
-      function handleTerminalControlMessage(host, id, data) {
-        try {
-          const message = JSON.parse(data);
-          if (message?.type === "ready") setTerminalStatus(id, "Live PTY");
-          if (message?.type === "exit") {
-            host.terminalExited = true;
-            host.terminalExitLabel = `PTY exited ${message.code ?? ""}`;
-            setTerminalStatus(id, host.terminalExitLabel);
-          }
-        } catch {
-          const host = terminalHosts.get(id);
-          host?.term?.write(data);
+      function syncTerminalInputState(session, host, term) {
+        const canInput = canSendTerminalInput(session);
+        host.canInput = canInput;
+        if (term?.options) term.options.disableStdin = !canInput;
+        if (canInput && !host.dataSub && typeof term?.onData === "function") {
+          host.dataSub = term.onData((data) => sendTerminalInput(host, data));
+        }
+        if (!canInput && host.dataSub) {
+          if (typeof host.dataSub.dispose === "function") host.dataSub.dispose();
+          host.dataSub = null;
         }
       }
 
+      function ensureTerminalHub() {
+        if (terminalHubSocket && terminalHubSocket.readyState < WebSocket.CLOSING) return;
+        if (terminalHubReconnectTimer) {
+          clearTimeout(terminalHubReconnectTimer);
+          terminalHubReconnectTimer = null;
+        }
+        const socket = new WebSocket(terminalSocketUrl());
+        socket.binaryType = "arraybuffer";
+        terminalHubSocket = socket;
+        for (const [id, host] of terminalHosts) {
+          if (host.live) setTerminalStatus(id, "Connecting PTY");
+        }
+        socket.addEventListener("open", () => {
+          sendTerminalFrame("", terminalMessageType.hello);
+          for (const session of sessionItems().filter((item) => item.kind === "interactive")) {
+            const host = terminalHosts.get(session.id);
+            if (host?.live && !host.terminalExited && shouldConnectLiveTerminal(session)) {
+              subscribeTerminalHost(session, host, host.term);
+            }
+          }
+        });
+        socket.addEventListener("message", (event) => {
+          void terminalFrameBytes(event.data).then((bytes) => {
+            const frame = decodeTerminalFrame(bytes);
+            if (frame) handleTerminalHubFrame(frame);
+          });
+        });
+        socket.addEventListener("close", (event) => {
+          if (terminalHubSocket !== socket) return;
+          for (const [id, host] of terminalHosts) {
+            if (!host.live || host.terminalExited) continue;
+            host.subscribed = false;
+            const reason =
+              event.reason || (event.code === 1000 ? "closed" : `closed ${event.code}`);
+            setTerminalStatus(id, `PTY ${reason}`);
+          }
+          terminalHubSocket = null;
+          if ([...terminalHosts.values()].some((host) => host.live && !host.terminalExited)) {
+            terminalHubReconnectTimer = setTimeout(() => ensureTerminalHub(), 1500);
+          }
+        });
+        socket.addEventListener("error", () => {
+          if (terminalHubSocket !== socket) return;
+          for (const [id, host] of terminalHosts) {
+            if (host.live && !host.terminalExited) setTerminalStatus(id, "PTY error");
+          }
+        });
+      }
+
+      function subscribeTerminalHost(session, host, term) {
+        if (!terminalHubSocket || terminalHubSocket.readyState !== WebSocket.OPEN) return;
+        host.subscribed = true;
+        const flags =
+          terminalSubscribeFlags.output |
+          terminalSubscribeFlags.snapshot |
+          terminalSubscribeFlags.events;
+        sendTerminalFrame(
+          session.id,
+          terminalMessageType.subscribe,
+          encodeSubscribePayload(flags, term?.cols, term?.rows),
+        );
+        setTerminalStatus(session.id, host.canInput ? "Live PTY" : "Read-only PTY");
+      }
+
+      async function terminalFrameBytes(data) {
+        if (data instanceof ArrayBuffer) return new Uint8Array(data);
+        if (data instanceof Blob) return new Uint8Array(await data.arrayBuffer());
+        if (typeof data === "string") return new TextEncoder().encode(data);
+        return new Uint8Array(data);
+      }
+
+      function handleTerminalHubFrame(frame) {
+        if (frame.type === terminalMessageType.welcome || frame.type === terminalMessageType.pong)
+          return;
+        const host = terminalHosts.get(frame.sessionId);
+        if (!host) return;
+        if (frame.type === terminalMessageType.output) {
+          host.term?.write(frame.payload);
+          return;
+        }
+        const message = decodeTerminalJson(frame.payload);
+        if (frame.type === terminalMessageType.error) {
+          host.subscribed = false;
+          const label = message?.error || "PTY error";
+          setTerminalStatus(frame.sessionId, label);
+          if (String(label).includes("revoked")) {
+            host.terminalExited = true;
+            host.terminalExitLabel = label;
+          } else {
+            scheduleTerminalResubscribe(frame.sessionId);
+          }
+          return;
+        }
+        if (frame.type === terminalMessageType.controlRevoked) {
+          host.canInput = false;
+          setTerminalStatus(frame.sessionId, "Read-only PTY");
+          return;
+        }
+        if (frame.type !== terminalMessageType.event) return;
+        if (message?.type === "subscribed") {
+          setTerminalStatus(frame.sessionId, message.canInput ? "Live PTY" : "Read-only PTY");
+          if (message.canInput && host.term?.cols && host.term?.rows) {
+            sendTerminalFrame(
+              frame.sessionId,
+              terminalMessageType.resize,
+              encodeResizePayload(host.term.cols, host.term.rows),
+            );
+            host.term?.focus?.();
+          }
+        }
+        if (message?.type === "ready") setTerminalStatus(frame.sessionId, "Live PTY");
+        if (message?.type === "exit") {
+          host.terminalExited = true;
+          host.terminalExitLabel = `PTY ${message.type} ${message.code ?? ""}`.trim();
+          setTerminalStatus(frame.sessionId, host.terminalExitLabel);
+        }
+        if (message?.type === "closed") {
+          host.subscribed = false;
+          host.terminalCloseLabel = `PTY closed ${message.code ?? ""}`.trim();
+          setTerminalStatus(frame.sessionId, host.terminalCloseLabel);
+          if (!host.terminalExited) scheduleTerminalResubscribe(frame.sessionId);
+        }
+      }
+
+      function scheduleTerminalResubscribe(id) {
+        setTimeout(() => {
+          const host = terminalHosts.get(id);
+          const session = findSessionItem(id);
+          if (
+            host?.live &&
+            !host.subscribed &&
+            !host.terminalExited &&
+            session?.kind === "interactive" &&
+            shouldConnectLiveTerminal(session) &&
+            terminalHubSocket?.readyState === WebSocket.OPEN
+          ) {
+            subscribeTerminalHost(session, host, host.term);
+          }
+        }, 1500);
+      }
+
       function sendTerminalInput(host, data) {
-        if (host.socket?.readyState !== WebSocket.OPEN) return;
-        host.socket.send(typeof data === "string" ? new TextEncoder().encode(data) : data);
+        if (!host.canInput || terminalHubSocket?.readyState !== WebSocket.OPEN) return;
+        const payload = typeof data === "string" ? new TextEncoder().encode(data) : data;
+        sendTerminalFrame(host.sessionId, terminalMessageType.input, payload);
+      }
+
+      function sendTerminalFrame(sessionId, type, payload = new Uint8Array()) {
+        if (terminalHubSocket?.readyState !== WebSocket.OPEN) return;
+        terminalHubSocket.send(encodeTerminalFrame({ type, sessionId, payload }));
+      }
+
+      function encodeTerminalFrame({ type, sessionId = "", payload = new Uint8Array() }) {
+        const sessionBytes = new TextEncoder().encode(sessionId);
+        const frame = new Uint8Array(12 + sessionBytes.length + payload.length);
+        const view = new DataView(frame.buffer);
+        let offset = 0;
+        view.setUint16(offset, 0x5943, true);
+        offset += 2;
+        view.setUint8(offset, 1);
+        offset += 1;
+        view.setUint8(offset, type);
+        offset += 1;
+        view.setUint32(offset, sessionBytes.length, true);
+        offset += 4;
+        frame.set(sessionBytes, offset);
+        offset += sessionBytes.length;
+        view.setUint32(offset, payload.length, true);
+        offset += 4;
+        frame.set(payload, offset);
+        return frame;
+      }
+
+      function decodeTerminalFrame(bytes) {
+        if (bytes.byteLength < 12) return null;
+        const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+        let offset = 0;
+        if (view.getUint16(offset, true) !== 0x5943) return null;
+        offset += 2;
+        if (view.getUint8(offset) !== 1) return null;
+        offset += 1;
+        const type = view.getUint8(offset);
+        offset += 1;
+        const sessionLength = view.getUint32(offset, true);
+        offset += 4;
+        if (offset + sessionLength + 4 > bytes.byteLength) return null;
+        const sessionId = new TextDecoder().decode(bytes.subarray(offset, offset + sessionLength));
+        offset += sessionLength;
+        const payloadLength = view.getUint32(offset, true);
+        offset += 4;
+        if (offset + payloadLength > bytes.byteLength) return null;
+        return { type, sessionId, payload: bytes.subarray(offset, offset + payloadLength) };
+      }
+
+      function encodeSubscribePayload(flags, cols, rows) {
+        const hasSize = Number.isFinite(cols) && Number.isFinite(rows);
+        const payload = new Uint8Array(hasSize ? 20 : 12);
+        const view = new DataView(payload.buffer);
+        view.setUint32(0, flags >>> 0, true);
+        if (hasSize) {
+          view.setUint32(12, cols >>> 0, true);
+          view.setUint32(16, rows >>> 0, true);
+        }
+        return payload;
+      }
+
+      function encodeResizePayload(cols, rows) {
+        const payload = new Uint8Array(8);
+        const view = new DataView(payload.buffer);
+        view.setUint32(0, cols >>> 0, true);
+        view.setUint32(4, rows >>> 0, true);
+        return payload;
+      }
+
+      function decodeTerminalJson(payload) {
+        try {
+          return JSON.parse(new TextDecoder().decode(payload));
+        } catch {
+          return null;
+        }
       }
 
       function isStaleTerminalMount(session, mount, mountEpoch) {
@@ -2355,12 +2597,20 @@
 
       function disposeTerminal(id) {
         const host = terminalHosts.get(id);
-        if (host?.socket && host.socket.readyState < WebSocket.CLOSING)
-          host.socket.close(1000, "unmounted");
+        if (host?.live && terminalHubSocket?.readyState === WebSocket.OPEN) {
+          sendTerminalFrame(id, terminalMessageType.unsubscribe);
+        }
         if (host?.dataSub && typeof host.dataSub.dispose === "function") host.dataSub.dispose();
         if (host?.fit && typeof host.fit.dispose === "function") host.fit.dispose();
         if (host?.term && typeof host.term.dispose === "function") host.term.dispose();
         terminalHosts.delete(id);
+        if (![...terminalHosts.values()].some((item) => item.live)) {
+          if (terminalHubReconnectTimer) clearTimeout(terminalHubReconnectTimer);
+          terminalHubReconnectTimer = null;
+          if (terminalHubSocket?.readyState < WebSocket.CLOSING) {
+            terminalHubSocket.close(1000, "no terminals mounted");
+          }
+        }
       }
 
       function renderRunSide(card) {

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add a multiplexed binary terminal WebSocket protocol for Codex session grids and shared viewers.
 - Add read-only Codex session share links with owner-approved terminal control requests.
 - Install bubblewrap and default interactive Codex sessions to yolo mode with a clean PTY buffer.
 - Keep Escape routed to focused Codex terminals instead of closing the session drawer.

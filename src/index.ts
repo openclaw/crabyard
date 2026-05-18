@@ -14,6 +14,14 @@ import {
 } from "kysely";
 import { getSandbox, type Sandbox as CloudflareSandbox } from "@cloudflare/sandbox";
 import {
+  TerminalMessageType,
+  decodeTerminalFrame,
+  decodeResizePayload,
+  decodeSubscribePayload,
+  encodeJsonPayload,
+  encodeTerminalFrame,
+} from "./terminal-protocol";
+import {
   APP_HTML,
   GHOSTTY_BROWSER_EXTERNAL_JS,
   GHOSTTY_WEB_JS,
@@ -262,6 +270,25 @@ type InteractiveProvisionResult = {
 type InteractiveTerminalTarget = {
   url: string;
   authorization: string | null;
+};
+
+type TerminalHubSubscription = {
+  session: InteractiveSession;
+  upstream: WebSocket;
+  canView: () => Promise<boolean>;
+  canInput: () => Promise<boolean>;
+  viewCheck: ReturnType<typeof setInterval> | null;
+  cols: number;
+  rows: number;
+};
+
+type PendingTerminalSubscription = {
+  unsubscribeRequested: boolean;
+};
+
+type TerminalUpstream = {
+  socket: WebSocket;
+  markConnected: () => Promise<void>;
 };
 
 type ClawFleetInstancePayload = {
@@ -695,6 +722,10 @@ async function api(request: Request, env: RuntimeEnv): Promise<Response> {
     );
   }
 
+  if (request.method === "GET" && url.pathname === "/api/terminal/ws") {
+    return interactiveTerminalHub(request, env, await optionalUser(request, env));
+  }
+
   const user = await requireUser(request, env);
 
   if (request.method === "GET" && url.pathname === "/api/session") {
@@ -971,6 +1002,23 @@ async function requireUser(request: Request, env: RuntimeEnv): Promise<User> {
     await upsertUser(env, authorized, Date.now());
   }
   return authorized;
+}
+
+async function optionalUser(request: Request, env: RuntimeEnv): Promise<User | null> {
+  try {
+    return await requireUser(request, env);
+  } catch (error) {
+    const status =
+      typeof error === "object" && error && "status" in error ? Number(error.status) : 0;
+    const url = new URL(request.url);
+    if (
+      status === 401 ||
+      (status === 403 && url.pathname === "/api/terminal/ws" && url.searchParams.has("token"))
+    ) {
+      return null;
+    }
+    throw error;
+  }
 }
 
 async function readState(env: RuntimeEnv, user: User): Promise<Record<string, unknown>> {
@@ -1387,6 +1435,492 @@ async function mutateInteractiveSession(
   }
 
   throw badRequest("unknown action");
+}
+
+async function interactiveTerminalHub(
+  request: Request,
+  env: RuntimeEnv,
+  user: User | null,
+): Promise<Response> {
+  if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
+    throw badRequest("websocket upgrade required");
+  }
+  if (!user && !(await canOpenAnonymousTerminalHub(request, env))) {
+    throw unauthorized();
+  }
+
+  const pair = new WebSocketPair();
+  const client = pair[0];
+  const server = pair[1];
+  const subscriptions = new Map<string, TerminalHubSubscription>();
+  const pendingSubscriptions = new Map<string, PendingTerminalSubscription>();
+  let queue = Promise.resolve();
+  let hubClosed = false;
+
+  server.accept();
+  sendTerminalJson(server, TerminalMessageType.Welcome, "", {
+    ok: true,
+    version: 1,
+    multiplex: true,
+  });
+
+  const closeSubscription = (id: string, code = 1000, reason = "unsubscribed") => {
+    const subscription = subscriptions.get(id);
+    if (!subscription) return;
+    subscriptions.delete(id);
+    if (subscription.viewCheck !== null) clearInterval(subscription.viewCheck);
+    if (subscription.upstream.readyState < WebSocket.CLOSING) {
+      subscription.upstream.close(code, reason);
+    }
+  };
+
+  const closeAll = (code = 1000, reason = "client closed") => {
+    for (const id of subscriptions.keys()) closeSubscription(id, code, reason);
+  };
+
+  server.addEventListener("message", (event) => {
+    queue = queue
+      .catch(() => undefined)
+      .then(async () => {
+        const data = await webSocketMessageData(event.data);
+        const bytes =
+          typeof data === "string" ? encoder.encode(data) : new Uint8Array(data.slice(0));
+        const frame = decodeTerminalFrame(bytes);
+        if (!frame) {
+          sendTerminalJson(server, TerminalMessageType.Error, "", { error: "invalid frame" });
+          return;
+        }
+        if (frame.type === TerminalMessageType.Hello) {
+          sendTerminalJson(server, TerminalMessageType.Welcome, "", {
+            ok: true,
+            version: 1,
+            multiplex: true,
+          });
+          return;
+        }
+        if (frame.type === TerminalMessageType.Ping) {
+          sendTerminalFrame(server, TerminalMessageType.Pong, frame.sessionId, frame.payload);
+          return;
+        }
+        if (frame.type === TerminalMessageType.Subscribe) {
+          if (frame.sessionId) {
+            const existingPending = pendingSubscriptions.get(frame.sessionId);
+            if (existingPending && !existingPending.unsubscribeRequested) {
+              sendTerminalJson(server, TerminalMessageType.Event, frame.sessionId, {
+                type: "subscribing",
+              });
+              return;
+            }
+          }
+          const pending = { unsubscribeRequested: false };
+          if (frame.sessionId) pendingSubscriptions.set(frame.sessionId, pending);
+          void subscribeTerminalHubSession(
+            request,
+            env,
+            user,
+            server,
+            subscriptions,
+            frame,
+            () => !hubClosed && !pending.unsubscribeRequested,
+          ).finally(() => {
+            if (frame.sessionId && pendingSubscriptions.get(frame.sessionId) === pending) {
+              pendingSubscriptions.delete(frame.sessionId);
+            }
+          });
+          return;
+        }
+        if (frame.type === TerminalMessageType.Unsubscribe) {
+          const pending = pendingSubscriptions.get(frame.sessionId);
+          if (pending) {
+            pending.unsubscribeRequested = true;
+            return;
+          }
+          closeSubscription(frame.sessionId);
+          return;
+        }
+
+        if (pendingSubscriptions.has(frame.sessionId)) {
+          sendTerminalJson(server, TerminalMessageType.Event, frame.sessionId, {
+            type: "subscribing",
+          });
+          return;
+        }
+
+        const subscription = subscriptions.get(frame.sessionId);
+        if (!subscription) {
+          sendTerminalJson(server, TerminalMessageType.Error, frame.sessionId, {
+            error: "session is not subscribed",
+          });
+          return;
+        }
+        if (frame.type === TerminalMessageType.Input || frame.type === TerminalMessageType.Key) {
+          if (!(await subscription.canInput())) {
+            sendTerminalJson(server, TerminalMessageType.ControlRevoked, frame.sessionId, {
+              error: "terminal control has not been granted",
+            });
+            return;
+          }
+          if (subscription.upstream.readyState === WebSocket.OPEN) {
+            subscription.upstream.send(frame.payload);
+          }
+          return;
+        }
+        if (frame.type === TerminalMessageType.Resize) {
+          const size = decodeResizePayload(frame.payload);
+          if (!(await subscription.canInput())) {
+            sendTerminalJson(server, TerminalMessageType.ControlRevoked, frame.sessionId, {
+              error: "terminal control has not been granted",
+            });
+            return;
+          }
+          if (size) {
+            subscription.cols = size.cols;
+            subscription.rows = size.rows;
+            if (subscription.upstream.readyState === WebSocket.OPEN) {
+              subscription.upstream.send(JSON.stringify({ type: "resize", ...size }));
+            }
+          }
+          sendTerminalJson(server, TerminalMessageType.Event, frame.sessionId, {
+            type: "resize",
+            cols: size?.cols ?? null,
+            rows: size?.rows ?? null,
+          });
+          return;
+        }
+        if (frame.type === TerminalMessageType.Stop) {
+          closeSubscription(frame.sessionId, 1000, "stopped by client");
+        }
+      });
+  });
+
+  server.addEventListener("close", () => {
+    hubClosed = true;
+    closeAll();
+  });
+  server.addEventListener("error", () => {
+    hubClosed = true;
+    closeAll(1011, "client error");
+  });
+
+  return new Response(null, { status: 101, webSocket: client });
+}
+
+async function subscribeTerminalHubSession(
+  request: Request,
+  env: RuntimeEnv,
+  user: User | null,
+  client: WebSocket,
+  subscriptions: Map<string, TerminalHubSubscription>,
+  frame: { sessionId: string; payload: Uint8Array },
+  isHubOpen: () => boolean,
+): Promise<void> {
+  const id = frame.sessionId;
+  if (!id) {
+    sendTerminalJson(client, TerminalMessageType.Error, "", { error: "session id required" });
+    return;
+  }
+  const subscription = decodeSubscribePayload(frame.payload);
+  if (!subscription) {
+    sendTerminalJson(client, TerminalMessageType.Error, id, { error: "invalid subscribe payload" });
+    return;
+  }
+  if (subscriptions.has(id)) {
+    sendTerminalJson(client, TerminalMessageType.Event, id, { type: "subscribed" });
+    return;
+  }
+
+  if (!user && !(await canViewSharedTerminalRequest(request, env, id))) {
+    sendTerminalJson(client, TerminalMessageType.Error, id, { error: "unauthorized" });
+    return;
+  }
+
+  const session = await readInteractiveSession(env, id);
+  if (!session) {
+    sendTerminalJson(client, TerminalMessageType.Error, id, {
+      error: "interactive session not found",
+    });
+    return;
+  }
+  if (["expired", "failed", "stopped"].includes(session.status)) {
+    sendTerminalJson(client, TerminalMessageType.Error, id, {
+      error: `session is ${session.status}`,
+    });
+    return;
+  }
+  if (!(await canViewTerminalSession(request, env, user, session))) {
+    sendTerminalJson(client, TerminalMessageType.Error, id, { error: "unauthorized" });
+    return;
+  }
+
+  try {
+    const canInput = terminalInputGrant(env, user, session);
+    const canInputNow = await canInput();
+    const canView = terminalViewGrant(request, env, user, session);
+    const cols = canInputNow ? terminalDimension(subscription.cols, 120) : 120;
+    const rows = canInputNow ? terminalDimension(subscription.rows, 34) : 34;
+    const upstreamConnection = await openInteractiveTerminalUpstream(
+      request,
+      env,
+      user,
+      session,
+      cols,
+      rows,
+    );
+    const upstream = upstreamConnection.socket;
+    if (!isHubOpen() || client.readyState !== WebSocket.OPEN) {
+      if (upstream.readyState < WebSocket.CLOSING) upstream.close(1000, "client closed");
+      return;
+    }
+    let viewGranted = true;
+    let viewCheck: ReturnType<typeof setInterval> | null = null;
+    const revokeView = () => {
+      if (!viewGranted) return;
+      viewGranted = false;
+      subscriptions.delete(id);
+      if (viewCheck !== null) clearInterval(viewCheck);
+      if (upstream.readyState === WebSocket.OPEN) upstream.close(1008, "share revoked");
+      sendTerminalJson(client, TerminalMessageType.Error, id, {
+        error: "terminal share revoked",
+      });
+    };
+    viewCheck = setInterval(() => {
+      void canView()
+        .then((allowed) => {
+          if (!allowed) revokeView();
+        })
+        .catch(() => revokeView());
+    }, 5000);
+    subscriptions.set(id, { session, upstream, canView, canInput, viewCheck, cols, rows });
+    let outputQueue = Promise.resolve();
+    sendTerminalJson(client, TerminalMessageType.Event, id, {
+      type: "subscribed",
+      canInput: canInputNow,
+    });
+    upstream.addEventListener("message", (event) => {
+      const raw = event.data;
+      outputQueue = outputQueue
+        .catch(() => undefined)
+        .then(async () => {
+          const data = await webSocketMessageData(raw);
+          if (client.readyState !== WebSocket.OPEN) return;
+          if (!viewGranted) return;
+          if (typeof data === "string") {
+            const parsed = parseTerminalControlMessage(data);
+            if (parsed) {
+              sendTerminalJson(client, TerminalMessageType.Event, id, parsed);
+              return;
+            }
+            sendTerminalFrame(client, TerminalMessageType.Output, id, encoder.encode(data));
+            return;
+          }
+          sendTerminalFrame(client, TerminalMessageType.Output, id, new Uint8Array(data));
+        });
+    });
+    upstream.addEventListener("close", (event) => {
+      subscriptions.delete(id);
+      if (viewCheck !== null) clearInterval(viewCheck);
+      if (client.readyState === WebSocket.OPEN) {
+        sendTerminalJson(client, TerminalMessageType.Event, id, {
+          type: "closed",
+          code: event.code,
+          reason: event.reason,
+        });
+      }
+    });
+    upstream.addEventListener("error", () => {
+      subscriptions.delete(id);
+      if (viewCheck !== null) clearInterval(viewCheck);
+      sendTerminalJson(client, TerminalMessageType.Error, id, { error: "upstream terminal error" });
+    });
+    void upstreamConnection.markConnected().catch(() => {
+      sendTerminalJson(client, TerminalMessageType.Event, id, {
+        type: "warning",
+        message: "terminal connection state update failed",
+      });
+    });
+  } catch (error) {
+    sendTerminalJson(client, TerminalMessageType.Error, id, {
+      error: error instanceof Error ? clean(error.message, 200) : "terminal connection failed",
+    });
+  }
+}
+
+async function openInteractiveTerminalUpstream(
+  request: Request,
+  env: RuntimeEnv,
+  user: User | null,
+  session: InteractiveSession,
+  cols: number,
+  rows: number,
+): Promise<TerminalUpstream> {
+  const now = Date.now();
+  if (session.leaseId?.startsWith(sandboxLeasePrefix) && env.SANDBOX) {
+    const sandboxId =
+      session.leaseId?.slice(sandboxLeasePrefix.length) || sandboxIdForSession(session.id);
+    const sandbox = getSandbox(env.SANDBOX, sandboxId);
+    const terminalSession = await sandbox.getSession(sandboxTerminalSessionId(session.id));
+    const upstreamResponse = await terminalSession.terminal(request, {
+      cols,
+      rows,
+      shell: sandboxStartupScriptPath(session),
+    });
+    const upstream = upstreamResponse.webSocket;
+    if (!upstream || upstreamResponse.status !== 101) {
+      throw serviceUnavailable(`Cloudflare Sandbox terminal HTTP ${upstreamResponse.status}`);
+    }
+    upstream.accept();
+    return {
+      socket: upstream,
+      markConnected: () =>
+        markInteractiveTerminalConnected(
+          env,
+          user,
+          session.id,
+          now,
+          "Cloudflare Sandbox terminal connected",
+        ),
+    };
+  }
+
+  const target = interactiveTerminalTarget(env, session);
+  if (!target) throw serviceUnavailable("PTY bridge is not configured for this session");
+  const upstreamResponse = await fetch(
+    addQuery(target.url, { cols: String(cols), rows: String(rows) }),
+    {
+      headers: interactiveTerminalHeaders(session, target.authorization),
+    },
+  );
+  const upstream = upstreamResponse.webSocket;
+  if (!upstream || upstreamResponse.status !== 101) {
+    throw serviceUnavailable(`PTY bridge HTTP ${upstreamResponse.status}`);
+  }
+  upstream.accept();
+  return {
+    socket: upstream,
+    markConnected: () =>
+      markInteractiveTerminalConnected(env, user, session.id, now, "PTY terminal connected"),
+  };
+}
+
+async function markInteractiveTerminalConnected(
+  env: RuntimeEnv,
+  user: User | null,
+  id: string,
+  now: number,
+  message: string,
+): Promise<void> {
+  await database(env)
+    .updateTable("interactive_sessions")
+    .set({
+      status: "attached",
+      last_seen_at: now,
+      updated_at: now,
+      last_event: message,
+    })
+    .where("id", "=", id)
+    .where("status", "in", ["ready", "attached", "detached"])
+    .execute();
+  if (user) await appendInteractiveSessionEvent(env, id, user, message, now);
+}
+
+function terminalInputGrant(
+  env: RuntimeEnv,
+  user: User | null,
+  session: InteractiveSession,
+): () => Promise<boolean> {
+  if (!user) return async () => false;
+  if (canManageInteractiveSession(user, session)) return async () => true;
+  return () => canControlInteractiveSessionById(env, user, session.id);
+}
+
+function terminalViewGrant(
+  request: Request,
+  env: RuntimeEnv,
+  user: User | null,
+  session: InteractiveSession,
+): () => Promise<boolean> {
+  return async () =>
+    Boolean(user && (await canControlInteractiveSessionById(env, user, session.id))) ||
+    (await canViewSharedTerminalRequest(request, env, session.id));
+}
+
+async function canViewSharedTerminalRequest(
+  request: Request,
+  env: RuntimeEnv,
+  id: string,
+): Promise<boolean> {
+  const url = new URL(request.url);
+  const shareSession = url.searchParams.get("shareSession") ?? "";
+  const token = url.searchParams.get("token") ?? "";
+  return (!shareSession || shareSession === id) && (await isSharedSessionToken(env, id, token));
+}
+
+async function canOpenAnonymousTerminalHub(request: Request, env: RuntimeEnv): Promise<boolean> {
+  const url = new URL(request.url);
+  const shareSession = url.searchParams.get("shareSession") ?? "";
+  const token = url.searchParams.get("token") ?? "";
+  return Boolean(shareSession && token && (await isSharedSessionToken(env, shareSession, token)));
+}
+
+async function canViewTerminalSession(
+  request: Request,
+  env: RuntimeEnv,
+  user: User | null,
+  session: InteractiveSession,
+): Promise<boolean> {
+  if (user) {
+    requireRole(user, "viewer");
+    if (await canControlInteractiveSessionById(env, user, session.id)) return true;
+  }
+  return canViewSharedTerminalRequest(request, env, session.id);
+}
+
+async function isSharedSessionToken(env: RuntimeEnv, id: string, token: string): Promise<boolean> {
+  if (!token) return false;
+  const row = await database(env)
+    .selectFrom("interactive_sessions")
+    .select(["share_token_hash", "share_mode", "status"])
+    .where("id", "=", id)
+    .where("share_mode", "=", "link_read")
+    .executeTakeFirst();
+  return Boolean(
+    row?.share_token_hash &&
+    !["expired", "failed", "stopped"].includes(row.status) &&
+    (await sha256(token)) === row.share_token_hash,
+  );
+}
+
+function sendTerminalFrame(
+  socket: WebSocket,
+  type: TerminalMessageType,
+  sessionId: string,
+  payload?: Uint8Array,
+): void {
+  if (socket.readyState === WebSocket.OPEN) {
+    socket.send(
+      payload
+        ? encodeTerminalFrame({ type, sessionId, payload })
+        : encodeTerminalFrame({ type, sessionId }),
+    );
+  }
+}
+
+function sendTerminalJson(
+  socket: WebSocket,
+  type: TerminalMessageType,
+  sessionId: string,
+  payload: unknown,
+): void {
+  sendTerminalFrame(socket, type, sessionId, encodeJsonPayload(payload));
+}
+
+function parseTerminalControlMessage(data: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(data) as Record<string, unknown>;
+    return typeof parsed.type === "string" ? parsed : null;
+  } catch {
+    return null;
+  }
 }
 
 async function interactiveSessionPty(
@@ -3850,6 +4384,11 @@ function terminalSize(request: Request, name: "cols" | "rows", fallback: number)
   const value = Number(url.searchParams.get(name));
   if (!Number.isFinite(value)) return fallback;
   return Math.min(300, Math.max(10, Math.trunc(value)));
+}
+
+function terminalDimension(value: number | null, fallback: number): number {
+  if (!Number.isFinite(value ?? Number.NaN)) return fallback;
+  return Math.min(300, Math.max(10, Math.trunc(value as number)));
 }
 
 function shellQuote(value: string): string {

@@ -6,6 +6,7 @@
     "build": "node scripts/generate-assets.mjs && tsgo --noEmit",
     "build:static": "node scripts/generate-assets.mjs --static",
     "deploy": "pnpm build && wrangler d1 migrations apply crabyard-ai --remote && wrangler deploy",
+    "test": "node --test --experimental-strip-types tests/*.test.ts",
     "lint": "oxlint --ignore-pattern node_modules --ignore-pattern src/generated.ts .",
     "format": "oxfmt --check .",
     "check": "node scripts/generate-assets.mjs && tsgo --noEmit && oxlint --ignore-pattern node_modules --ignore-pattern src/generated.ts . && oxfmt --check ."
