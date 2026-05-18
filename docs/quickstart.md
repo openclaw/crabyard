@@ -105,7 +105,7 @@ The Worker will:
 - Store a run attempt with selection reason and capabilities.
 - Move the card to Running and append events.
 
-Click Attach to open the Ghostty WASM session grid. The current grid replays D1 events. Live PTY/app-server transport is planned.
+Click Attach to open the Ghostty WASM session grid. The grid immediately shows D1 event replay and switches to live PTY output through the terminal hub when the session has a sandbox or bridge.
 
 ## Troubleshooting
 

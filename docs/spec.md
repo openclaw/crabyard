@@ -48,7 +48,7 @@ Implemented now:
 - Optional titles derived from prompt.
 - D1 `run_attempts` with heartbeat, stall reconciliation, runtime selection reason, lease fields, operator intent, and runtime capabilities.
 - Runtime adapter descriptor for Container and Crabbox policy.
-- Ghostty WASM fullscreen session grid with D1 event replay and text fallback.
+- Ghostty WASM fullscreen session grid with D1 event replay, live multiplex PTY attach, and text fallback.
 - Focused Codex session URLs with public read-only share links and owner-approved control requests.
 - `CRABYARD.md` fetch/parse/evaluate admin surface.
 - Card diff metadata and compact patch preview.
@@ -58,7 +58,7 @@ Implemented now:
 Not wired yet:
 
 - Crabbox/ClawFleet lease creation.
-- Runner-side PTY process hosting and app-server transport.
+- External Crabbox/runner-side app-server transport.
 - R2 terminal/artifact archival.
 - Durable Object WebSocket fanout.
 - Direct merge execution or ClawSweeper handoff.
@@ -648,7 +648,7 @@ WebSockets:
 
 - `/ws/board/:board_id`
 - `/ws/run/:run_id`
-- `/ws/terminal/:run_id`
+- `/api/terminal/ws`
 
 Service bindings:
 

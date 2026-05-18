@@ -17,7 +17,7 @@ Crabyard is an OpenClaw control plane for Codex work: prompt cards, repo gates, 
 - Cards from prompts or `#number` issue/PR previews across enabled repos.
 - Optional title generation from prompt.
 - Durable run attempts with heartbeat, stall handling, operator, runtime reason, and capabilities.
-- Ghostty WASM fullscreen session grid with D1 event replay and text fallback.
+- Ghostty WASM fullscreen session grid with D1 event replay, live multiplex PTY attach, and text fallback.
 - Card diff metadata and compact patch view.
 - Owner workflow evaluation for repo `CRABYARD.md`.
 - Worker-served docs at `/docs/` and GitHub Pages docs at `docs.crabyard.ai`.
@@ -25,7 +25,6 @@ Crabyard is an OpenClaw control plane for Codex work: prompt cards, repo gates, 
 ## Not Wired Yet
 
 - Real Container/Crabbox lease creation.
-- Live PTY/app-server stdin/stdout transport.
 - R2 artifact/terminal archival.
 - Durable Object WebSocket fanout.
 - Direct merge execution and ClawSweeper handoff.
