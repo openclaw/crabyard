@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add browser clipboard copy/paste controls for live Codex terminals, including image/file paste into Cloudflare Sandbox workspaces.
 - Add a multiplexed binary terminal WebSocket protocol for Codex session grids and shared viewers.
 - Add read-only Codex session share links with owner-approved terminal control requests.
 - Install bubblewrap and default interactive Codex sessions to yolo mode with a clean PTY buffer.

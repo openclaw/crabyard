@@ -489,6 +489,7 @@ const sessionCookie = "crabyard_session";
 const oauthStateCookie = "crabyard_oauth_state";
 const bootstrapSessionSeconds = 60 * 60;
 const githubSessionSeconds = 60 * 15;
+const terminalClipboardMaxBytes = 10 * 1024 * 1024;
 const lanes = ["Todo", "Running", "Human Review", "Done"];
 const preferredRepo = "openclaw/openclaw";
 const sandboxLeasePrefix = "sandbox:";
@@ -783,6 +784,22 @@ async function api(request: Request, env: RuntimeEnv): Promise<Response> {
       env,
       user,
       decodeURIComponent(interactivePtyMatch[1] ?? ""),
+    );
+  }
+
+  const interactiveClipboardMatch = url.pathname.match(
+    /^\/api\/interactive-sessions\/([^/]+)\/clipboard$/,
+  );
+  if (request.method === "POST" && interactiveClipboardMatch) {
+    requireRole(user, "viewer");
+    return json(
+      await uploadInteractiveSessionClipboard(
+        request,
+        env,
+        user,
+        decodeURIComponent(interactiveClipboardMatch[1] ?? ""),
+      ),
+      { status: 201 },
     );
   }
 
@@ -1605,6 +1622,41 @@ async function interactiveTerminalHub(
   return new Response(null, { status: 101, webSocket: client });
 }
 
+async function writeTerminalClipboardFile(
+  env: RuntimeEnv,
+  user: User,
+  session: InteractiveSession,
+  bytes: Uint8Array,
+  rawName: unknown,
+  rawMediaType: unknown,
+): Promise<{ path: string; name: string; mediaType: string; byteCount: number }> {
+  if (!session.leaseId?.startsWith(sandboxLeasePrefix) || !env.SANDBOX) {
+    throw serviceUnavailable("clipboard file paste requires a Cloudflare Sandbox session");
+  }
+  if (!bytes.byteLength || bytes.byteLength > terminalClipboardMaxBytes) {
+    throw badRequest(
+      `clipboard file exceeds ${Math.floor(terminalClipboardMaxBytes / 1024 / 1024)} MiB`,
+    );
+  }
+  const mediaType = clean(rawMediaType || "application/octet-stream", 120);
+  const name = safeClipboardFilename(rawName, mediaType);
+  const sandboxId =
+    session.leaseId.slice(sandboxLeasePrefix.length) || sandboxIdForSession(session.id);
+  const sandbox = getSandbox(env.SANDBOX, sandboxId);
+  const directory = `${sandboxWorkdir(session.id)}/.crabyard/clipboard`;
+  const path = `${directory}/${Date.now()}-${crypto.randomUUID().slice(0, 8)}-${name}`;
+  await sandbox.mkdir(directory, { recursive: true });
+  await sandbox.writeFile(path, base64FromBytes(bytes), { encoding: "base64" });
+  await appendInteractiveSessionEvent(
+    env,
+    session.id,
+    user,
+    `Clipboard file pasted: ${path}`,
+    Date.now(),
+  );
+  return { path, name, mediaType, byteCount: bytes.byteLength };
+}
+
 async function subscribeTerminalHubSession(
   request: Request,
   env: RuntimeEnv,
@@ -1821,6 +1873,48 @@ async function markInteractiveTerminalConnected(
     .where("status", "in", ["ready", "attached", "detached"])
     .execute();
   if (user) await appendInteractiveSessionEvent(env, id, user, message, now);
+}
+
+async function uploadInteractiveSessionClipboard(
+  request: Request,
+  env: RuntimeEnv,
+  user: User,
+  id: string,
+): Promise<{ path: string; name: string; mediaType: string; byteCount: number }> {
+  if (!(await canControlInteractiveSessionById(env, user, id))) {
+    throw forbidden("terminal control has not been granted");
+  }
+  const session = await readInteractiveSession(env, id);
+  if (!session) throw notFound("interactive session not found");
+  if (["expired", "failed", "stopped"].includes(session.status)) {
+    throw badRequest(`session is ${session.status}`);
+  }
+  const bytes = await readClipboardUploadBytes(request);
+  return writeTerminalClipboardFile(
+    env,
+    user,
+    session,
+    bytes,
+    decodeHeaderValue(request.headers.get("x-clipboard-name")),
+    request.headers.get("content-type") || "application/octet-stream",
+  );
+}
+
+async function readClipboardUploadBytes(request: Request): Promise<Uint8Array> {
+  const contentLength = Number(request.headers.get("content-length") || "0");
+  if (Number.isFinite(contentLength) && contentLength > terminalClipboardMaxBytes) {
+    throw badRequest(
+      `clipboard file exceeds ${Math.floor(terminalClipboardMaxBytes / 1024 / 1024)} MiB`,
+    );
+  }
+  const bytes = new Uint8Array(await request.arrayBuffer());
+  if (!bytes.byteLength) throw badRequest("clipboard file is empty");
+  if (bytes.byteLength > terminalClipboardMaxBytes) {
+    throw badRequest(
+      `clipboard file exceeds ${Math.floor(terminalClipboardMaxBytes / 1024 / 1024)} MiB`,
+    );
+  }
+  return bytes;
 }
 
 function terminalInputGrant(
@@ -4324,6 +4418,54 @@ function clean(value: unknown, max: number): string {
   return String(value ?? "")
     .trim()
     .slice(0, max);
+}
+
+function decodeHeaderValue(value: string | null): string {
+  if (!value) return "";
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function base64FromBytes(bytes: Uint8Array): string {
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+  }
+  return btoa(binary);
+}
+
+function safeClipboardFilename(value: unknown, mediaType: string): string {
+  const raw =
+    String(value ?? "")
+      .split(/[\\/]/)
+      .pop() || "";
+  const base = clean(raw || `clipboard${clipboardExtension(mediaType)}`, 90)
+    .replace(/[^A-Za-z0-9._-]/g, "-")
+    .replace(/^-+/, "")
+    .replace(/-+/g, "-");
+  const fallback = `clipboard${clipboardExtension(mediaType)}`;
+  const name = base || fallback;
+  return name.includes(".") ? name : `${name}${clipboardExtension(mediaType)}`;
+}
+
+function clipboardExtension(mediaType: string): string {
+  const normalized = (mediaType.toLowerCase().split(";")[0] ?? "").trim();
+  return (
+    {
+      "image/png": ".png",
+      "image/jpeg": ".jpg",
+      "image/gif": ".gif",
+      "image/webp": ".webp",
+      "text/plain": ".txt",
+      "text/markdown": ".md",
+      "application/json": ".json",
+      "application/pdf": ".pdf",
+    }[normalized] || ".bin"
+  );
 }
 
 function joinUrl(base: string, path: string): string {

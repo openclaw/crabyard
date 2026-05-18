@@ -85,6 +85,7 @@ Attach opens a fullscreen Ghostty WASM grid. Current behavior:
 - Streams live PTY bytes through the multiplex `/api/terminal/ws` hub when a sandbox or bridge is configured.
 - Replays D1 event logs into the terminal surface while a live PTY is unavailable.
 - Falls back to a text terminal if Ghostty cannot initialize.
+- Copies terminal selection, pastes clipboard text when the viewer has writable control, and uploads clipboard images/files for Cloudflare Sandbox sessions.
 - Supports focused fullscreen card view.
 - Supports focused share URLs with public read-only event scrollback and owner-approved writable control requests for signed-in viewers.
 

@@ -2053,7 +2053,15 @@
           stopped || !canControlSession
             ? ""
             : `<button data-interactive-attach="${session.id}">Attach</button>`;
-        return `${shareButton}${unshareButton}${requestButton}${reviewButtons}${revokeButton}${attachButton}${stopButton}`;
+        const canPasteFiles =
+          canControlSession &&
+          typeof session.leaseId === "string" &&
+          session.leaseId.startsWith("sandbox:");
+        const clipboardButtons =
+          stopped || !canControlSession
+            ? `<button data-terminal-copy="${session.id}">Copy</button>`
+            : `<button data-terminal-copy="${session.id}">Copy</button><button data-terminal-paste-text="${session.id}">Paste</button>${canPasteFiles ? `<button data-terminal-paste-file="${session.id}">Paste file</button>` : ""}`;
+        return `${clipboardButtons}${shareButton}${unshareButton}${requestButton}${reviewButtons}${revokeButton}${attachButton}${stopButton}`;
       }
 
       function isOptimisticInteractiveSession(session) {
@@ -2208,6 +2216,8 @@
             fit.fit();
             if (typeof fit.observeResize === "function") fit.observeResize();
           }
+          const pasteHandler = (event) => handleTerminalPasteEvent(session.id, event);
+          mount.addEventListener("paste", pasteHandler, { capture: true });
           if (!live) term.write(text);
           const host = {
             mount,
@@ -2219,6 +2229,7 @@
             sessionId: session.id,
             subscribed: false,
             dataSub: null,
+            pasteHandler,
           };
           if (canInput && typeof term.onData === "function") {
             host.dataSub = term.onData((data) => sendTerminalInput(host, data));
@@ -2412,6 +2423,172 @@
         }
       }
 
+      function handleTerminalPasteEvent(id, event) {
+        const file = firstClipboardFile(event.clipboardData);
+        if (!file) return;
+        event.preventDefault();
+        event.stopPropagation();
+        void uploadTerminalClipboardBlob(id, file, file.name || clipboardName(file.type));
+      }
+
+      function firstClipboardFile(data) {
+        if (!data) return null;
+        for (const file of Array.from(data.files || [])) {
+          if (file && file.size > 0) return file;
+        }
+        for (const item of Array.from(data.items || [])) {
+          if (item.kind !== "file") continue;
+          const file = item.getAsFile();
+          if (file && file.size > 0) return file;
+        }
+        return null;
+      }
+
+      async function pasteClipboardText(id) {
+        const host = terminalHosts.get(id);
+        if (!host?.canInput) {
+          setTerminalStatus(id, "Read-only PTY");
+          return;
+        }
+        try {
+          const text = await navigator.clipboard?.readText?.();
+          if (!text) {
+            setTerminalStatus(id, "Clipboard empty");
+            return;
+          }
+          pasteTerminalText(host, text);
+        } catch {
+          setTerminalStatus(id, "Clipboard read blocked");
+        }
+      }
+
+      async function pasteClipboardFile(id) {
+        const host = terminalHosts.get(id);
+        if (!host?.canInput) {
+          setTerminalStatus(id, "Read-only PTY");
+          return;
+        }
+        if (!navigator.clipboard?.read) {
+          setTerminalStatus(id, "Clipboard files unavailable");
+          return;
+        }
+        try {
+          const items = await navigator.clipboard.read();
+          for (const item of items) {
+            const type =
+              item.types.find((candidate) => candidate.startsWith("image/")) ||
+              item.types.find((candidate) => candidate !== "text/plain");
+            if (!type) continue;
+            const blob = await item.getType(type);
+            await uploadTerminalClipboardBlob(id, blob, clipboardName(type), type);
+            return;
+          }
+          const text = await navigator.clipboard.readText();
+          if (text) pasteTerminalText(host, text);
+          else setTerminalStatus(id, "Clipboard empty");
+        } catch {
+          setTerminalStatus(id, "Clipboard read blocked");
+        }
+      }
+
+      async function copyTerminalSelection(id) {
+        const host = terminalHosts.get(id);
+        const selection = host?.term?.getSelection?.() || "";
+        if (!selection) {
+          setTerminalStatus(id, "No selection");
+          return;
+        }
+        try {
+          await navigator.clipboard.writeText(selection);
+          setTerminalStatus(id, "Copied");
+        } catch {
+          setTerminalStatus(id, "Clipboard write blocked");
+        }
+      }
+
+      async function uploadTerminalClipboardBlob(id, blob, name, mediaType = blob?.type || "") {
+        const host = terminalHosts.get(id);
+        if (!host?.canInput || terminalHubSocket?.readyState !== WebSocket.OPEN) {
+          setTerminalStatus(id, "Live control required");
+          return;
+        }
+        if (!canUploadTerminalClipboardFile(id)) {
+          setTerminalStatus(id, "File paste requires Sandbox");
+          return;
+        }
+        if (!blob || blob.size <= 0) {
+          setTerminalStatus(id, "Clipboard empty");
+          return;
+        }
+        if (blob.size > 10 * 1024 * 1024) {
+          setTerminalStatus(id, "Clipboard file too large");
+          return;
+        }
+        setTerminalStatus(id, `Uploading ${name || "clipboard"}`);
+        const response = await fetch(
+          `/api/interactive-sessions/${encodeURIComponent(id)}/clipboard`,
+          {
+            method: "POST",
+            headers: {
+              "content-type": mediaType || blob.type || "application/octet-stream",
+              "x-clipboard-name": encodeURIComponent(name || clipboardName(mediaType)),
+            },
+            body: blob,
+          },
+        );
+        if (!response.ok) {
+          setTerminalStatus(id, `Paste failed (${response.status})`);
+          return;
+        }
+        const result = await response.json();
+        const path = String(result.path || "");
+        setTerminalStatus(id, path ? `Pasted ${result.name || "file"}` : "Paste done");
+        if (path) pasteTerminalText(host, path);
+      }
+
+      function canUploadTerminalClipboardFile(id) {
+        const session = sessionItems().find(
+          (item) => item.kind === "interactive" && item.id === id,
+        );
+        return (
+          session?.canControl === true &&
+          typeof session.leaseId === "string" &&
+          session.leaseId.startsWith("sandbox:")
+        );
+      }
+
+      function pasteTerminalText(host, text) {
+        if (!host?.canInput) return;
+        if (typeof host.term?.paste === "function") {
+          host.term.paste(text);
+          return;
+        }
+        sendTerminalInput(host, text);
+      }
+
+      function clipboardName(mediaType) {
+        return `clipboard-${Date.now()}${clipboardExtension(mediaType)}`;
+      }
+
+      function clipboardExtension(mediaType) {
+        return (
+          {
+            "image/png": ".png",
+            "image/jpeg": ".jpg",
+            "image/gif": ".gif",
+            "image/webp": ".webp",
+            "text/plain": ".txt",
+            "text/markdown": ".md",
+            "application/json": ".json",
+            "application/pdf": ".pdf",
+          }[
+            String(mediaType || "")
+              .toLowerCase()
+              .split(";")[0]
+          ] || ".bin"
+        );
+      }
+
       function scheduleTerminalResubscribe(id) {
         setTimeout(() => {
           const host = terminalHosts.get(id);
@@ -2602,6 +2779,9 @@
         }
         if (host?.dataSub && typeof host.dataSub.dispose === "function") host.dataSub.dispose();
         if (host?.fit && typeof host.fit.dispose === "function") host.fit.dispose();
+        if (host?.pasteHandler) {
+          host.mount?.removeEventListener?.("paste", host.pasteHandler, { capture: true });
+        }
         if (host?.term && typeof host.term.dispose === "function") host.term.dispose();
         terminalHosts.delete(id);
         if (![...terminalHosts.values()].some((item) => item.live)) {
@@ -2807,6 +2987,9 @@
           interactiveSessionAction(target.dataset.interactiveDenyControl, "deny_control");
         if (target.dataset.interactiveRevokeControl)
           interactiveSessionAction(target.dataset.interactiveRevokeControl, "revoke_control");
+        if (target.dataset.terminalCopy) copyTerminalSelection(target.dataset.terminalCopy);
+        if (target.dataset.terminalPasteText) pasteClipboardText(target.dataset.terminalPasteText);
+        if (target.dataset.terminalPasteFile) pasteClipboardFile(target.dataset.terminalPasteFile);
         if (target.dataset.createRef) createRefCard(Number(target.dataset.createRef));
         if (target.dataset.remove === "allow") removeAllow(target.dataset.value);
         if (target.dataset.remove === "repo") removeRepo(target.dataset.value);

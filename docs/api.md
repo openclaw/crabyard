@@ -277,6 +277,10 @@ Supported browser actions:
 
 Server messages include `Welcome`, `Output`, `Event`, `Error`, `ControlRevoked`, and `Pong`. Shared-link viewers can subscribe and scroll output, but input frames are rejected unless an owner/maintainer grants writable control.
 
+### POST /api/interactive-sessions/:id/clipboard
+
+Viewer+ with writable terminal control. Uploads a browser clipboard image/file body into the controlled Cloudflare Sandbox workspace and returns `{ path, name, mediaType, byteCount }`. The browser then pastes the returned path into the PTY. Max body size: 10 MiB. Non-Sandbox PTY backends do not expose file paste.
+
 ### GET /api/interactive-sessions/:id/pty
 
 Viewer+. Legacy single-session WebSocket endpoint. Crabyard authenticates the browser session, verifies the interactive session is still attachable, verifies terminal control, then proxies PTY bytes to the configured runner. Owners and maintainers have control by default; other viewers require an approved control request.
