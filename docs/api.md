@@ -7,7 +7,7 @@ description: "REST API reference for Crabyard."
 
 # API Reference
 
-Crabyard exposes a same-origin REST API from the Worker. There are no live WebSocket APIs in the deployed MVP yet.
+Crabyard exposes same-origin REST APIs and terminal WebSocket APIs from the Worker. Browser clients keep app state in D1-backed REST calls and attach to live Codex terminals through the multiplex terminal hub.
 
 ## Auth
 
@@ -250,9 +250,36 @@ Backends:
 - ClawFleet handles `crabbox` sessions only; use `CRABYARD_RUNTIME_PROVISION_URL` or `CRABYARD_CLOUDFLARE_RUNNER_URL` for `container` sessions.
 - If neither backend is configured, returns `pending_adapter` with a message that the route is live.
 
+### GET /api/terminal/ws
+
+Viewer+, or public shared-link token for read-only sessions. Same-origin multiplex WebSocket endpoint used by the Ghostty WASM session grid. One browser socket can subscribe to multiple interactive sessions, receive PTY output frames, resize terminals, and send input only when the current user has control.
+
+The wire format is a compact binary frame:
+
+```text
+u16 magic 0x5943
+u8 version 1
+u8 message_type
+u32 session_id_length
+utf8 session_id
+u32 payload_length
+payload bytes
+```
+
+Supported browser actions:
+
+- `Subscribe`: attach to a session with output/snapshot/event flags and optional initial cols/rows.
+- `Unsubscribe`: detach one session without closing the hub.
+- `Input` / `Key`: send terminal bytes when control is granted.
+- `Resize`: forward terminal dimensions to the upstream PTY.
+- `Stop`: close the upstream subscription.
+- `Ping`: keepalive, answered with `Pong`.
+
+Server messages include `Welcome`, `Output`, `Event`, `Error`, `ControlRevoked`, and `Pong`. Shared-link viewers can subscribe and scroll output, but input frames are rejected unless an owner/maintainer grants writable control.
+
 ### GET /api/interactive-sessions/:id/pty
 
-Viewer+. Same-origin WebSocket endpoint used by the Ghostty WASM terminal. Crabyard authenticates the browser session, verifies the interactive session is still attachable, verifies terminal control, then proxies PTY bytes to the configured runner. Owners and maintainers have control by default; other viewers require an approved control request.
+Viewer+. Legacy single-session WebSocket endpoint. Crabyard authenticates the browser session, verifies the interactive session is still attachable, verifies terminal control, then proxies PTY bytes to the configured runner. Owners and maintainers have control by default; other viewers require an approved control request.
 
 Target resolution:
 
