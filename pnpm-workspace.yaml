@@ -1,0 +1,7 @@
+nodeLinker: hoisted
+shamefullyHoist: true
+strictPeerDependencies: false
+preferWorkspacePackages: true
+preferOffline: true
+pmOnFail: ignore
+verifyDepsBeforeRun: false
