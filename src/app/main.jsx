@@ -22,6 +22,7 @@ import {
   configureTerminalHub,
   copyTerminalSelection,
   disposeAllTerminals,
+  disposeTerminal,
   disposeMissingTerminals,
   mountTerminal,
   pasteClipboardFile,
@@ -1373,26 +1374,12 @@ function SessionTools({ focused, sessionLayout, setSessionLayout, closeDrawer, s
 
 function SessionCell(props) {
   const session = props.session;
-  const size = sessionTileSize(props.sessionLayout, session.id);
   const editable = props.sessionLayout.edit && !props.focused;
-  const maxColumns =
-    props.sessionLayout.columns === "auto"
-      ? size.w
-      : Math.min(size.w, Number(props.sessionLayout.columns) || size.w);
   return (
     <article
       class={`session-cell ${editable ? "layout-editing" : ""}`}
       draggable={editable}
       data-session-cell={session.id}
-      style={
-        props.focused
-          ? {}
-          : {
-              gridColumn: `span ${maxColumns}`,
-              gridRow: `span ${size.h}`,
-              minHeight: `calc(var(--session-cell-min) * ${size.h} + var(--session-gap) * ${size.h - 1})`,
-            }
-      }
       onDragStart={(event) => {
         if (!editable) return;
         props.draggedSessionId.current = session.id;
@@ -1464,38 +1451,13 @@ function SessionCell(props) {
   );
 }
 
-function SessionLayoutButtons({ session, sessionLayout, setSessionLayout }) {
-  const size = sessionTileSize(sessionLayout, session.id);
+function SessionLayoutButtons() {
   return (
-    <>
+    <span class="session-edit-controls">
       <button class="session-drag layout-control" draggable="true" title="Drag to rearrange">
         Move
       </button>
-      <button
-        class="layout-control"
-        title="Cycle tile width"
-        onClick={() =>
-          setSessionLayout((layout) => ({
-            ...layout,
-            sizes: { ...layout.sizes, [session.id]: { ...size, w: size.w >= 4 ? 1 : size.w + 1 } },
-          }))
-        }
-      >
-        W{size.w}
-      </button>
-      <button
-        class="layout-control"
-        title="Cycle tile height"
-        onClick={() =>
-          setSessionLayout((layout) => ({
-            ...layout,
-            sizes: { ...layout.sizes, [session.id]: { ...size, h: size.h >= 3 ? 1 : size.h + 1 } },
-          }))
-        }
-      >
-        H{size.h}
-      </button>
-    </>
+    </span>
   );
 }
 
@@ -1661,20 +1623,56 @@ function humanStatus(value) {
 
 function TerminalMount({ session, focused, drawerOpen }) {
   const ref = useRef(null);
+  const [visible, setVisible] = useState(focused);
+
   useEffect(() => {
-    if (!drawerOpen) return;
+    if (focused) {
+      setVisible(true);
+      return;
+    }
+    if (!drawerOpen) {
+      setVisible(false);
+      return;
+    }
+    const mount = ref.current;
+    if (!mount || !("IntersectionObserver" in window)) {
+      setVisible(true);
+      return;
+    }
+    const root = mount.closest(".panel-body");
+    const observer = new IntersectionObserver(([entry]) => setVisible(entry.isIntersecting), {
+      root,
+      rootMargin: "360px 0px",
+      threshold: 0,
+    });
+    observer.observe(mount);
+    return () => observer.disconnect();
+  }, [session.id, focused, drawerOpen]);
+
+  useEffect(() => {
     const mount = ref.current;
     if (!mount) return;
-    mount.dataset.sessionId = session.id;
+    const active = drawerOpen && visible;
+    mount.dataset.sessionId = active ? session.id : "";
+    if (!active) {
+      disposeTerminal(session.id);
+      return;
+    }
     void mountTerminal(session, mount, { focused });
-  }, [session, focused, drawerOpen]);
+    return () => {
+      if (!drawerOpen) disposeTerminal(session.id);
+    };
+  }, [session, focused, drawerOpen, visible]);
+
   return (
     <div
       ref={ref}
       class="ghostty-terminal"
-      data-session-id={session.id}
+      data-session-id={drawerOpen && visible ? session.id : ""}
       aria-label={`${session.id} terminal`}
-    />
+    >
+      {!visible ? <div class="terminal-placeholder">Terminal paused offscreen</div> : null}
+    </div>
   );
 }
 
@@ -1952,10 +1950,6 @@ function Icon({ name }) {
 
 function orderedSessionItems(items, layout) {
   const currentIds = new Set(items.map((item) => item.id));
-  const sizes = { ...layout.sizes };
-  for (const id of Object.keys(sizes)) {
-    if (!currentIds.has(id)) delete sizes[id];
-  }
   if (!layout.manualOrder) return items;
   const order = [
     ...layout.order.filter((id) => currentIds.has(id)),
@@ -1967,14 +1961,6 @@ function orderedSessionItems(items, layout) {
       (rank.get(left.id) ?? Number.MAX_SAFE_INTEGER) -
       (rank.get(right.id) ?? Number.MAX_SAFE_INTEGER),
   );
-}
-
-function sessionTileSize(layout, id) {
-  const size = layout.sizes[id] || {};
-  return {
-    w: Math.min(4, Math.max(1, Number(size.w) || 1)),
-    h: Math.min(3, Math.max(1, Number(size.h) || 1)),
-  };
 }
 
 function moveSessionLayoutItem(layout, items, sourceId, targetId) {
