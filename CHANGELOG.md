@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Update provisioned Codex CLI sessions to npm `@openai/codex@latest` before launch.
 - Keep the new Codex session drawer above the full-screen sessions grid.
 - Hide Chrome's native contenteditable caret inside Ghostty session tiles.
 - Add persistent new Codex session actions to the sessions grid empty state and toolbar.

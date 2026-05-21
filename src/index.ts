@@ -2681,6 +2681,20 @@ printf '\\033[1;36mCrabyard %s\\033[0m %s on %s\\n' "$CRABYARD_SESSION_ID" "$CRA
 if [ -s .crabyard-initial-prompt.txt ]; then
   printf '\\033[2mInitial prompt is saved in .crabyard-initial-prompt.txt\\033[0m\\n'
 fi
+if command -v npm >/dev/null 2>&1; then
+  printf '\\033[2mUpdating Codex CLI to npm latest...\\033[0m\\n'
+  if npm install -g @openai/codex@latest >/tmp/crabyard-codex-install.log 2>&1; then
+    hash -r
+  else
+    printf '\\033[33mCodex CLI update failed; using installed version if available.\\033[0m\\n'
+    tail -n 20 /tmp/crabyard-codex-install.log || true
+  fi
+fi
+if command -v codex >/dev/null 2>&1; then
+  printf '\\033[2mCodex CLI: '
+  codex --version || true
+  printf '\\033[0m'
+fi
 if [ -n "\${OPENAI_API_KEY:-}" ]; then
   mkdir -p "$HOME/.codex"
   cat > "$HOME/.codex/config.toml" <<'EOF'
