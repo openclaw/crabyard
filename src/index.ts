@@ -57,6 +57,7 @@ type RuntimeEnv = Env & {
   CRABYARD_CLAWFLEET_URL?: string;
   CRABYARD_CLAWFLEET_TOKEN?: string;
   CRABYARD_CLAWFLEET_PUBLIC_URL?: string;
+  CRABYARD_TOKEN_ENCRYPTION_KEY?: string;
   OPENAI_API_KEY?: string;
   OPENAI_BASE_URL?: string;
   OPENAI_ORG_ID?: string;
@@ -257,6 +258,7 @@ type InteractiveProvisionRequest = {
   command: string;
   prompt: string;
   owner: string;
+  githubToken?: string;
 };
 
 type InteractiveProvisionResult = {
@@ -362,6 +364,7 @@ type SessionTable = {
   subject: string;
   expires_at: number;
   created_at: number;
+  github_token_ciphertext: string | null;
 };
 
 type CardTable = {
@@ -486,6 +489,7 @@ type CompilableQuery = {
 };
 
 const encoder = new TextEncoder();
+const decoder = new TextDecoder();
 const sessionCookie = "crabyard_session";
 const oauthStateCookie = "crabyard_oauth_state";
 const bootstrapSessionSeconds = 60 * 60;
@@ -739,11 +743,11 @@ async function api(request: Request, env: RuntimeEnv): Promise<Response> {
   const user = await requireUser(request, env);
 
   if (request.method === "GET" && url.pathname === "/api/session") {
-    return json({ user, auth: authMethods(env) });
+    return json({ user, auth: authMethods(env, await hasSessionGitHubToken(request, env)) });
   }
 
   if (request.method === "GET" && url.pathname === "/api/state") {
-    return json(await readState(env, user));
+    return json(await readState(request, env, user));
   }
 
   if (request.method === "GET" && url.pathname === "/api/github/refs") {
@@ -856,7 +860,9 @@ async function api(request: Request, env: RuntimeEnv): Promise<Response> {
   const allowMatch = url.pathname.match(/^\/api\/admin\/allow\/(.+)$/);
   if (request.method === "DELETE" && allowMatch) {
     requireRole(user, "owner");
-    return json(await removeAllowEntry(env, user, decodeURIComponent(allowMatch[1] ?? "")));
+    return json(
+      await removeAllowEntry(request, env, user, decodeURIComponent(allowMatch[1] ?? "")),
+    );
   }
 
   if (request.method === "POST" && url.pathname === "/api/admin/repos") {
@@ -867,7 +873,7 @@ async function api(request: Request, env: RuntimeEnv): Promise<Response> {
   const repoMatch = url.pathname.match(/^\/api\/admin\/repos\/(.+)$/);
   if (request.method === "DELETE" && repoMatch) {
     requireRole(user, "owner");
-    return json(await removeRepo(env, user, decodeURIComponent(repoMatch[1] ?? "")));
+    return json(await removeRepo(request, env, user, decodeURIComponent(repoMatch[1] ?? "")));
   }
 
   return json({ error: "not found" }, { status: 404 });
@@ -906,7 +912,7 @@ async function githubLogin(request: Request, env: RuntimeEnv): Promise<Response>
   const target = new URL("https://github.com/login/oauth/authorize");
   target.searchParams.set("client_id", env.GITHUB_CLIENT_ID);
   target.searchParams.set("redirect_uri", redirectUri);
-  target.searchParams.set("scope", "read:user read:org");
+  target.searchParams.set("scope", "read:user read:org repo");
   target.searchParams.set("state", state);
 
   return redirect(target.toString(), {
@@ -975,7 +981,13 @@ async function githubCallback(request: Request, env: RuntimeEnv): Promise<Respon
 
   const now = Date.now();
   await upsertUser(env, authorized, now);
-  const session = await createSession(env, authorized.subject, now, githubSessionSeconds);
+  const session = await createSession(
+    env,
+    authorized.subject,
+    now,
+    githubSessionSeconds,
+    tokenBody.access_token,
+  );
   return redirect("/app", { "set-cookie": session });
 }
 
@@ -1052,24 +1064,30 @@ async function optionalUser(request: Request, env: RuntimeEnv): Promise<User | n
   }
 }
 
-async function readState(env: RuntimeEnv, user: User): Promise<Record<string, unknown>> {
+async function readState(
+  request: Request,
+  env: RuntimeEnv,
+  user: User,
+): Promise<Record<string, unknown>> {
   await reconcileStalledRuns(env, Date.now());
   const db = database(env);
-  const [settings, allow, repos, cards, interactiveSessions, workflows] = await Promise.all([
-    readSettings(env),
-    user.role === "owner"
-      ? db.selectFrom("allow_entries").select(["value", "role"]).orderBy("value").execute()
-      : Promise.resolve([]),
-    db.selectFrom("repos").select("repo").where("enabled", "=", 1).orderBy("repo").execute(),
-    readCards(env),
-    readInteractiveSessions(env, user),
-    user.role === "owner" ? readWorkflowSummaries(env) : Promise.resolve([]),
-  ]);
+  const [settings, allow, repos, cards, interactiveSessions, workflows, githubTokenAvailable] =
+    await Promise.all([
+      readSettings(env),
+      user.role === "owner"
+        ? db.selectFrom("allow_entries").select(["value", "role"]).orderBy("value").execute()
+        : Promise.resolve([]),
+      db.selectFrom("repos").select("repo").where("enabled", "=", 1).orderBy("repo").execute(),
+      readCards(env),
+      readInteractiveSessions(env, user),
+      user.role === "owner" ? readWorkflowSummaries(env) : Promise.resolve([]),
+      hasSessionGitHubToken(request, env),
+    ]);
   const repoNames = sortRepos(repos.map((row) => row.repo));
 
   return {
     user,
-    auth: authMethods(env),
+    auth: authMethods(env, githubTokenAvailable),
     org: settings.org ?? "OpenClaw",
     cap: numberSetting(settings.cap, 20),
     retention: settings.retention ?? "30",
@@ -1105,6 +1123,10 @@ async function createInteractiveSession(
   const prompt = clean(body.prompt, 4000);
   const owner = actor(user);
   const now = Date.now();
+  const githubToken = await sessionGitHubToken(request, env);
+  if (user.subject.startsWith("github:") && !githubToken) {
+    throw forbidden("GitHub PR credentials are not connected; sign in with GitHub again");
+  }
   const db = database(env);
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const id = await nextInteractiveSessionId(env);
@@ -1147,6 +1169,7 @@ async function createInteractiveSession(
         command,
         prompt,
         owner,
+        ...(githubToken ? { githubToken } : {}),
       });
       if (provisioned) {
         await db
@@ -1226,7 +1249,7 @@ async function cleanupInteractiveSessions(
     await db.deleteFrom("interactive_sessions").where("id", "in", removedIds).execute();
     await audit(env, user, `interactive sessions cleaned ${removedIds.join(",")}`, Date.now());
   }
-  return { state: await readState(env, user), removedIds };
+  return { state: await readState(request, env, user), removedIds };
 }
 
 async function mutateInteractiveSession(
@@ -2546,11 +2569,21 @@ async function provisionInteractiveEndpoint(
   const command = clean(session.command, 240) || defaultInteractiveCommand;
   const prompt = clean(session.prompt, 4000);
   const owner = clean(session.owner, 240);
+  const githubToken = clean(session.githubToken, 4000) || undefined;
   if (!id || !repo || !owner) {
     return failedProvision("interactive provision failed: invalid session request");
   }
 
-  const payload = { id, repo, branch, runtime, command, prompt, owner };
+  const payload: InteractiveProvisionRequest = {
+    id,
+    repo,
+    branch,
+    runtime,
+    command,
+    prompt,
+    owner,
+    ...(githubToken ? { githubToken } : {}),
+  };
   if (env.SANDBOX) {
     return provisionWithSandbox(env, payload);
   }
@@ -2641,24 +2674,31 @@ async function prepareSandboxWorkspace(
   await sandbox.exec(
     [
       "set -eu",
+      "git_with_github_auth() {",
+      '  if [ -n "${GITHUB_TOKEN:-}" ]; then',
+      '    git -c "http.https://github.com/.extraheader=AUTHORIZATION: bearer ${GITHUB_TOKEN}" "$@"',
+      "  else",
+      '    git "$@"',
+      "  fi",
+      "}",
       `mkdir -p ${quotedWorkdir}`,
       `if [ ! -d ${quotedWorkdir}/.git ]; then`,
       `  tmp="${workdir}.clone.$$"`,
       `  rm -rf "$tmp"`,
-      `  git clone --depth 1 --branch ${quotedBranch} ${quotedRepoUrl} "$tmp" || git clone --depth 1 ${quotedRepoUrl} "$tmp"`,
+      `  git_with_github_auth clone --depth 1 --branch ${quotedBranch} ${quotedRepoUrl} "$tmp" || git_with_github_auth clone --depth 1 ${quotedRepoUrl} "$tmp"`,
       `  cp -a "$tmp"/. ${quotedWorkdir}/`,
       `  rm -rf "$tmp"`,
       "fi",
       `cd ${quotedWorkdir}`,
       "git remote set-url origin " + quotedRepoUrl + " || true",
-      "git fetch --depth 1 origin " + quotedBranch + " || true",
+      "git_with_github_auth fetch --depth 1 origin " + quotedBranch + " || true",
       "git checkout " + quotedBranch + " || true",
-      "git pull --ff-only origin " + quotedBranch + " || true",
+      "git_with_github_auth pull --ff-only origin " + quotedBranch + " || true",
       quotedPrompt
         ? `printf '%s\n' ${quotedPrompt} > .crabyard-initial-prompt.txt`
         : "rm -f .crabyard-initial-prompt.txt",
     ].join("\n"),
-    { timeout: 120_000 },
+    { timeout: 120_000, env: githubTokenEnv(session) },
   );
 }
 
@@ -2696,6 +2736,17 @@ if command -v codex >/dev/null 2>&1; then
   printf '\\033[2mCodex CLI: '
   codex --version || true
   printf '\\033[0m'
+fi
+if [ -n "\${GITHUB_TOKEN:-}" ]; then
+  git config --global credential.helper '!f() { test "$1" = get && printf "username=x-access-token\\npassword=%s\\n" "$GITHUB_TOKEN"; }; f'
+  git config --global user.name ${shellQuote(session.owner)}
+  git config --global user.email ${shellQuote(`${session.owner}@users.noreply.github.com`)}
+  if command -v gh >/dev/null 2>&1; then
+    gh auth setup-git -h github.com >/dev/null 2>&1 || true
+    printf '\\033[2mGitHub OAuth token loaded for this session.\\033[0m\\n'
+  else
+    printf '\\033[33mGitHub OAuth token loaded, but gh is not installed in this image.\\033[0m\\n'
+  fi
 fi
 if [ -n "\${OPENAI_API_KEY:-}" ]; then
   mkdir -p "$HOME/.codex"
@@ -2742,10 +2793,20 @@ function sandboxSessionEnv(
     COLORTERM: "truecolor",
     TERM_PROGRAM: "ghostty",
     TERM_PROGRAM_VERSION: "web",
+    ...githubTokenEnv(session),
     OPENAI_API_KEY: env.OPENAI_API_KEY,
     OPENAI_BASE_URL: env.OPENAI_BASE_URL,
     OPENAI_ORG_ID: env.OPENAI_ORG_ID,
   };
+}
+
+function githubTokenEnv(session: Pick<InteractiveProvisionRequest, "githubToken">): {
+  GITHUB_TOKEN?: string;
+  GH_TOKEN?: string;
+} {
+  return session.githubToken
+    ? { GITHUB_TOKEN: session.githubToken, GH_TOKEN: session.githubToken }
+    : {};
 }
 
 async function forwardRuntimeProvision(
@@ -2804,6 +2865,7 @@ async function provisionWithCloudflareRunner(
         instanceType,
         ttlSeconds: clampedSeconds(env.CRABYARD_CLOUDFLARE_RUNNER_TTL_SECONDS, 14_400),
         idleTimeoutSeconds: clampedSeconds(env.CRABYARD_CLOUDFLARE_RUNNER_IDLE_SECONDS, 1_800),
+        env: githubTokenEnv(session),
         labels: {
           app: "crabyard",
           session: session.id,
@@ -3192,7 +3254,7 @@ async function updatePolicy(
     .onConflict((oc) => oc.column("key").doUpdateSet({ value: sql<string>`excluded.value` }))
     .execute();
   await audit(env, user, `policy updated cap=${cap} retention=${retention} merge=${merge}`, now);
-  return readState(env, user);
+  return readState(request, env, user);
 }
 
 async function evaluateWorkflow(
@@ -3205,7 +3267,7 @@ async function evaluateWorkflow(
   await requireRepo(env, repo);
   const workflow = await refreshWorkflowForRepo(env, repo, Date.now());
   await audit(env, user, `workflow evaluated ${repo} status=${workflow.status}`, Date.now());
-  return readState(env, user);
+  return readState(request, env, user);
 }
 
 async function addAllowEntry(
@@ -3224,10 +3286,11 @@ async function addAllowEntry(
     .onConflict((oc) => oc.column("value").doUpdateSet({ role, updated_at: now }))
     .execute();
   await audit(env, user, `allowlist updated ${value} role=${role}`, now);
-  return readState(env, user);
+  return readState(request, env, user);
 }
 
 async function removeAllowEntry(
+  request: Request,
   env: RuntimeEnv,
   user: User,
   value: string,
@@ -3235,7 +3298,7 @@ async function removeAllowEntry(
   const normalized = normalizeAllow(value);
   await database(env).deleteFrom("allow_entries").where("value", "=", normalized).execute();
   await audit(env, user, `allowlist removed ${normalized}`, Date.now());
-  return readState(env, user);
+  return readState(request, env, user);
 }
 
 async function addRepo(
@@ -3253,10 +3316,11 @@ async function addRepo(
     .onConflict((oc) => oc.column("repo").doUpdateSet({ enabled: 1, updated_at: now }))
     .execute();
   await audit(env, user, `repo allowlisted ${repo}`, now);
-  return readState(env, user);
+  return readState(request, env, user);
 }
 
 async function removeRepo(
+  request: Request,
   env: RuntimeEnv,
   user: User,
   repo: string,
@@ -3268,7 +3332,7 @@ async function removeRepo(
     .where("repo", "=", normalized)
     .execute();
   await audit(env, user, `repo removed ${normalized}`, Date.now());
-  return readState(env, user);
+  return readState(request, env, user);
 }
 
 async function searchGitHubRefs(
@@ -3871,15 +3935,82 @@ async function createSession(
   subject: string,
   now: number,
   maxAgeSeconds = bootstrapSessionSeconds,
+  githubToken?: string,
 ): Promise<string> {
   const token = crypto.randomUUID() + crypto.randomUUID();
   const tokenHash = await sha256(token);
   const expires = now + maxAgeSeconds * 1000;
-  await database(env)
+  const githubTokenCiphertext = githubToken ? await sealSecret(env, githubToken) : null;
+  const db = database(env);
+  await db.deleteFrom("sessions").where("expires_at", "<", now).execute();
+  await db
     .insertInto("sessions")
-    .values({ token_hash: tokenHash, subject, expires_at: expires, created_at: now })
+    .values({
+      token_hash: tokenHash,
+      subject,
+      expires_at: expires,
+      created_at: now,
+      github_token_ciphertext: githubTokenCiphertext,
+    })
     .execute();
   return cookie(sessionCookie, token, maxAgeSeconds);
+}
+
+async function hasSessionGitHubToken(request: Request, env: RuntimeEnv): Promise<boolean> {
+  return Boolean(await sessionGitHubToken(request, env));
+}
+
+async function sessionGitHubToken(request: Request, env: RuntimeEnv): Promise<string | undefined> {
+  const token = cookies(request).get(sessionCookie);
+  if (!token) return undefined;
+  const row = await database(env)
+    .selectFrom("sessions")
+    .select("github_token_ciphertext")
+    .where("token_hash", "=", await sha256(token))
+    .where("expires_at", ">", Date.now())
+    .executeTakeFirst();
+  return row?.github_token_ciphertext
+    ? ((await openSecret(env, row.github_token_ciphertext)) ?? undefined)
+    : undefined;
+}
+
+async function sealSecret(env: RuntimeEnv, value: string): Promise<string | null> {
+  const key = await secretEncryptionKey(env);
+  if (!key) return null;
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    key,
+    encoder.encode(value),
+  );
+  return `v1.${base64UrlFromBytes(iv)}.${base64UrlFromBytes(new Uint8Array(ciphertext))}`;
+}
+
+async function openSecret(env: RuntimeEnv, sealed: string): Promise<string | null> {
+  const [version, iv, ciphertext] = sealed.split(".");
+  if (version !== "v1" || !iv || !ciphertext) return null;
+  const key = await secretEncryptionKey(env);
+  if (!key) return null;
+  try {
+    const plaintext = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: bytesFromBase64Url(iv) },
+      key,
+      bytesFromBase64Url(ciphertext),
+    );
+    return decoder.decode(plaintext);
+  } catch {
+    return null;
+  }
+}
+
+async function secretEncryptionKey(env: RuntimeEnv): Promise<CryptoKey | null> {
+  const material = env.CRABYARD_TOKEN_ENCRYPTION_KEY || env.GITHUB_CLIENT_SECRET;
+  if (!material) return null;
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    encoder.encode(`crabyard-secret-v1:${material}`),
+  );
+  return crypto.subtle.importKey("raw", digest, "AES-GCM", false, ["encrypt", "decrypt"]);
 }
 
 async function nextCardId(env: RuntimeEnv): Promise<string> {
@@ -4173,9 +4304,10 @@ function strongerRole(left: Role | null, right: Role): Role {
   return rank[right] > rank[left] ? right : left;
 }
 
-function authMethods(env: RuntimeEnv): Record<string, boolean> {
+function authMethods(env: RuntimeEnv, githubWrite = false): Record<string, boolean> {
   return {
     github: Boolean(env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET),
+    githubWrite,
     token: Boolean(env.CRABYARD_BOOTSTRAP_TOKEN),
   };
 }
@@ -4621,6 +4753,21 @@ function base64FromBytes(bytes: Uint8Array): string {
     binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
   }
   return btoa(binary);
+}
+
+function base64UrlFromBytes(bytes: Uint8Array): string {
+  return base64FromBytes(bytes).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/g, "");
+}
+
+function bytesFromBase64Url(value: string): Uint8Array {
+  const base64 = value.replaceAll("-", "+").replaceAll("_", "/");
+  const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, "=");
+  const binary = atob(padded);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
 }
 
 function safeClipboardFilename(value: unknown, mediaType: string): string {

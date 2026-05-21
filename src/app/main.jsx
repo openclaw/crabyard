@@ -1206,6 +1206,13 @@ function InteractiveDrawer({ drawers, closeDrawer, createInteractiveSession, sta
           }
         }}
       >
+        {state.auth?.github && !state.auth?.githubWrite ? (
+          <div class="form-note">
+            GitHub PR credentials are not connected for this browser session.{" "}
+            <a href="/login/github">Sign in again</a> before creating a cloud Codex if it needs to
+            push branches or open PRs as you.
+          </div>
+        ) : null}
         <RepoSelect repos={state.repos} name="repo" />
         <label>
           Branch

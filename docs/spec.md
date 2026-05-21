@@ -269,7 +269,7 @@ Login:
 
 - GitHub OAuth.
 - Bootstrap token login for first admin setup and break-glass recovery.
-- GitHub OAuth sessions are short-lived verified sessions; OAuth tokens are not stored in D1.
+- GitHub OAuth sessions are short-lived verified sessions; encrypted OAuth tokens are stored only on session rows and injected only into server-created runtime environments.
 - Bootstrap sessions are short-lived and bound to the current bootstrap token hash.
 
 Access gate:

@@ -54,7 +54,7 @@ Returns the bootstrap owner user and sets `crabyard_session`.
 
 ### GET /login/github
 
-Starts GitHub OAuth with `read:user read:org`.
+Starts GitHub OAuth with `read:user read:org repo`.
 
 ### GET /auth/github/callback
 

@@ -663,7 +663,7 @@ Query D1 directly via `wrangler d1 execute`.
 **GitHub OAuth:**
 
 - Use org-owned OAuth app (not personal)
-- Scope to `read:user read:org` only
+- Scope to `read:user read:org repo`
 - Rotate client secret on security events
 
 **Secrets:**

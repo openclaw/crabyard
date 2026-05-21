@@ -148,6 +148,7 @@ Configure these in Cloudflare Workers dashboard:
 - `GITHUB_CLIENT_SECRET` – GitHub OAuth app secret (optional)
 - `GITHUB_ORG` – GitHub org for membership check (default: `openclaw`)
 - `GITHUB_TOKEN` – GitHub token for all enabled repo issue/PR previews and private repo `CRABYARD.md` refreshes (optional; public/default repo paths work without it)
+- `CRABYARD_TOKEN_ENCRYPTION_KEY` – Optional encryption key for per-session GitHub OAuth tokens; defaults to `GITHUB_CLIENT_SECRET`
 - `CRABYARD_INTERACTIVE_PROVISION_URL` – Optional adapter endpoint for standalone Codex CLI workspaces
 - `CRABYARD_INTERACTIVE_PROVISION_TOKEN` – Optional bearer token sent to the interactive provision endpoint; required when backend URLs below are configured
 - `CRABYARD_RUNTIME_PROVISION_URL` – Optional generic backend URL used by `/api/provision/interactive`

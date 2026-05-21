@@ -138,7 +138,7 @@ Only runtime and merge defaults are effective today. `stall_ms`, `cap`, `prompt_
 
 ## Auth Flow
 
-GitHub OAuth uses `read:user read:org`, verifies active org membership, maps teams to `@org/team`, checks the allowlist, and creates a short-lived D1-backed session. Bootstrap token login creates an owner session for setup/recovery.
+GitHub OAuth uses `read:user read:org repo`, verifies active org membership, maps teams to `@org/team`, checks the allowlist, and creates a short-lived D1-backed session with an encrypted OAuth token for runtime GitHub CLI access. Bootstrap token login creates an owner session for setup/recovery.
 
 ## Planned Integrations
 
