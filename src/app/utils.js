@@ -84,6 +84,7 @@ export function hasRunCapability(session, name) {
 }
 
 export function isActiveRun(session) {
+  if (session.routePlaceholder) return true;
   if (session.kind === "interactive") {
     return ["provisioning", "pending_adapter", "ready", "attached", "detached"].includes(
       session.status,
@@ -130,6 +131,13 @@ function sessionSortTime(session) {
 
 export function terminalText(session) {
   if (session.kind === "interactive") {
+    if (session.routePlaceholder) {
+      const logs =
+        Array.isArray(session.logs) && session.logs.length
+          ? session.logs
+          : ["Loading Codex session..."];
+      return [`$ codex attach ${session.id}`, "", ...logs].join("\r\n") + "\r\n";
+    }
     const header = [
       `$ ${session.command || "codex"}`,
       `repo ${session.repo}`,
@@ -228,5 +236,45 @@ export function optimisticInteractiveSession(data, owner) {
     canRequestControl: false,
     logs: [`Requesting ${runtimeLabel}...`, "Waiting for session id..."],
     title: `${repo} · ${branch}`,
+  };
+}
+
+export function linkedInteractiveSessionPlaceholder(id, options = {}) {
+  const now = Date.now();
+  const status = options.status || "loading";
+  const lastEvent =
+    options.lastEvent ||
+    (status === "unavailable" ? "Session could not be loaded." : "Loading Codex session...");
+  return {
+    id,
+    repo: "Codex session",
+    branch: "",
+    runtime: "container",
+    command: "codex",
+    prompt: "",
+    owner: "unknown",
+    status,
+    leaseId: null,
+    attachUrl: null,
+    vncUrl: null,
+    lastEvent,
+    createdAt: now,
+    updatedAt: now,
+    lastSeenAt: now,
+    stoppedAt: null,
+    shareMode: options.sharedReadOnly ? "link_read" : "private",
+    shareTokenPreview: null,
+    controlRequestedBy: null,
+    controlRequestedAt: null,
+    controller: null,
+    controlGrantedAt: null,
+    controlExpiresAt: null,
+    canControl: false,
+    canManage: false,
+    canRequestControl: false,
+    sharedReadOnly: Boolean(options.sharedReadOnly),
+    routePlaceholder: true,
+    logs: [lastEvent],
+    title: `Codex session ${id}`,
   };
 }

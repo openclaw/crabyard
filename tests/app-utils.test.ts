@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { optimisticInteractiveSession, sessionItems } from "../src/app/utils.js";
+import {
+  isActiveRun,
+  linkedInteractiveSessionPlaceholder,
+  optimisticInteractiveSession,
+  sessionItems,
+  terminalText,
+} from "../src/app/utils.js";
 
 test("interactive session ordering ignores passive terminal last-seen refreshes", () => {
   const state = {
@@ -73,4 +79,13 @@ test("optimistic interactive sessions use runtime-specific pending copy", () => 
   assert.equal(session.runtime, "crabbox");
   assert.equal(session.lastEvent, "Requesting Crabbox...");
   assert.deepEqual(session.logs, ["Requesting Crabbox...", "Waiting for session id..."]);
+});
+
+test("linked session placeholders render a best-effort Codex card", () => {
+  const session = { ...linkedInteractiveSessionPlaceholder("IS-101"), kind: "interactive" };
+
+  assert.equal(session.routePlaceholder, true);
+  assert.equal(isActiveRun(session), true);
+  assert.match(terminalText(session), /\$ codex attach IS-101/);
+  assert.match(terminalText(session), /Loading Codex session/);
 });

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Render `/sessions/:id` links as best-effort Codex session cards before authenticated or shared data loads.
 - Show a clean provisioning placeholder for new Codex sessions and dispose stale terminal mounts when switching sessions.
 - Answer Ghostty OSC foreground/background color queries and advertise truecolor Ghostty env in Codex sessions.
 - Update provisioned Codex CLI sessions to npm `@openai/codex@latest` before launch.

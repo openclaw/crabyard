@@ -9,6 +9,7 @@ import {
   issueNumber,
   isActiveRun,
   lanes,
+  linkedInteractiveSessionPlaceholder,
   optimisticInteractiveSession,
   preferredRepo,
   preferredRepos,
@@ -42,12 +43,24 @@ const emptyState = {
 };
 const deadInteractiveStatuses = new Set(["stopped", "expired", "failed"]);
 
+function initialState(initialSessionLink) {
+  if (!initialSessionLink.id) return emptyState;
+  return {
+    ...emptyState,
+    interactiveSessions: [
+      linkedInteractiveSessionPlaceholder(initialSessionLink.id, {
+        sharedReadOnly: Boolean(initialSessionLink.token),
+      }),
+    ],
+  };
+}
+
 function App() {
   const initialSessionLink = useMemo(() => {
     restoreSessionReturnUrl();
     return parseSessionLink();
   }, []);
-  const [state, setState] = useState(emptyState);
+  const [state, setState] = useState(() => initialState(initialSessionLink));
   const [signedIn, setSignedIn] = useState(false);
   const [authMethods, setAuthMethods] = useState({ github: false, token: false });
   const [loginMessage, setLoginMessage] = useState("");
@@ -155,6 +168,14 @@ function App() {
   async function loadState() {
     try {
       const nextState = await api("/api/state", { authOptional: true });
+      const linkedSessionId = sharedRef.current.id;
+      const linkedSession = linkedSessionId ? findInteractiveSession(linkedSessionId) : null;
+      if (
+        linkedSession &&
+        !(nextState.interactiveSessions || []).some((session) => session.id === linkedSessionId)
+      ) {
+        nextState.interactiveSessions = [linkedSession, ...(nextState.interactiveSessions || [])];
+      }
       const activeRunId = activeRunIdRef.current;
       const activeCard = nextState.cards.find((card) => card.id === activeRunId);
       if (activeRunId && drawersRef.current.run && activeCard?.changes?.files?.length) {
@@ -258,22 +279,49 @@ function App() {
 
   async function openInitialSessionLink() {
     if (!sharedSessionId) return;
-    if (!findInteractiveSession(sharedSessionId)) {
-      if (signedIn && (!initialSessionOpened || focusedSessionId === sharedSessionId)) {
+    const existing = findInteractiveSession(sharedSessionId);
+    if (!existing || existing.routePlaceholder) {
+      if (
+        signedIn &&
+        (!initialSessionOpened || focusedSessionId === sharedSessionId) &&
+        existing?.status !== "unavailable"
+      ) {
         try {
           await loadLinkedInteractiveSession(sharedSessionId);
         } catch (error) {
           if (error.status !== 403 && error.status !== 404) throw error;
-          setSharedSessionId(null);
-          setSharedToken(null);
-          setFocusedSessionId(null);
+          upsertInteractiveSession(
+            linkedInteractiveSessionPlaceholder(sharedSessionId, {
+              status: "unavailable",
+              lastEvent:
+                error.status === 404
+                  ? "Codex session was not found."
+                  : "You do not have access to this Codex session.",
+              sharedReadOnly: Boolean(sharedToken),
+            }),
+          );
           setInitialSessionOpened(true);
-          setSessionUrl(null);
+          setFocusedSessionId(sharedSessionId);
+          openSessionGrid(sharedSessionId);
         }
-      } else if (!signedIn && sharedToken && !document.body.classList.contains("locked")) {
+      } else if (
+        !signedIn &&
+        sharedToken &&
+        existing?.status !== "unavailable" &&
+        !document.body.classList.contains("locked")
+      ) {
         await loadSharedSession();
       } else if (!initialSessionOpened) {
-        setSessionUrl(null);
+        if (!existing) {
+          upsertInteractiveSession(
+            linkedInteractiveSessionPlaceholder(sharedSessionId, {
+              sharedReadOnly: Boolean(sharedToken),
+            }),
+          );
+        }
+        setInitialSessionOpened(true);
+        setFocusedSessionId(sharedSessionId);
+        openSessionGrid(sharedSessionId);
       }
       return;
     }
@@ -660,6 +708,8 @@ function App() {
     drawers,
     activeRunId,
     focusedSessionId,
+    sharedSessionId,
+    sharedToken,
     setFocusedSessionId,
     showSessionGrid,
     refPreview,
@@ -714,7 +764,11 @@ function CrabyardApp(props) {
   return (
     <>
       <LoginScreen
-        hidden={props.signedIn || (props.state.user?.subject === "shared" && !props.loginMessage)}
+        hidden={
+          props.signedIn ||
+          Boolean(props.sharedSessionId && props.sharedToken && !props.loginMessage) ||
+          (props.state.user?.subject === "shared" && !props.loginMessage)
+        }
         authMethods={props.authMethods}
         message={props.loginMessage}
         onGithub={props.beginLogin}
@@ -1665,6 +1719,12 @@ function SessionStatus({ session }) {
 
 function sessionStatus(session) {
   if (session.kind === "interactive") {
+    if (session.routePlaceholder && session.status === "loading") {
+      return { label: "Loading", tone: "provisioning" };
+    }
+    if (session.routePlaceholder && session.status === "unavailable") {
+      return { label: "Unavailable", tone: "failed" };
+    }
     if (["failed"].includes(session.status)) return { label: "Failed", tone: "failed" };
     if (["stopped", "expired"].includes(session.status))
       return { label: "Stopped", tone: "stopped" };
