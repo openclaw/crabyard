@@ -2672,6 +2672,8 @@ async function writeSandboxStartupScript(
 set -e
 export TERM="\${TERM:-xterm-256color}"
 export COLORTERM="\${COLORTERM:-truecolor}"
+export TERM_PROGRAM="\${TERM_PROGRAM:-ghostty}"
+export TERM_PROGRAM_VERSION="\${TERM_PROGRAM_VERSION:-web}"
 export CRABYARD_SESSION_ID=${shellQuote(session.id)}
 export CRABYARD_REPO=${shellQuote(session.repo)}
 export CRABYARD_BRANCH=${shellQuote(session.branch)}
@@ -2736,6 +2738,10 @@ function sandboxSessionEnv(
     CRABYARD_REPO: session.repo,
     CRABYARD_BRANCH: session.branch,
     CRABYARD_RUNTIME: session.runtime,
+    TERM: "xterm-256color",
+    COLORTERM: "truecolor",
+    TERM_PROGRAM: "ghostty",
+    TERM_PROGRAM_VERSION: "web",
     OPENAI_API_KEY: env.OPENAI_API_KEY,
     OPENAI_BASE_URL: env.OPENAI_BASE_URL,
     OPENAI_ORG_ID: env.OPENAI_ORG_ID,

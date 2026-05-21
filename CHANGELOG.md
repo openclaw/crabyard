@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Answer Ghostty OSC foreground/background color queries and advertise truecolor Ghostty env in Codex sessions.
 - Update provisioned Codex CLI sessions to npm `@openai/codex@latest` before launch.
 - Keep the new Codex session drawer above the full-screen sessions grid.
 - Hide Chrome's native contenteditable caret inside Ghostty session tiles.

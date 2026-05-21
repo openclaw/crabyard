@@ -9,6 +9,30 @@ import {
 } from "../terminal-protocol.ts";
 import { clipboardName, terminalText } from "./utils.js";
 
+const terminalTheme = {
+  background: "#101827",
+  foreground: "#e5e7eb",
+  cursor: "#f8fafc",
+  selectionBackground: "#475569",
+  selectionForeground: "#f8fafc",
+  black: "#0f172a",
+  red: "#f87171",
+  green: "#34d399",
+  yellow: "#fbbf24",
+  blue: "#60a5fa",
+  magenta: "#c084fc",
+  cyan: "#22d3ee",
+  white: "#e5e7eb",
+  brightBlack: "#64748b",
+  brightRed: "#fca5a5",
+  brightGreen: "#86efac",
+  brightYellow: "#fde68a",
+  brightBlue: "#93c5fd",
+  brightMagenta: "#d8b4fe",
+  brightCyan: "#67e8f9",
+  brightWhite: "#ffffff",
+};
+
 let ghosttyModulePromise = null;
 let terminalEpoch = 0;
 let terminalHubSocket = null;
@@ -72,7 +96,7 @@ export async function mountTerminal(session, mount, options = {}) {
     const term = new module.Terminal({
       disableStdin: !canInput,
       fontSize: options.focused ? 14 : 13,
-      theme: { background: "#101827", foreground: "#e5e7eb" },
+      theme: terminalTheme,
     });
     const fit = module.FitAddon ? new module.FitAddon() : null;
     if (fit) term.loadAddon(fit);
@@ -105,6 +129,7 @@ export async function mountTerminal(session, mount, options = {}) {
       subscribed: false,
       dataSub: null,
       pasteHandler,
+      colorQueryBuffer: "",
     };
     if (canInput && typeof term.onData === "function") {
       host.dataSub = term.onData((data) => sendTerminalInput(host, data));
@@ -342,6 +367,7 @@ function handleTerminalHubFrame(frame) {
   const host = terminalHosts.get(frame.sessionId);
   if (!host) return;
   if (frame.type === TerminalMessageType.Output) {
+    sendTerminalColorQueryResponses(host, frame.payload);
     host.term?.write(frame.payload);
     return;
   }
@@ -469,6 +495,87 @@ function pasteTerminalText(host, text) {
     return;
   }
   sendTerminalInput(host, text);
+}
+
+export function terminalColorQueryResponses(data, theme = terminalTheme) {
+  return terminalColorQueryState(data, "", theme).responses;
+}
+
+export function terminalColorQueryState(data, pending = "", theme = terminalTheme) {
+  const escape = String.fromCharCode(27);
+  const bell = String.fromCharCode(7);
+  const text = `${pending || ""}${
+    typeof data === "string"
+      ? data
+      : new TextDecoder().decode(data instanceof Uint8Array ? data : new Uint8Array(data))
+  }`;
+  if (!text.includes(`${escape}]1`)) {
+    return { responses: [], pending: terminalColorQueryPrefix(text, escape) };
+  }
+  const responses = [];
+  let offset = 0;
+  let nextPending = "";
+  for (;;) {
+    const start = text.indexOf(`${escape}]1`, offset);
+    if (start === -1) {
+      nextPending = terminalColorQueryPrefix(text, escape);
+      break;
+    }
+    if (text.length < start + 7) {
+      nextPending = text.slice(start);
+      break;
+    }
+    const code = text.slice(start + 2, start + 4);
+    const query = text.slice(start + 4, start + 6);
+    const terminator = text[start + 6];
+    if ((code === "10" || code === "11") && query === ";?" && terminator === escape) {
+      if (text.length < start + 8) {
+        nextPending = text.slice(start);
+        break;
+      }
+    }
+    const stTerminator = terminator === escape && text[start + 7] === "\\";
+    if (
+      (code === "10" || code === "11") &&
+      query === ";?" &&
+      (terminator === bell || stTerminator)
+    ) {
+      const color = code === "10" ? theme.foreground : theme.background;
+      responses.push(`${escape}]${code};${rgbResponse(color)}${bell}`);
+      offset = start + (stTerminator ? 8 : 7);
+      continue;
+    }
+    offset = start + 1;
+  }
+  return { responses, pending: nextPending.slice(-32) };
+}
+
+function sendTerminalColorQueryResponses(host, payload) {
+  if (!host?.canInput) return;
+  const result = terminalColorQueryState(payload, host.colorQueryBuffer);
+  host.colorQueryBuffer = result.pending;
+  for (const response of result.responses) {
+    sendTerminalInput(host, response);
+  }
+}
+
+function terminalColorQueryPrefix(text, escape) {
+  const marker = `${escape}]1`;
+  for (let length = Math.min(marker.length - 1, text.length); length > 0; length -= 1) {
+    const suffix = text.slice(-length);
+    if (marker.startsWith(suffix)) return suffix;
+  }
+  return "";
+}
+
+function rgbResponse(color) {
+  const normalized = String(color || "").trim();
+  const match = /^#?([0-9a-f]{6})$/i.exec(normalized);
+  if (!match) return "rgb:e5e5/e7e7/ebeb";
+  const hex = match[1];
+  return `rgb:${hex.slice(0, 2).repeat(2)}/${hex.slice(2, 4).repeat(2)}/${hex
+    .slice(4, 6)
+    .repeat(2)}`;
 }
 
 function scheduleTerminalResubscribe(id) {
