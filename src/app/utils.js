@@ -198,6 +198,7 @@ export function optimisticInteractiveSession(data, owner) {
   const repo = String(data.get("repo") || preferredRepo);
   const branch = String(data.get("branch") || "main");
   const runtime = String(data.get("runtime") || "container");
+  const runtimeLabel = runtime === "crabbox" ? "Crabbox" : "Cloudflare Sandbox";
   return {
     id: `LOCAL-${now}`,
     repo,
@@ -210,7 +211,7 @@ export function optimisticInteractiveSession(data, owner) {
     leaseId: null,
     attachUrl: null,
     vncUrl: null,
-    lastEvent: "Provisioning Cloudflare Sandbox...",
+    lastEvent: `Requesting ${runtimeLabel}...`,
     createdAt: now,
     updatedAt: now,
     lastSeenAt: now,
@@ -225,7 +226,7 @@ export function optimisticInteractiveSession(data, owner) {
     canControl: true,
     canManage: true,
     canRequestControl: false,
-    logs: ["Provisioning Cloudflare Sandbox...", "Starting Codex CLI..."],
+    logs: [`Requesting ${runtimeLabel}...`, "Waiting for session id..."],
     title: `${repo} · ${branch}`,
   };
 }

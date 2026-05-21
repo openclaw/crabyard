@@ -1,5 +1,5 @@
 import { render } from "preact";
-import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { api } from "./api.js";
 import {
   canMaintain,
@@ -1518,7 +1518,12 @@ function SessionCell(props) {
         </div>
       </header>
       <div class="session-terminal-wrap">
-        <TerminalMount session={session} focused={props.focused} drawerOpen={props.drawerOpen} />
+        <TerminalMount
+          key={session.id}
+          session={session}
+          focused={props.focused}
+          drawerOpen={props.drawerOpen}
+        />
       </div>
       <footer class="session-cell-foot">
         <span>{sessionFooterSummary(session)}</span>
@@ -1526,6 +1531,10 @@ function SessionCell(props) {
       </footer>
     </article>
   );
+}
+
+function isLocalInteractiveSession(session) {
+  return session?.kind === "interactive" && String(session.id).startsWith("LOCAL-");
 }
 
 function SessionLayoutButtons() {
@@ -1707,7 +1716,16 @@ function humanStatus(value) {
 function TerminalMount({ session, focused, drawerOpen }) {
   const ref = useRef(null);
   const hideTimer = useRef(null);
+  const mountedSessionId = useRef(null);
   const [visible, setVisible] = useState(focused);
+
+  useLayoutEffect(
+    () => () => {
+      if (mountedSessionId.current) disposeTerminal(mountedSessionId.current);
+      mountedSessionId.current = null;
+    },
+    [],
+  );
 
   useEffect(() => {
     const clearHideTimer = () => {
@@ -1757,29 +1775,44 @@ function TerminalMount({ session, focused, drawerOpen }) {
     };
   }, [session.id, focused, drawerOpen]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const mount = ref.current;
     if (!mount) return;
-    const active = drawerOpen && visible;
+    const active = drawerOpen && visible && !isLocalInteractiveSession(session);
+    if (mountedSessionId.current && mountedSessionId.current !== session.id) {
+      disposeTerminal(mountedSessionId.current);
+      mountedSessionId.current = null;
+    }
     mount.dataset.sessionId = active ? session.id : "";
     if (!active) {
-      disposeTerminal(session.id);
+      if (mountedSessionId.current) {
+        disposeTerminal(mountedSessionId.current);
+        mountedSessionId.current = null;
+      }
       return;
     }
+    mountedSessionId.current = session.id;
     void mountTerminal(session, mount, { focused });
-    return () => {
-      if (!drawerOpen) disposeTerminal(session.id);
-    };
   }, [session, focused, drawerOpen, visible]);
+
+  const terminalActive = drawerOpen && visible && !isLocalInteractiveSession(session);
 
   return (
     <div
       ref={ref}
       class="ghostty-terminal"
-      data-session-id={drawerOpen && visible ? session.id : ""}
+      data-session-id={terminalActive ? session.id : ""}
       aria-label={`${session.id} terminal`}
     >
-      {!visible ? <div class="terminal-placeholder">Terminal paused offscreen</div> : null}
+      {isLocalInteractiveSession(session) ? (
+        <div class="terminal-provisioning">
+          <strong>Provisioning workspace</strong>
+          <span>{session.repo}</span>
+          <small>{session.lastEvent || "Waiting for session id..."}</small>
+        </div>
+      ) : !visible ? (
+        <div class="terminal-placeholder">Terminal paused offscreen</div>
+      ) : null}
     </div>
   );
 }

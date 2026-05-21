@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { sessionItems } from "../src/app/utils.js";
+import { optimisticInteractiveSession, sessionItems } from "../src/app/utils.js";
 
 test("interactive session ordering ignores passive terminal last-seen refreshes", () => {
   const state = {
@@ -61,4 +61,16 @@ test("card ordering keeps updated cards ahead of older start times", () => {
     sessionItems(state).map((session) => session.id),
     ["CY-1", "CY-2"],
   );
+});
+
+test("optimistic interactive sessions use runtime-specific pending copy", () => {
+  const data = new FormData();
+  data.set("repo", "openclaw/openclaw");
+  data.set("runtime", "crabbox");
+
+  const session = optimisticInteractiveSession(data, "steipete");
+
+  assert.equal(session.runtime, "crabbox");
+  assert.equal(session.lastEvent, "Requesting Crabbox...");
+  assert.deepEqual(session.logs, ["Requesting Crabbox...", "Waiting for session id..."]);
 });
