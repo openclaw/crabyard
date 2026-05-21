@@ -32,6 +32,7 @@ export async function mountTerminal(session, mount, options = {}) {
   const live = shouldConnectLiveTerminal(session);
   const canInput = canSendTerminalInput(session);
   if (previous?.mount === mount && previous.live === live) {
+    previous.focused = Boolean(options.focused);
     syncTerminalInputState(session, previous, previous.term);
     if (previous.live) {
       if (previous.terminalExited) {
@@ -91,6 +92,7 @@ export async function mountTerminal(session, mount, options = {}) {
       live,
       canInput,
       sessionId: session.id,
+      focused: Boolean(options.focused),
       subscribed: false,
       dataSub: null,
       pasteHandler,
@@ -313,7 +315,7 @@ function subscribeTerminalHost(session, host, term) {
     TerminalMessageType.Subscribe,
     encodeSubscribePayload({ flags, cols: term?.cols, rows: term?.rows }),
   );
-  setTerminalStatus(session.id, host.canInput ? "Live PTY" : "Read-only PTY");
+  setTerminalStatus(session.id, "Connecting PTY");
 }
 
 async function terminalFrameBytes(data) {
@@ -359,10 +361,10 @@ function handleTerminalHubFrame(frame) {
         TerminalMessageType.Resize,
         encodeResizePayload(host.term.cols, host.term.rows),
       );
-      host.term?.focus?.();
+      if (host.focused) focusTerminalWithoutScroll(host);
     }
   }
-  if (event?.type === "ready") setTerminalStatus(frame.sessionId, "Live PTY");
+  if (event?.type === "ready") setTerminalStatus(frame.sessionId, terminalConnectedLabel(host));
   if (event?.type === "exit") {
     host.terminalExited = true;
     host.terminalExitLabel = `PTY ${event.type} ${event.code ?? ""}`.trim();
@@ -495,6 +497,30 @@ function terminalErrorLabel(message) {
 
 function isTerminalPassiveClose(reason) {
   return ["unsubscribed", "client closed", "no terminals mounted"].includes(String(reason || ""));
+}
+
+function terminalConnectedLabel(host) {
+  return host?.canInput ? "Live PTY" : "Read-only PTY";
+}
+
+function focusTerminalWithoutScroll(host) {
+  const scrollRoot = host.mount?.closest(".panel-body");
+  const windowX = window.scrollX;
+  const windowY = window.scrollY;
+  const rootTop = scrollRoot?.scrollTop;
+  const rootLeft = scrollRoot?.scrollLeft;
+  try {
+    host.term?.focus?.();
+  } catch {}
+  if (scrollRoot && rootTop !== undefined && rootLeft !== undefined) {
+    scrollRoot.scrollTop = rootTop;
+    scrollRoot.scrollLeft = rootLeft;
+    requestAnimationFrame(() => {
+      scrollRoot.scrollTop = rootTop;
+      scrollRoot.scrollLeft = rootLeft;
+    });
+  }
+  window.scrollTo(windowX, windowY);
 }
 
 function sendTerminalInput(host, data) {

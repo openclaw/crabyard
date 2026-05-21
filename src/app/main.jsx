@@ -1602,14 +1602,22 @@ function humanStatus(value) {
 
 function TerminalMount({ session, focused, drawerOpen }) {
   const ref = useRef(null);
+  const hideTimer = useRef(null);
   const [visible, setVisible] = useState(focused);
 
   useEffect(() => {
+    const clearHideTimer = () => {
+      if (!hideTimer.current) return;
+      clearTimeout(hideTimer.current);
+      hideTimer.current = null;
+    };
     if (focused) {
+      clearHideTimer();
       setVisible(true);
       return;
     }
     if (!drawerOpen) {
+      clearHideTimer();
       setVisible(false);
       return;
     }
@@ -1619,13 +1627,30 @@ function TerminalMount({ session, focused, drawerOpen }) {
       return;
     }
     const root = mount.closest(".panel-body");
-    const observer = new IntersectionObserver(([entry]) => setVisible(entry.isIntersecting), {
-      root,
-      rootMargin: "360px 0px",
-      threshold: 0,
-    });
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          clearHideTimer();
+          setVisible(true);
+          return;
+        }
+        clearHideTimer();
+        hideTimer.current = setTimeout(() => {
+          hideTimer.current = null;
+          setVisible(false);
+        }, 900);
+      },
+      {
+        root,
+        rootMargin: "360px 0px",
+        threshold: 0,
+      },
+    );
     observer.observe(mount);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      clearHideTimer();
+    };
   }, [session.id, focused, drawerOpen]);
 
   useEffect(() => {

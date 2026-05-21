@@ -855,6 +855,7 @@
         align-items: stretch;
         min-height: 0;
         overflow: auto;
+        overflow-anchor: none;
         overscroll-behavior: contain;
         scrollbar-gutter: stable;
         padding: 12px;
@@ -869,6 +870,7 @@
         grid-auto-rows: var(--session-tile-height);
         gap: var(--session-gap);
         align-items: stretch;
+        overflow-anchor: none;
       }
       .session-grid.fixed-columns {
         grid-template-columns: repeat(var(--session-columns), minmax(0, 1fr));
@@ -889,6 +891,7 @@
         border: 1px solid var(--line);
         border-radius: 8px;
         overflow: hidden;
+        overflow-anchor: none;
         background: var(--panel-2);
         contain: layout paint;
         transition:
@@ -1055,6 +1058,7 @@
         height: 100%;
         min-height: 0;
         overflow: hidden;
+        overflow-anchor: none;
         position: relative;
       }
       .ghostty-terminal canvas {
