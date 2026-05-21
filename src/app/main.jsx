@@ -40,6 +40,7 @@ const emptyState = {
   retention: "30",
   merge: "guarded",
 };
+const deadInteractiveStatuses = new Set(["stopped", "expired", "failed"]);
 
 function App() {
   const initialSessionLink = useMemo(() => {
@@ -451,6 +452,33 @@ function App() {
     return interactiveSessionAction(id, "stop");
   }
 
+  async function cleanupInteractiveSessions(ids) {
+    const result = await api("/api/interactive-sessions/cleanup", {
+      method: "POST",
+      body: { ids },
+    });
+    setState(result.state);
+    return result;
+  }
+
+  async function cleanupInteractiveSession(id) {
+    const session = findInteractiveSession(id);
+    const label = session ? `${session.repo} (${session.id})` : id;
+    if (!window.confirm(`Clean up dead Codex session ${label}?`)) return null;
+    return cleanupInteractiveSessions([id]);
+  }
+
+  async function cleanupDeadInteractiveSessions() {
+    const user = stateRef.current.user;
+    const ids = (stateRef.current.interactiveSessions || [])
+      .filter((session) => canCleanInteractiveSession(session, user))
+      .map((session) => session.id);
+    if (!ids.length) return null;
+    if (!window.confirm(`Clean up ${ids.length} dead Codex session${ids.length === 1 ? "" : "s"}?`))
+      return null;
+    return cleanupInteractiveSessions(ids);
+  }
+
   async function shareInteractiveSession(id) {
     const result = await interactiveSessionAction(id, "share_link");
     if (!result.shareUrl) return;
@@ -655,6 +683,8 @@ function App() {
     attachCard,
     interactiveSessionAction,
     closeInteractiveSession,
+    cleanupInteractiveSession,
+    cleanupDeadInteractiveSessions,
     shareInteractiveSession,
     openRunDetails,
     createRefCard,
@@ -1328,7 +1358,18 @@ function SessionsDrawer(props) {
   );
 }
 
-function SessionTools({ focused, sessionLayout, setSessionLayout, closeDrawer, showSessionGrid }) {
+function SessionTools({
+  focused,
+  sessionLayout,
+  setSessionLayout,
+  closeDrawer,
+  showSessionGrid,
+  cleanupDeadInteractiveSessions,
+  state,
+}) {
+  const deadCount = (state.interactiveSessions || []).filter((session) =>
+    canCleanInteractiveSession(session, state.user),
+  ).length;
   return (
     <div class="session-tools">
       <label class="session-columns-field">
@@ -1372,6 +1413,11 @@ function SessionTools({ focused, sessionLayout, setSessionLayout, closeDrawer, s
       <button onClick={showSessionGrid} hidden={!focused}>
         Grid
       </button>
+      {deadCount ? (
+        <button class="danger" disabled={focused} onClick={cleanupDeadInteractiveSessions}>
+          Clean dead ({deadCount})
+        </button>
+      ) : null}
       <button class="icon" aria-label="Close sessions" onClick={() => closeDrawer("sessions")}>
         <Icon name="x" />
       </button>
@@ -1383,7 +1429,11 @@ function SessionCell(props) {
   const session = props.session;
   const editable = props.sessionLayout.edit && !props.focused;
   const branchLabel =
-    session.branch || (session.kind !== "interactive" && session.policy ? session.policy : "");
+    session.kind === "interactive"
+      ? session.branch && session.branch !== "main"
+        ? session.branch
+        : ""
+      : session.branch || session.policy || "";
   return (
     <article
       class={`session-cell ${editable ? "layout-editing" : ""}`}
@@ -1489,7 +1539,7 @@ function SessionActions(props) {
 function InteractiveSessionActions(props) {
   const session = props.session;
   if (String(session.id).startsWith("LOCAL-")) return null;
-  const stopped = ["stopped", "expired", "failed"].includes(session.status);
+  const stopped = isDeadInteractiveSession(session);
   const canManage = session.canManage || canMaintain(props.state.user);
   const shareAction = session.shareMode === "link_read" ? "disable_share" : "share_link";
   const shareLabel = session.shareMode === "link_read" ? "Unshare" : "Share";
@@ -1502,9 +1552,16 @@ function InteractiveSessionActions(props) {
     return (
       <>
         {canManage ? <button onClick={handleShare}>{shareLabel}</button> : null}
-        {canManage && !stopped ? (
-          <button class="danger" onClick={() => props.closeInteractiveSession(session.id)}>
-            Close
+        {canManage ? (
+          <button
+            class="danger"
+            onClick={() =>
+              stopped
+                ? props.cleanupInteractiveSession(session.id)
+                : props.closeInteractiveSession(session.id)
+            }
+          >
+            {stopped ? "Clean up" : "Close"}
           </button>
         ) : null}
       </>
@@ -1536,13 +1593,32 @@ function InteractiveSessionActions(props) {
           Revoke
         </button>
       ) : null}
-      {canManage && !stopped ? (
-        <button class="danger" onClick={() => props.closeInteractiveSession(session.id)}>
-          Close
+      {canManage ? (
+        <button
+          class="danger"
+          onClick={() =>
+            stopped
+              ? props.cleanupInteractiveSession(session.id)
+              : props.closeInteractiveSession(session.id)
+          }
+        >
+          {stopped ? "Clean up" : "Close"}
         </button>
       ) : null}
     </>
   );
+}
+
+function isDeadInteractiveSession(session) {
+  return (
+    session &&
+    (session.kind === undefined || session.kind === "interactive") &&
+    deadInteractiveStatuses.has(session.status)
+  );
+}
+
+function canCleanInteractiveSession(session, user) {
+  return isDeadInteractiveSession(session) && (session.canManage || canMaintain(user));
 }
 
 function SessionStatus({ session }) {

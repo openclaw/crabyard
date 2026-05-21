@@ -505,6 +505,11 @@ const interactiveSessionStatuses: readonly InteractiveSessionStatus[] = [
   "expired",
   "failed",
 ];
+const deadInteractiveSessionStatuses: readonly InteractiveSessionStatus[] = [
+  "stopped",
+  "expired",
+  "failed",
+];
 const runtimeOptions = ["auto", "container", "crabbox"] as const;
 const mergePolicyOptions = ["open_pr", "merge_when_green", "fix_until_green_and_merge"] as const;
 const defaultStallMs = 5 * 60 * 1000;
@@ -749,6 +754,11 @@ async function api(request: Request, env: RuntimeEnv): Promise<Response> {
   if (request.method === "POST" && url.pathname === "/api/interactive-sessions") {
     requireRole(user, "maintainer");
     return json(await createInteractiveSession(request, env, user), { status: 201 });
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/interactive-sessions/cleanup") {
+    requireRole(user, "viewer");
+    return json(await cleanupInteractiveSessions(request, env, user));
   }
 
   const interactiveSessionReadMatch = url.pathname.match(/^\/api\/interactive-sessions\/([^/]+)$/);
@@ -1188,6 +1198,35 @@ async function createInteractiveSession(
     }
   }
   throw new Error("failed to allocate interactive session id");
+}
+
+async function cleanupInteractiveSessions(
+  request: Request,
+  env: RuntimeEnv,
+  user: User,
+): Promise<{ state: Record<string, unknown>; removedIds: string[] }> {
+  const body = await readJson<{ ids?: unknown }>(request);
+  const ids = Array.isArray(body.ids)
+    ? [...new Set(body.ids.map((id) => clean(String(id), 80)).filter(Boolean))]
+    : [];
+  const db = database(env);
+  let query = db
+    .selectFrom("interactive_sessions")
+    .selectAll()
+    .where("status", "in", deadInteractiveSessionStatuses);
+  if (ids.length) query = query.where("id", "in", ids);
+  const removedIds = (await query.execute())
+    .filter((row) => canManageInteractiveSession(user, interactiveSession(row, [])))
+    .map((row) => row.id);
+  if (removedIds.length) {
+    await db
+      .deleteFrom("interactive_session_events")
+      .where("session_id", "in", removedIds)
+      .execute();
+    await db.deleteFrom("interactive_sessions").where("id", "in", removedIds).execute();
+    await audit(env, user, `interactive sessions cleaned ${removedIds.join(",")}`, Date.now());
+  }
+  return { state: await readState(env, user), removedIds };
 }
 
 async function mutateInteractiveSession(
