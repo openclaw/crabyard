@@ -1351,7 +1351,16 @@ function SessionsDrawer(props) {
                 />
               ))
             ) : (
-              <div class="session-empty">No Codex sessions yet</div>
+              <div class="session-empty">
+                <button
+                  class="primary session-empty-action"
+                  disabled={!canMaintain(props.state.user)}
+                  onClick={() => props.openDrawer("interactive")}
+                >
+                  New Codex session
+                </button>
+                <span>No Codex sessions yet</span>
+              </div>
             )}
           </section>
         </div>
@@ -1365,6 +1374,7 @@ function SessionTools({
   sessionLayout,
   setSessionLayout,
   closeDrawer,
+  openDrawer,
   showSessionGrid,
   cleanupDeadInteractiveSessions,
   state,
@@ -1374,6 +1384,13 @@ function SessionTools({
   ).length;
   return (
     <div class="session-tools">
+      <button
+        class="primary"
+        disabled={!canMaintain(state.user)}
+        onClick={() => openDrawer("interactive")}
+      >
+        New session
+      </button>
       <label class="session-columns-field">
         <span>Columns</span>
         <select

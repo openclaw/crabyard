@@ -1106,10 +1106,17 @@
       .session-empty {
         display: grid;
         place-items: center;
+        align-content: center;
+        gap: 12px;
         border: 1px dashed var(--line);
         border-radius: 8px;
         color: var(--muted);
         min-height: calc(100vh - 160px);
+      }
+      .session-empty-action {
+        min-height: 48px;
+        padding: 0 22px;
+        font-size: 15px;
       }
       .diff-panel {
         border: 1px solid var(--line);
