@@ -212,7 +212,7 @@ export function optimisticInteractiveSession(data, owner) {
     repo,
     branch,
     runtime,
-    command: String(data.get("command") || "codex --dangerously-bypass-approvals-and-sandbox"),
+    command: String(data.get("command") || "codex --yolo"),
     prompt: String(data.get("prompt") || ""),
     owner: owner || "local",
     status: "provisioning",

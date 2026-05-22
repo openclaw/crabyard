@@ -653,7 +653,7 @@ function App() {
       upsertInteractiveSession(result.session);
       form.reset();
       form.elements.branch.value = "main";
-      form.elements.command.value = "codex --dangerously-bypass-approvals-and-sandbox";
+      form.elements.command.value = "codex --yolo";
       setFocusedSessionId(result.session.id);
       openSessionGrid(result.session.id, { deepLink: true });
     } catch (error) {
@@ -1226,11 +1226,7 @@ function InteractiveDrawer({ drawers, closeDrawer, createInteractiveSession, sta
         </label>
         <label>
           Command
-          <input
-            name="command"
-            defaultValue="codex --dangerously-bypass-approvals-and-sandbox"
-            placeholder="codex --dangerously-bypass-approvals-and-sandbox"
-          />
+          <input name="command" defaultValue="codex --yolo" placeholder="codex --yolo" />
         </label>
         <label class="full">
           Prompt (optional)

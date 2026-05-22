@@ -32,7 +32,7 @@ import {
 
 type Role = "viewer" | "maintainer" | "owner";
 
-const defaultInteractiveCommand = "codex --dangerously-bypass-approvals-and-sandbox";
+const defaultInteractiveCommand = "codex --yolo";
 
 type RuntimeEnv = Env & {
   DB: D1Database;
