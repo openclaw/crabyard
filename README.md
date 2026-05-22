@@ -37,6 +37,7 @@ Get the bootstrap token from your deployment secrets and use it to log in:
 ```bash
 # Visit https://crabyard.openclaw.ai/app/
 # Use bootstrap token for initial admin setup
+# If GitHub auto-login is active, use https://crabyard.openclaw.ai/app?auth=token
 ```
 
 ### 2. Configure Access

@@ -30,6 +30,7 @@ import {
 
 const logo = "__CRABYARD_LOGO__";
 const loginReturnKey = "crabyard-login-return";
+const skipAutoGithubLoginKey = "crabyard-skip-auto-github-login";
 const sessionLayoutStorageKey = "crabyard-session-layout-v1";
 const emptyState = {
   cards: [],
@@ -94,6 +95,7 @@ function App() {
   const refPreviewTimer = useRef(null);
   const refPreviewSeq = useRef(0);
   const draggedSessionId = useRef(null);
+  const autoLoginStarted = useRef(false);
 
   const allSessionItems = useMemo(() => sessionItems(state), [state]);
   const sessionItemById = useMemo(
@@ -139,6 +141,10 @@ function App() {
     document.documentElement.dataset.appRuntime = "preact";
     document.body.classList.toggle("locked", !signedIn && !(sharedSessionId && sharedToken));
   }, [signedIn, sharedSessionId, sharedToken]);
+
+  useEffect(() => {
+    if (!signedIn && !loginMessage) void maybeAutoGithubLogin(authMethods);
+  }, [signedIn, loginMessage, authMethods.github, sharedSessionId, sharedToken]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -204,7 +210,8 @@ function App() {
           }
           return;
         }
-        await loadAuthMethods();
+        const methods = await loadAuthMethods();
+        if (error.status === 401 && (await maybeAutoGithubLogin(methods))) return;
         setSignedIn(false);
         setLoginMessage(error.message === "unauthorized" ? "" : error.message);
         return;
@@ -440,8 +447,9 @@ function App() {
 
   async function beginLogin() {
     try {
-      if (sharedSessionId) sessionStorage.setItem(loginReturnKey, location.href);
+      sessionStorage.removeItem(skipAutoGithubLoginKey);
     } catch {}
+    preserveLoginReturnUrl();
     let methods = authMethods;
     if (!methods.github && !methods.token) methods = await loadAuthMethods();
     if (methods.github) {
@@ -461,8 +469,37 @@ function App() {
   }
 
   async function logout() {
+    try {
+      sessionStorage.setItem(skipAutoGithubLoginKey, "1");
+    } catch {}
+    autoLoginStarted.current = false;
     await api("/api/logout", { method: "POST", authOptional: true });
     await loadState();
+  }
+
+  async function maybeAutoGithubLogin(methods = authMethodsRef.current) {
+    if (signedInRef.current || autoLoginStarted.current || !methods?.github) return false;
+    if (methods.token && wantsTokenLoginBypass()) return false;
+    const shared = sharedRef.current;
+    if (shared.id && shared.token) return false;
+    try {
+      if (sessionStorage.getItem(skipAutoGithubLoginKey) === "1") return false;
+    } catch {}
+    autoLoginStarted.current = true;
+    preserveLoginReturnUrl();
+    location.href = "/login/github";
+    return true;
+  }
+
+  function preserveLoginReturnUrl() {
+    try {
+      if (sharedRef.current.id) sessionStorage.setItem(loginReturnKey, location.href);
+    } catch {}
+  }
+
+  function wantsTokenLoginBypass() {
+    const params = new URLSearchParams(location.search);
+    return params.get("auth") === "token";
   }
 
   async function cardAction(id, action) {

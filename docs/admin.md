@@ -369,6 +369,7 @@ Admin break-glass access.
 **Recommended workflow:**
 
 1. Bootstrap admin logs in
+   - If GitHub auto-login is active, open `/app?auth=token`.
 2. Adds own GitHub user to allowlist as owner
 3. Logs out bootstrap
 4. Logs in via GitHub OAuth
