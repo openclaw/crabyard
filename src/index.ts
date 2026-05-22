@@ -2665,6 +2665,7 @@ async function provisionWithSandbox(
 
 async function prepareSandboxWorkspace(
   sandbox: SandboxSessionTarget,
+  env: RuntimeEnv,
   session: InteractiveProvisionRequest | InteractiveSession,
   workdir: string,
 ): Promise<void> {
@@ -2704,7 +2705,7 @@ async function prepareSandboxWorkspace(
         ? `printf '%s\n' ${quotedPrompt} > .crabyard-initial-prompt.txt`
         : "rm -f .crabyard-initial-prompt.txt",
     ].join("\n"),
-    { timeout: 120_000, env: "githubToken" in session ? githubTokenEnv(session) : {} },
+    { timeout: 120_000, env: sandboxGitHubTokenEnv(env, session) },
   );
 }
 
@@ -2815,7 +2816,7 @@ async function setupSandboxTerminalSession(
   workdir: string,
 ): Promise<void> {
   await sandbox.mkdir(workdir, { recursive: true });
-  await prepareSandboxWorkspace(sandbox, session, workdir);
+  await prepareSandboxWorkspace(sandbox, env, session, workdir);
   await prepareSandboxCodexAuth(sandbox, env, workdir);
   await writeSandboxStartupScript(sandbox, session, workdir);
 }
@@ -2919,7 +2920,7 @@ function sandboxSessionEnv(
     COLORTERM: "truecolor",
     TERM_PROGRAM: "ghostty",
     TERM_PROGRAM_VERSION: "web",
-    ...("githubToken" in session ? githubTokenEnv(session) : {}),
+    ...sandboxGitHubTokenEnv(env, session),
     OPENAI_API_KEY: env.OPENAI_API_KEY,
     OPENAI_BASE_URL: env.OPENAI_BASE_URL,
     OPENAI_ORG_ID: env.OPENAI_ORG_ID,
@@ -2933,6 +2934,15 @@ function githubTokenEnv(session: Pick<InteractiveProvisionRequest, "githubToken"
   return session.githubToken
     ? { GITHUB_TOKEN: session.githubToken, GH_TOKEN: session.githubToken }
     : {};
+}
+
+function sandboxGitHubTokenEnv(
+  env: RuntimeEnv,
+  session: InteractiveProvisionRequest | InteractiveSession,
+): { GITHUB_TOKEN?: string; GH_TOKEN?: string } {
+  const token = "githubToken" in session ? session.githubToken : undefined;
+  const githubToken = token || env.GITHUB_TOKEN;
+  return githubToken ? { GITHUB_TOKEN: githubToken, GH_TOKEN: githubToken } : {};
 }
 
 async function forwardRuntimeProvision(
