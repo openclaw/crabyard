@@ -43,6 +43,10 @@ jobs:
             echo "::error::Set the CLOUDFLARE_API_TOKEN repository secret before deploy-worker can publish."
             exit 1
           fi
+          for attempt in 1 2 3 4; do
+            pnpm exec wrangler whoami && exit 0
+            sleep $((attempt * 5))
+          done
           pnpm exec wrangler whoami
 
       - name: Check
@@ -57,9 +61,19 @@ jobs:
       - name: Apply D1 migrations
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: pnpm exec wrangler d1 migrations apply crabyard-ai --remote
+        run: |
+          for attempt in 1 2 3; do
+            pnpm exec wrangler d1 migrations apply crabyard-ai --remote && exit 0
+            sleep $((attempt * 5))
+          done
+          pnpm exec wrangler d1 migrations apply crabyard-ai --remote
 
       - name: Deploy Worker
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: pnpm exec wrangler deploy
+        run: |
+          for attempt in 1 2 3; do
+            pnpm exec wrangler deploy && exit 0
+            sleep $((attempt * 5))
+          done
+          pnpm exec wrangler deploy
