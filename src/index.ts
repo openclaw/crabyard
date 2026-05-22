@@ -295,10 +295,7 @@ type TerminalUpstream = {
 };
 
 type SandboxExecutionSession = Awaited<ReturnType<CloudflareSandbox["createSession"]>>;
-type SandboxSessionTarget = Pick<
-  SandboxExecutionSession,
-  "exec" | "gitCheckout" | "mkdir" | "setEnvVars"
->;
+type SandboxSessionTarget = Pick<SandboxExecutionSession, "exec" | "mkdir" | "setEnvVars">;
 
 type ClawFleetInstancePayload = {
   name?: string;
@@ -2789,7 +2786,6 @@ async function prepareSandboxWorkspace(
   const checkoutErrorPath = sandboxCheckoutErrorPath(session.id);
   const quotedCheckoutErrorPath = shellQuote(checkoutErrorPath);
   const githubEnv = sandboxGitHubTokenEnv(env, session);
-  let sdkCheckoutError = "";
   const resetResult = await sandbox.exec(
     [
       "set -eu",
@@ -2805,20 +2801,6 @@ async function prepareSandboxWorkspace(
     throw new Error(
       clean(resetResult.stderr || resetResult.stdout || "workspace reset failed", 500),
     );
-  }
-
-  const checkoutExists = await sandbox.exec(`test -d ${quotedWorkdir}/.git`, { timeout: 10_000 });
-  if (!checkoutExists.success) {
-    try {
-      await sandbox.gitCheckout(repoUrl, {
-        branch: session.branch,
-        targetDir: workdir,
-        depth: 1,
-        cloneTimeoutMs: 120_000,
-      });
-    } catch (error) {
-      sdkCheckoutError = clean(error instanceof Error ? error.message : String(error), 500);
-    }
   }
 
   const result = await sandbox.exec(
@@ -2870,8 +2852,7 @@ async function prepareSandboxWorkspace(
   if (!result.success) {
     throw new Error(
       clean(
-        [sdkCheckoutError, result.stdout, result.stderr].filter(Boolean).join("\n") ||
-          "repository checkout failed",
+        [result.stdout, result.stderr].filter(Boolean).join("\n") || "repository checkout failed",
         700,
       ),
     );
