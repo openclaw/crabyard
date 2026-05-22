@@ -2634,6 +2634,7 @@ async function provisionWithSandbox(
   try {
     await sandbox.mkdir(workdir, { recursive: true });
     await prepareSandboxWorkspace(sandbox, session, workdir);
+    await prepareSandboxCodexAuth(sandbox, env, workdir);
     await writeSandboxStartupScript(sandbox, session, workdir);
     await sandbox.createSession({
       id: lease.terminalSessionId,
@@ -2700,6 +2701,58 @@ async function prepareSandboxWorkspace(
   );
 }
 
+async function prepareSandboxCodexAuth(
+  sandbox: ReturnType<typeof getSandbox>,
+  env: RuntimeEnv,
+  workdir: string,
+): Promise<void> {
+  const projectKey = JSON.stringify(workdir);
+  await sandbox.exec(
+    `
+set -eu
+export CODEX_HOME="$HOME/.codex"
+mkdir -p "$CODEX_HOME"
+cat > "$CODEX_HOME/config.toml" <<'EOF'
+cli_auth_credentials_store = "file"
+forced_login_method = "api"
+preferred_auth_method = "apikey"
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
+
+[features]
+goals = true
+
+[projects.${projectKey}]
+trust_level = "trusted"
+EOF
+if command -v node >/dev/null 2>&1; then
+  node - <<'NODE'
+const fs = require("fs");
+const path = require("path");
+const home = process.env.CODEX_HOME;
+const apiKey = process.env.OPENAI_API_KEY || "";
+if (!apiKey) process.exit(0);
+fs.writeFileSync(
+  path.join(home, "auth.json"),
+  JSON.stringify({ OPENAI_API_KEY: apiKey, auth_mode: "apikey" }),
+  { mode: 0o600 }
+);
+NODE
+elif command -v codex >/dev/null 2>&1 && [ -n "\${OPENAI_API_KEY:-}" ]; then
+  printf '%s' "$OPENAI_API_KEY" | codex -c 'forced_login_method="api"' login --with-api-key >/dev/null 2>&1 || true
+fi
+`,
+    {
+      timeout: 60_000,
+      env: {
+        OPENAI_API_KEY: env.OPENAI_API_KEY,
+        OPENAI_BASE_URL: env.OPENAI_BASE_URL,
+        OPENAI_ORG_ID: env.OPENAI_ORG_ID,
+      },
+    },
+  );
+}
+
 async function writeSandboxStartupScript(
   sandbox: ReturnType<typeof getSandbox>,
   session: InteractiveProvisionRequest,
@@ -2717,6 +2770,7 @@ export CRABYARD_REPO=${shellQuote(session.repo)}
 export CRABYARD_BRANCH=${shellQuote(session.branch)}
 export CRABYARD_RUNTIME=${shellQuote(session.runtime)}
 export CRABYARD_COMMAND=${shellQuote(session.command)}
+export CODEX_HOME="$HOME/.codex"
 cd ${shellQuote(workdir)}
 printf '\\033[1;36mCrabyard %s\\033[0m %s on %s\\n' "$CRABYARD_SESSION_ID" "$CRABYARD_REPO" "$CRABYARD_BRANCH"
 if [ -s .crabyard-initial-prompt.txt ]; then
@@ -2753,33 +2807,16 @@ if [ -n "\${GITHUB_TOKEN:-}" ]; then
     printf '\\033[33mGitHub OAuth token loaded, but gh is not installed in this image.\\033[0m\\n'
   fi
 fi
-if [ -n "\${OPENAI_API_KEY:-}" ]; then
-  mkdir -p "$HOME/.codex"
-  cat > "$HOME/.codex/config.toml" <<'EOF'
-forced_login_method = "api"
-preferred_auth_method = "apikey"
-approval_policy = "never"
-sandbox_mode = "danger-full-access"
-
-[features]
-goals = true
-
-[projects.${JSON.stringify(workdir)}]
-trust_level = "trusted"
-EOF
-  printf '%s' "$OPENAI_API_KEY" | codex login --with-api-key >/dev/null 2>&1 || true
+if [ -s "$CODEX_HOME/auth.json" ]; then
+  printf '\\033[2mOpenAI API key loaded for Codex. Run %s when ready; exiting Codex returns to this shell.\\033[0m\\n' "$CRABYARD_COMMAND"
 else
-  printf 'OPENAI_API_KEY is not configured for this session.\\n'
-fi
-printf '\\033[2J\\033[H'
-CRABYARD_COMMAND_BIN="\${CRABYARD_COMMAND%%[[:space:]]*}"
-if command -v "$CRABYARD_COMMAND_BIN" >/dev/null 2>&1; then
-  exec bash -lc "$CRABYARD_COMMAND"
+  printf '\\033[33mOpenAI API key auth is missing. Codex may ask you to sign in.\\033[0m\\n'
 fi
 if command -v codex >/dev/null 2>&1; then
-  exec bash -lc ${shellQuote(defaultInteractiveCommand)}
+  printf '\\033[2mCodex is ready.\\033[0m\\n'
+else
+  printf '\\033[33mCodex CLI is not installed in this image.\\033[0m\\n'
 fi
-printf 'Codex CLI is not installed in this image. Opening bash.\\n'
 exec /bin/bash -l
 `;
   await sandbox.writeFile(scriptPath, script);
