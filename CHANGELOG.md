@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Start Cloudflare Sandbox terminals with plain bash from the prepared workspace instead of a generated startup script.
 - Start each Cloudflare Sandbox Codex session with a fresh sandbox/terminal lease so recycled session IDs do not attach to stale shells.
 - Open Cloudflare Sandbox Codex sessions into a reusable shell with Codex pre-authenticated from the Worker OpenAI key instead of making Codex the terminal process.
 - Build each Cloudflare Sandbox workspace inside the terminal execution session and recreate it on attach so PTY disconnects do not permanently strand a live Codex shell.

@@ -298,7 +298,7 @@ type TerminalUpstream = {
   markConnected: () => Promise<void>;
 };
 
-type SandboxSessionTarget = Pick<ExecutionSession, "exec" | "mkdir" | "writeFile">;
+type SandboxSessionTarget = Pick<ExecutionSession, "exec" | "mkdir">;
 
 type ClawFleetInstancePayload = {
   name?: string;
@@ -2642,11 +2642,13 @@ async function provisionWithSandbox(
   const workdir = sandboxWorkdir(session.id);
   const sandbox = getSandbox(env.SANDBOX, lease.sandboxId);
   try {
+    await sandbox.mkdir(workdir, { recursive: true });
     const terminalSession = await createSandboxTerminalSession(
       sandbox,
       env,
       session,
       lease.terminalSessionId,
+      workdir,
     );
     await setupSandboxTerminalSession(terminalSession, env, session, workdir);
   } catch (error) {
@@ -2761,6 +2763,53 @@ fi
   );
 }
 
+async function prepareSandboxRuntimeTools(
+  sandbox: SandboxSessionTarget,
+  session: InteractiveProvisionRequest | InteractiveSession,
+  workdir: string,
+  commandEnv: Record<string, string | undefined> = {},
+): Promise<void> {
+  await sandbox.exec(
+    `
+set -eu
+export CODEX_HOME="$HOME/.codex"
+if command -v npm >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1; then
+  timeout 45s npm install -g @openai/codex@latest >/tmp/crabyard-codex-install.log 2>&1 || true
+fi
+if [ -n "\${GITHUB_TOKEN:-}" ]; then
+  git config --global credential.helper '!f() { test "$1" = get && printf "username=x-access-token\\npassword=%s\\n" "$GITHUB_TOKEN"; }; f'
+  git config --global user.name ${shellQuote(session.owner)}
+  git config --global user.email ${shellQuote(`${session.owner}@users.noreply.github.com`)}
+  if command -v gh >/dev/null 2>&1; then
+    gh auth setup-git -h github.com >/dev/null 2>&1 || true
+  fi
+fi
+marker=${shellQuote(sandboxBashrcMarker(session))}
+if ! grep -Fqx "$marker" "$HOME/.bashrc" 2>/dev/null; then
+  cat >> "$HOME/.bashrc" <<'EOF'
+${sandboxBashrcMarker(session)}
+export CODEX_HOME="$HOME/.codex"
+export CRABYARD_SESSION_ID=${shellQuote(session.id)}
+export CRABYARD_REPO=${shellQuote(session.repo)}
+export CRABYARD_BRANCH=${shellQuote(session.branch)}
+export CRABYARD_RUNTIME=${shellQuote(session.runtime)}
+export CRABYARD_COMMAND=${shellQuote(session.command)}
+if [ -z "\${CRABYARD_SHELL_BOOTSTRAPPED:-}" ]; then
+  export CRABYARD_SHELL_BOOTSTRAPPED=1
+  if [ "$PWD" = "/workspace" ]; then
+    cd ${shellQuote(workdir)} 2>/dev/null || true
+  fi
+fi
+EOF
+fi
+`,
+    {
+      timeout: 120_000,
+      env: commandEnv,
+    },
+  );
+}
+
 async function openSandboxTerminalResponse(
   request: Request,
   env: RuntimeEnv,
@@ -2772,8 +2821,9 @@ async function openSandboxTerminalResponse(
   const options = {
     cols: size.cols,
     rows: size.rows,
-    shell: sandboxStartupScriptPath(session),
+    shell: "/bin/bash",
   };
+  await ensureSandboxTerminalPrepared(sandbox, env, session, lease.terminalSessionId);
   const open = async () => {
     const terminalSession = await sandbox.getSession(lease.terminalSessionId);
     return terminalSession.terminal(request, options);
@@ -2790,17 +2840,50 @@ async function openSandboxTerminalResponse(
   return open();
 }
 
+async function ensureSandboxTerminalPrepared(
+  sandbox: ReturnType<typeof getSandbox>,
+  env: RuntimeEnv,
+  session: InteractiveSession,
+  terminalSessionId: string,
+): Promise<void> {
+  const workdir = sandboxWorkdir(session.id);
+  try {
+    const terminalSession = await sandbox.getSession(terminalSessionId);
+    if (await sandboxTerminalProfileExists(terminalSession, session, workdir)) return;
+    await prepareSandboxCodexAuth(terminalSession, env, workdir);
+    await prepareSandboxRuntimeTools(terminalSession, session, workdir);
+    if (await sandboxTerminalProfileExists(terminalSession, session, workdir)) return;
+  } catch {
+    // Missing or terminated SDK session; recreate below.
+  }
+  await recreateSandboxTerminalSession(sandbox, env, session, terminalSessionId);
+}
+
+async function sandboxTerminalProfileExists(
+  sandbox: SandboxSessionTarget,
+  session: InteractiveSession,
+  workdir: string,
+): Promise<boolean> {
+  const marker = shellQuote(sandboxBashrcMarker(session));
+  const result = await sandbox.exec(
+    `test -d ${shellQuote(workdir)} && grep -Fqx ${marker} "$HOME/.bashrc"`,
+    { timeout: 10_000 },
+  );
+  return result.success;
+}
+
 async function createSandboxTerminalSession(
   sandbox: ReturnType<typeof getSandbox>,
   env: RuntimeEnv,
   session: InteractiveProvisionRequest | InteractiveSession,
   terminalSessionId: string,
+  workdir: string,
 ): Promise<ExecutionSession> {
   try {
     return await sandbox.createSession({
       id: terminalSessionId,
       env: sandboxSessionEnv(env, session),
-      cwd: "/workspace",
+      cwd: workdir,
       commandTimeoutMs: 60 * 60 * 1000,
     });
   } catch (error) {
@@ -2818,7 +2901,7 @@ async function setupSandboxTerminalSession(
   await sandbox.mkdir(workdir, { recursive: true });
   await prepareSandboxWorkspace(sandbox, env, session, workdir);
   await prepareSandboxCodexAuth(sandbox, env, workdir);
-  await writeSandboxStartupScript(sandbox, session, workdir);
+  await prepareSandboxRuntimeTools(sandbox, session, workdir, sandboxGitHubTokenEnv(env, session));
 }
 
 async function recreateSandboxTerminalSession(
@@ -2828,83 +2911,15 @@ async function recreateSandboxTerminalSession(
   terminalSessionId: string,
 ): Promise<void> {
   await sandbox.deleteSession(terminalSessionId).catch(() => undefined);
+  await sandbox.mkdir(sandboxWorkdir(session.id), { recursive: true });
   const terminalSession = await createSandboxTerminalSession(
     sandbox,
     env,
     session,
     terminalSessionId,
+    sandboxWorkdir(session.id),
   );
   await setupSandboxTerminalSession(terminalSession, env, session, sandboxWorkdir(session.id));
-}
-
-async function writeSandboxStartupScript(
-  sandbox: SandboxSessionTarget,
-  session: InteractiveProvisionRequest | InteractiveSession,
-  workdir: string,
-): Promise<void> {
-  const scriptPath = sandboxStartupScriptPath(session);
-  const script = `#!/usr/bin/env bash
-set -e
-export TERM="\${TERM:-xterm-256color}"
-export COLORTERM="\${COLORTERM:-truecolor}"
-export TERM_PROGRAM="\${TERM_PROGRAM:-ghostty}"
-export TERM_PROGRAM_VERSION="\${TERM_PROGRAM_VERSION:-web}"
-export CRABYARD_SESSION_ID=${shellQuote(session.id)}
-export CRABYARD_REPO=${shellQuote(session.repo)}
-export CRABYARD_BRANCH=${shellQuote(session.branch)}
-export CRABYARD_RUNTIME=${shellQuote(session.runtime)}
-export CRABYARD_COMMAND=${shellQuote(session.command)}
-export CODEX_HOME="$HOME/.codex"
-cd ${shellQuote(workdir)}
-printf '\\033[1;36mCrabyard %s\\033[0m %s on %s\\n' "$CRABYARD_SESSION_ID" "$CRABYARD_REPO" "$CRABYARD_BRANCH"
-if [ -s .crabyard-initial-prompt.txt ]; then
-  printf '\\033[2mInitial prompt is saved in .crabyard-initial-prompt.txt\\033[0m\\n'
-fi
-if [ -s .crabyard-checkout-error.txt ]; then
-  printf '\\033[31mRepository checkout failed; Codex was not started.\\033[0m\\n'
-  cat .crabyard-checkout-error.txt
-  printf '\\n\\033[2mOpening a shell in the empty workspace so you can inspect/fix credentials.\\033[0m\\n'
-  exec /bin/bash -l
-fi
-if command -v npm >/dev/null 2>&1; then
-  printf '\\033[2mUpdating Codex CLI to npm latest...\\033[0m\\n'
-  if npm install -g @openai/codex@latest >/tmp/crabyard-codex-install.log 2>&1; then
-    hash -r
-  else
-    printf '\\033[33mCodex CLI update failed; using installed version if available.\\033[0m\\n'
-    tail -n 20 /tmp/crabyard-codex-install.log || true
-  fi
-fi
-if command -v codex >/dev/null 2>&1; then
-  printf '\\033[2mCodex CLI: '
-  codex --version || true
-  printf '\\033[0m'
-fi
-if [ -n "\${GITHUB_TOKEN:-}" ]; then
-  git config --global credential.helper '!f() { test "$1" = get && printf "username=x-access-token\\npassword=%s\\n" "$GITHUB_TOKEN"; }; f'
-  git config --global user.name ${shellQuote(session.owner)}
-  git config --global user.email ${shellQuote(`${session.owner}@users.noreply.github.com`)}
-  if command -v gh >/dev/null 2>&1; then
-    gh auth setup-git -h github.com >/dev/null 2>&1 || true
-    printf '\\033[2mGitHub OAuth token loaded for this session.\\033[0m\\n'
-  else
-    printf '\\033[33mGitHub OAuth token loaded, but gh is not installed in this image.\\033[0m\\n'
-  fi
-fi
-if [ -s "$CODEX_HOME/auth.json" ]; then
-  printf '\\033[2mOpenAI API key loaded for Codex. Run %s when ready; exiting Codex returns to this shell.\\033[0m\\n' "$CRABYARD_COMMAND"
-else
-  printf '\\033[33mOpenAI API key auth is missing. Codex may ask you to sign in.\\033[0m\\n'
-fi
-if command -v codex >/dev/null 2>&1; then
-  printf '\\033[2mCodex is ready.\\033[0m\\n'
-else
-  printf '\\033[33mCodex CLI is not installed in this image.\\033[0m\\n'
-fi
-exec /bin/bash -l
-`;
-  await sandbox.writeFile(scriptPath, script);
-  await sandbox.exec(`chmod +x ${shellQuote(scriptPath)}`, { timeout: 10_000 });
 }
 
 function sandboxSessionEnv(
@@ -5010,10 +5025,10 @@ function sandboxWorkdir(id: string): string {
   return `/workspace/${sandboxIdForSession(id)}`;
 }
 
-function sandboxStartupScriptPath(
+function sandboxBashrcMarker(
   session: Pick<InteractiveSession | InteractiveProvisionRequest, "id">,
 ): string {
-  return `/workspace/.crabyard-start-${sandboxIdForSession(session.id)}.sh`;
+  return `# crabyard session ${session.id}`;
 }
 
 function terminalSize(request: Request, name: "cols" | "rows", fallback: number): number {
