@@ -2785,6 +2785,9 @@ async function prepareSandboxWorkspace(
   const quotedPrompt = shellQuote(session.prompt);
   const checkoutErrorPath = sandboxCheckoutErrorPath(session.id);
   const quotedCheckoutErrorPath = shellQuote(checkoutErrorPath);
+  const quotedGitAskpassPath = shellQuote(
+    `/tmp/crabyard-git-askpass-${sandboxIdForSession(session.id)}.sh`,
+  );
   const githubEnv = sandboxGitHubTokenEnv(env, session);
   const resetResult = await sandbox.exec(
     [
@@ -2805,11 +2808,26 @@ async function prepareSandboxWorkspace(
   const result = await sandbox.exec(
     [
       "checkout_status=0",
+      `cat > ${quotedGitAskpassPath} <<'EOF'`,
+      "#!/bin/sh",
+      'prompt="$1"',
+      'case "$prompt" in',
+      "  *github.com*)",
+      '    case "$prompt" in',
+      "      *Username*) printf '%s\\n' x-access-token ;;",
+      "      *Password*) printf '%s\\n' \"$GITHUB_TOKEN\" ;;",
+      "      *) exit 1 ;;",
+      "    esac",
+      "    ;;",
+      "  *) exit 1 ;;",
+      "esac",
+      "EOF",
+      `chmod 700 ${quotedGitAskpassPath}`,
       "git_with_github_auth() {",
       '  if [ -n "${GITHUB_TOKEN:-}" ]; then',
-      '    git -c "http.https://github.com/.extraheader=AUTHORIZATION: bearer ${GITHUB_TOKEN}" "$@"',
+      `    GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=${quotedGitAskpassPath} git -c credential.helper= "$@"`,
       "  else",
-      '    git "$@"',
+      '    GIT_TERMINAL_PROMPT=0 git "$@"',
       "  fi",
       "}",
       `if [ ! -d ${quotedWorkdir}/.git ]; then`,
