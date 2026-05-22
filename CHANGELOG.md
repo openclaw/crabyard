@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Pre-bake Cloudflare Sandbox images with Codex, pnpm, GitHub CLI, Crabbox, and common build/debug tools, plus a session diagnostics endpoint.
 - Trust the Cloudflare Sandbox workspace root as well as the checked-out repo so provisioned Codex sessions skip the directory trust prompt.
 - Provision Cloudflare Sandbox Codex workspaces through explicit setup and PTY sessions so new sessions open with the selected repo checked out.
 - Expose the Cloudflare Sandbox control port from the Crabyard container image so production Codex sessions can create workspaces.

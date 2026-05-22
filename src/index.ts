@@ -780,6 +780,20 @@ async function api(request: Request, env: RuntimeEnv): Promise<Response> {
     return json({ session: decorateInteractiveSession(session, user, env) });
   }
 
+  const interactiveSessionDiagnosticsMatch = url.pathname.match(
+    /^\/api\/interactive-sessions\/([^/]+)\/diagnostics$/,
+  );
+  if (request.method === "GET" && interactiveSessionDiagnosticsMatch) {
+    requireRole(user, "viewer");
+    return json(
+      await readInteractiveSessionDiagnostics(
+        env,
+        user,
+        decodeURIComponent(interactiveSessionDiagnosticsMatch[1] ?? ""),
+      ),
+    );
+  }
+
   const interactiveSessionMatch = url.pathname.match(
     /^\/api\/interactive-sessions\/([^/]+)\/actions$/,
   );
@@ -2330,6 +2344,134 @@ async function interactiveSandboxTerminal(
   return new Response(null, { status: 101, webSocket: client });
 }
 
+async function readInteractiveSessionDiagnostics(
+  env: RuntimeEnv,
+  user: User,
+  id: string,
+): Promise<{ session: InteractiveSession; diagnostics: unknown }> {
+  const session = await readInteractiveSession(env, id);
+  if (!session) throw notFound("interactive session not found");
+  const decoratedSession = decorateInteractiveSession(session, user, env);
+  if (
+    !canControlInteractiveSession(user, session, Date.now(), canGrantDelegatedControl(env, session))
+  ) {
+    throw forbidden("terminal control has not been granted");
+  }
+  if (!env.SANDBOX || !session.leaseId?.startsWith(sandboxLeasePrefix)) {
+    return {
+      session: decoratedSession,
+      diagnostics: {
+        available: false,
+        reason: "diagnostics are only available for Cloudflare Sandbox sessions",
+      },
+    };
+  }
+
+  const lease = sandboxLeaseInfo(session);
+  const sandbox = getSandbox(env.SANDBOX, lease.sandboxId);
+  const workdir = sandboxWorkdir(session.id);
+  const setup = await createSandboxSession(
+    sandbox,
+    sandboxSetupSessionId(session.id),
+    "/workspace",
+    {
+      CRABYARD_SESSION_ID: session.id,
+      CRABYARD_WORKDIR: workdir,
+    },
+  );
+  const result = await setup.exec(
+    `
+node - <<'NODE'
+const fs = require("fs");
+const cp = require("child_process");
+const tools = [
+  "bash", "git", "gh", "node", "npm", "pnpm", "codex", "rg", "fd", "jq",
+  "python3", "pip3", "make", "gcc", "time", "ssh", "rsync", "curl",
+  "unzip", "zip", "sqlite3", "shellcheck", "crabbox"
+];
+const workdir = process.env.CRABYARD_WORKDIR || "";
+const home = process.env.HOME || "/root";
+function run(command, args) {
+  try {
+    return cp.execFileSync(command, args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 5000
+    }).trim();
+  } catch {
+    return "";
+  }
+}
+function shell(command) {
+  return run("/bin/bash", ["-lc", command]);
+}
+function which(tool) {
+  return shell("command -v " + JSON.stringify(tool));
+}
+function oneLine(text) {
+  return String(text || "").split(/\\r?\\n/).find(Boolean) || "";
+}
+const toolResults = tools.map((name) => {
+  const path = which(name);
+  return {
+    name,
+    present: Boolean(path),
+    path: path || null,
+    version: path ? oneLine(run(path, ["--version"])) || null : null
+  };
+});
+const missing = toolResults.filter((tool) => !tool.present).map((tool) => tool.name);
+const checkout = {
+  path: workdir,
+  exists: Boolean(workdir && fs.existsSync(workdir)),
+  git: Boolean(workdir && fs.existsSync(workdir + "/.git")),
+  branch: workdir ? run("git", ["-C", workdir, "rev-parse", "--abbrev-ref", "HEAD"]) || null : null,
+  head: workdir ? run("git", ["-C", workdir, "rev-parse", "--short", "HEAD"]) || null : null,
+  remote: workdir ? run("git", ["-C", workdir, "config", "--get", "remote.origin.url"]).replace(/\\/\\/[^/@]+@/g, "//<redacted>@") || null : null
+};
+const codexHome = process.env.CODEX_HOME || home + "/.codex";
+const diagnostics = {
+  available: true,
+  imageVersion: process.env.CRABYARD_IMAGE_VERSION || null,
+  cwd: process.cwd(),
+  checkout,
+  codex: {
+    home: codexHome,
+    configPresent: fs.existsSync(codexHome + "/config.toml"),
+    authPresent: fs.existsSync(codexHome + "/auth.json")
+  },
+  tools: toolResults,
+  missing
+};
+console.log(JSON.stringify(diagnostics));
+NODE
+`,
+    { timeout: 20_000, env: { CRABYARD_WORKDIR: workdir } },
+  );
+  if (!result.success) {
+    return {
+      session: decoratedSession,
+      diagnostics: {
+        available: false,
+        reason: clean(result.stderr || result.stdout || "diagnostics failed", 700),
+      },
+    };
+  }
+  const output = result.stdout.trim();
+  try {
+    return { session: decoratedSession, diagnostics: JSON.parse(output) };
+  } catch {
+    return {
+      session: decoratedSession,
+      diagnostics: {
+        available: false,
+        reason: "diagnostics returned invalid JSON",
+        output: clean(output, 700),
+      },
+    };
+  }
+}
+
 function interactiveTerminalTarget(
   env: RuntimeEnv,
   session: InteractiveSession,
@@ -2959,38 +3101,33 @@ async function prepareSandboxRuntimeTools(
     `
 set -eu
 export CODEX_HOME="$HOME/.codex"
-if ! command -v npm >/dev/null 2>&1; then
-  printf 'npm is required to install the latest Codex CLI.\\n' >/tmp/crabyard-codex-install.log
-  cat /tmp/crabyard-codex-install.log
+missing_tools=""
+for tool in git node npm pnpm codex gh rg fd jq python3 make gcc time ssh rsync crabbox; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    missing_tools="$missing_tools $tool"
+  fi
+done
+if [ -n "$missing_tools" ]; then
+  printf 'Crabyard sandbox image is missing required tools:%s\\n' "$missing_tools" >/tmp/crabyard-runtime-tools.log
+  if command -v crabyard-diagnostics >/dev/null 2>&1; then
+    crabyard-diagnostics >>/tmp/crabyard-runtime-tools.log 2>&1 || true
+  fi
+  cat /tmp/crabyard-runtime-tools.log
   exit 72
 fi
-if command -v timeout >/dev/null 2>&1; then
-  timeout 120s npm install -g @openai/codex@latest >/tmp/crabyard-codex-install.log 2>&1
-else
-  npm install -g @openai/codex@latest >/tmp/crabyard-codex-install.log 2>&1
-fi
-if ! command -v codex >/dev/null 2>&1; then
-  cat /tmp/crabyard-codex-install.log
-  exit 72
+installed_codex="$(npm list -g @openai/codex --depth=0 --json 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>{try{const v=JSON.parse(s).dependencies?.["@openai/codex"]?.version||""; if (v) console.log(v);}catch{}})' || true)"
+latest_codex="$(npm view @openai/codex version 2>/dev/null || true)"
+if [ -z "$installed_codex" ] || { [ -n "$latest_codex" ] && [ "$installed_codex" != "$latest_codex" ]; }; then
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 120s npm install -g @openai/codex@latest >/tmp/crabyard-codex-install.log 2>&1
+  else
+    npm install -g @openai/codex@latest >/tmp/crabyard-codex-install.log 2>&1
+  fi
 fi
 if [ -n "\${GITHUB_TOKEN:-}" ]; then
   git config --global credential.helper '!f() { test "$1" = get && printf "username=x-access-token\\npassword=%s\\n" "$GITHUB_TOKEN"; }; f'
   git config --global user.name ${shellQuote(session.owner)}
   git config --global user.email ${shellQuote(`${session.owner}@users.noreply.github.com`)}
-  if ! command -v gh >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
-    export DEBIAN_FRONTEND=noninteractive
-    apt-get update >/tmp/crabyard-gh-install.log 2>&1
-    apt-get install -y --no-install-recommends ca-certificates curl gnupg >/tmp/crabyard-gh-install.log 2>&1
-    mkdir -p /etc/apt/keyrings
-    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-      | dd of=/etc/apt/keyrings/githubcli-archive-keyring.gpg >/tmp/crabyard-gh-install.log 2>&1
-    chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-      > /etc/apt/sources.list.d/github-cli.list
-    apt-get update >/tmp/crabyard-gh-install.log 2>&1
-    apt-get install -y --no-install-recommends gh >/tmp/crabyard-gh-install.log 2>&1
-    rm -rf /var/lib/apt/lists/*
-  fi
   if command -v gh >/dev/null 2>&1; then
     gh auth setup-git -h github.com >/dev/null 2>&1 || true
   fi
