@@ -7,4 +7,4 @@ RUN mkdir -p /workspace /tmp \
 
 ENV TERM=xterm-256color
 
-EXPOSE 8080
+EXPOSE 3000

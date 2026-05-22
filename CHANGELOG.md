@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Expose the Cloudflare Sandbox control port from the Crabyard container image so production Codex sessions can create workspaces.
 - Auto-start the configured Codex command once when a new Cloudflare Sandbox shell opens, then return to bash after Codex exits.
 - Require Cloudflare Sandbox workspaces to contain a real repo checkout before marking interactive Codex sessions ready.
 - Start Cloudflare Sandbox terminals with plain bash from the prepared workspace instead of a generated startup script.
