@@ -43,11 +43,6 @@ jobs:
             echo "::error::Set the CLOUDFLARE_API_TOKEN repository secret before deploy-worker can publish."
             exit 1
           fi
-          for attempt in 1 2 3 4; do
-            pnpm exec wrangler whoami && exit 0
-            sleep $((attempt * 5))
-          done
-          pnpm exec wrangler whoami
 
       - name: Check
         run: pnpm check
