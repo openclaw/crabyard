@@ -504,6 +504,7 @@ const terminalClipboardMaxBytes = 10 * 1024 * 1024;
 const lanes = ["Todo", "Running", "Human Review", "Done"];
 const preferredRepo = "openclaw/openclaw";
 const sandboxLeasePrefix = "sandbox:";
+const sandboxLeaseProfile = "autostart-v3";
 const activeRunStatuses: readonly RunStatus[] = ["queued", "leasing", "running"];
 const interactiveSessionStatuses: readonly InteractiveSessionStatus[] = [
   "provisioning",
@@ -1925,12 +1926,19 @@ async function openInteractiveTerminalUpstream(
 ): Promise<TerminalUpstream> {
   const now = Date.now();
   if (session.leaseId?.startsWith(sandboxLeasePrefix) && env.SANDBOX) {
-    const lease = sandboxLeaseInfo(session);
+    const sandboxSession = await ensureCurrentSandboxLease(request, env, user, session);
+    const lease = sandboxLeaseInfo(sandboxSession);
     const sandbox = getSandbox(env.SANDBOX, lease.sandboxId);
-    const upstreamResponse = await openSandboxTerminalResponse(request, env, sandbox, session, {
-      cols,
-      rows,
-    });
+    const upstreamResponse = await openSandboxTerminalResponse(
+      request,
+      env,
+      sandbox,
+      sandboxSession,
+      {
+        cols,
+        rows,
+      },
+    );
     const upstream = upstreamResponse.webSocket;
     if (!upstream || upstreamResponse.status !== 101) {
       throw serviceUnavailable(`Cloudflare Sandbox terminal HTTP ${upstreamResponse.status}`);
@@ -1942,7 +1950,7 @@ async function openInteractiveTerminalUpstream(
         markInteractiveTerminalConnected(
           env,
           user,
-          session.id,
+          sandboxSession.id,
           now,
           "Cloudflare Sandbox terminal connected",
         ),
@@ -2284,18 +2292,25 @@ async function interactiveSandboxTerminal(
   canSendLeft?: () => Promise<boolean>,
 ): Promise<Response> {
   if (!env.SANDBOX) throw serviceUnavailable("Sandbox binding is not configured");
-  const lease = sandboxLeaseInfo(session);
+  const sandboxSession = await ensureCurrentSandboxLease(request, env, user, session);
+  const lease = sandboxLeaseInfo(sandboxSession);
   const sandbox = getSandbox(env.SANDBOX, lease.sandboxId);
-  const upstreamResponse = await openSandboxTerminalResponse(request, env, sandbox, session, {
-    cols: terminalSize(request, "cols", 120),
-    rows: terminalSize(request, "rows", 34),
-  });
+  const upstreamResponse = await openSandboxTerminalResponse(
+    request,
+    env,
+    sandbox,
+    sandboxSession,
+    {
+      cols: terminalSize(request, "cols", 120),
+      rows: terminalSize(request, "rows", 34),
+    },
+  );
   const upstream = upstreamResponse.webSocket;
   if (!upstream || upstreamResponse.status !== 101) {
     await markInteractiveTerminalUnavailable(
       env,
       user,
-      session.id,
+      sandboxSession.id,
       Date.now(),
       `terminal unavailable: Cloudflare Sandbox terminal HTTP ${upstreamResponse.status}`,
     );
@@ -2310,7 +2325,7 @@ async function interactiveSandboxTerminal(
   await markInteractiveTerminalConnected(
     env,
     user,
-    session.id,
+    sandboxSession.id,
     Date.now(),
     "Cloudflare Sandbox terminal connected",
   );
@@ -2665,6 +2680,109 @@ async function provisionWithSandbox(
   };
 }
 
+async function ensureCurrentSandboxLease(
+  request: Request,
+  env: RuntimeEnv,
+  user: User | null,
+  session: InteractiveSession,
+): Promise<InteractiveSession> {
+  if (!env.SANDBOX || isCurrentSandboxLease(session.leaseId)) return session;
+  const originalLeaseId = session.leaseId;
+  if (!originalLeaseId) {
+    throw serviceUnavailable("Cloudflare Sandbox lease refresh is already in progress");
+  }
+  const refreshStartedAt = sandboxLeaseRefreshStartedAt(originalLeaseId);
+  const now = Date.now();
+  if (refreshStartedAt && now - refreshStartedAt < 2 * 60_000) {
+    throw serviceUnavailable("Cloudflare Sandbox lease refresh is already in progress");
+  }
+  if (!user || actor(user) !== session.owner) {
+    throw serviceUnavailable("session owner must reconnect to refresh Cloudflare Sandbox lease");
+  }
+  const githubToken = user?.subject.startsWith("github:")
+    ? await sessionGitHubToken(request, env)
+    : undefined;
+  if (user.subject.startsWith("github:") && !githubToken) {
+    throw forbidden("GitHub PR credentials are not connected; sign in with GitHub again");
+  }
+  const fallbackLeaseId = sandboxLeaseWithoutRefresh(originalLeaseId);
+  const refreshLeaseId = `${fallbackLeaseId}:refreshing-${now}-${crypto.randomUUID().slice(0, 8)}`;
+  const claim = await database(env)
+    .updateTable("interactive_sessions")
+    .set({
+      lease_id: refreshLeaseId,
+      last_event: "Cloudflare Sandbox lease refresh started",
+      updated_at: now,
+    })
+    .where("id", "=", session.id)
+    .where("lease_id", "=", originalLeaseId)
+    .where("status", "in", ["ready", "attached", "detached"])
+    .executeTakeFirst();
+  if ((claim.numUpdatedRows ?? 0n) === 0n) {
+    const current = await readInteractiveSession(env, session.id);
+    if (current && isCurrentSandboxLease(current.leaseId)) return current;
+    throw serviceUnavailable("Cloudflare Sandbox lease refresh is already in progress");
+  }
+  const provisioned = await provisionWithSandbox(env, {
+    id: session.id,
+    repo: session.repo,
+    branch: session.branch,
+    runtime: session.runtime,
+    command: session.command,
+    prompt: session.prompt,
+    owner: session.owner,
+    ...(githubToken ? { githubToken } : {}),
+  });
+  if (provisioned.status === "failed") {
+    await database(env)
+      .updateTable("interactive_sessions")
+      .set({
+        lease_id: fallbackLeaseId,
+        last_event: provisioned.message,
+        updated_at: Date.now(),
+      })
+      .where("id", "=", session.id)
+      .where("lease_id", "=", refreshLeaseId)
+      .execute();
+    throw serviceUnavailable(provisioned.message);
+  }
+  const refreshedAt = Date.now();
+  const update = await database(env)
+    .updateTable("interactive_sessions")
+    .set({
+      status: provisioned.status,
+      lease_id: provisioned.leaseId,
+      attach_url: provisioned.attachUrl,
+      vnc_url: provisioned.vncUrl,
+      last_event: "Cloudflare Sandbox lease refreshed",
+      updated_at: refreshedAt,
+    })
+    .where("id", "=", session.id)
+    .where("lease_id", "=", refreshLeaseId)
+    .where("status", "in", ["ready", "attached", "detached"])
+    .executeTakeFirst();
+  if ((update.numUpdatedRows ?? 0n) === 0n) {
+    const current = await readInteractiveSession(env, session.id);
+    if (current && isCurrentSandboxLease(current.leaseId)) return current;
+    throw serviceUnavailable("Cloudflare Sandbox lease refresh is already in progress");
+  }
+  await appendInteractiveSessionLog(
+    env,
+    session.id,
+    user,
+    "Cloudflare Sandbox lease refreshed",
+    refreshedAt,
+  );
+  return {
+    ...session,
+    status: provisioned.status,
+    leaseId: provisioned.leaseId,
+    attachUrl: provisioned.attachUrl,
+    vncUrl: provisioned.vncUrl,
+    lastEvent: "Cloudflare Sandbox lease refreshed",
+  };
+}
+
 async function prepareSandboxWorkspace(
   sandbox: SandboxSessionTarget,
   env: RuntimeEnv,
@@ -2676,6 +2794,8 @@ async function prepareSandboxWorkspace(
   const quotedBranch = shellQuote(session.branch);
   const quotedWorkdir = shellQuote(workdir);
   const quotedPrompt = shellQuote(session.prompt);
+  const checkoutErrorPath = sandboxCheckoutErrorPath(session.id);
+  const quotedCheckoutErrorPath = shellQuote(checkoutErrorPath);
   await sandbox.exec(
     [
       "set -eu",
@@ -2693,11 +2813,12 @@ async function prepareSandboxWorkspace(
       `  if git_with_github_auth clone --depth 1 --branch ${quotedBranch} ${quotedRepoUrl} "$tmp" 2>/tmp/crabyard-git-clone.log || git_with_github_auth clone --depth 1 ${quotedRepoUrl} "$tmp" 2>>/tmp/crabyard-git-clone.log; then`,
       `    cp -a "$tmp"/. ${quotedWorkdir}/`,
       `  else`,
-      `    printf 'Repository checkout failed for %s branch %s. See /tmp/crabyard-git-clone.log.\\n' ${quotedRepoUrl} ${quotedBranch} > ${quotedWorkdir}/.crabyard-checkout-error.txt`,
-      `    cat /tmp/crabyard-git-clone.log >> ${quotedWorkdir}/.crabyard-checkout-error.txt || true`,
+      `    printf 'Repository checkout failed for %s branch %s. See /tmp/crabyard-git-clone.log.\\n' ${quotedRepoUrl} ${quotedBranch} > ${quotedCheckoutErrorPath}`,
+      `    cat /tmp/crabyard-git-clone.log >> ${quotedCheckoutErrorPath} || true`,
       `  fi`,
       `  rm -rf "$tmp"`,
       "fi",
+      `if [ -d ${quotedWorkdir}/.git ]; then rm -f ${quotedCheckoutErrorPath}; fi`,
       `cd ${quotedWorkdir}`,
       "git remote set-url origin " + quotedRepoUrl + " || true",
       "git_with_github_auth fetch --depth 1 origin " + quotedBranch + " || true",
@@ -2769,6 +2890,8 @@ async function prepareSandboxRuntimeTools(
   workdir: string,
   commandEnv: Record<string, string | undefined> = {},
 ): Promise<void> {
+  const autostartScript = sandboxAutostartScriptPath(session.id);
+  const terminalShell = sandboxTerminalShellPath(session.id);
   await sandbox.exec(
     `
 set -eu
@@ -2784,16 +2907,15 @@ if [ -n "\${GITHUB_TOKEN:-}" ]; then
     gh auth setup-git -h github.com >/dev/null 2>&1 || true
   fi
 fi
-marker=${shellQuote(sandboxBashrcMarker(session))}
-if ! grep -Fqx "$marker" "$HOME/.bashrc" 2>/dev/null; then
-  cat >> "$HOME/.bashrc" <<'EOF'
-${sandboxBashrcMarker(session)}
+mkdir -p "$(dirname ${shellQuote(autostartScript)})"
+cat > ${shellQuote(autostartScript)} <<'EOF'
 export CODEX_HOME="$HOME/.codex"
 export CRABYARD_SESSION_ID=${shellQuote(session.id)}
 export CRABYARD_REPO=${shellQuote(session.repo)}
 export CRABYARD_BRANCH=${shellQuote(session.branch)}
 export CRABYARD_RUNTIME=${shellQuote(session.runtime)}
 export CRABYARD_COMMAND=${shellQuote(session.command)}
+export CRABYARD_CHECKOUT_ERROR=${shellQuote(sandboxCheckoutErrorPath(session.id))}
 if [ -z "\${CRABYARD_SHELL_BOOTSTRAPPED:-}" ]; then
   export CRABYARD_SHELL_BOOTSTRAPPED=1
   if [ "$PWD" = "/workspace" ]; then
@@ -2804,7 +2926,7 @@ if [ -z "\${CRABYARD_CODEX_AUTOSTART_CHECKED:-}" ]; then
   export CRABYARD_CODEX_AUTOSTART_CHECKED=1
   crabyard_autostart_marker="$HOME/.cache/crabyard/\${CRABYARD_SESSION_ID:-session}.codex-autostarted"
   mkdir -p "$HOME/.cache/crabyard" 2>/dev/null || true
-  if [ ! -e "$crabyard_autostart_marker" ] && [ ! -s .crabyard-checkout-error.txt ]; then
+  if [ ! -e "$crabyard_autostart_marker" ] && [ ! -s "\${CRABYARD_CHECKOUT_ERROR:-}" ]; then
     touch "$crabyard_autostart_marker" 2>/dev/null || true
     if [ -n "\${CRABYARD_COMMAND:-}" ]; then
       sh -lc "$CRABYARD_COMMAND"
@@ -2812,7 +2934,22 @@ if [ -z "\${CRABYARD_CODEX_AUTOSTART_CHECKED:-}" ]; then
   fi
 fi
 EOF
-fi
+marker=${shellQuote(sandboxBashrcMarker(session))}
+bashrc_tmp="$HOME/.bashrc.crabyard.$$"
+{
+  printf '%s\\n' "$marker"
+  printf '%s\\n' 'source ${shellQuote(autostartScript)} 2>/dev/null || true'
+  if [ -f "$HOME/.bashrc" ]; then
+    awk -v marker="$marker" '$0 == marker { getline; next } { print }' "$HOME/.bashrc"
+  fi
+} > "$bashrc_tmp"
+mv "$bashrc_tmp" "$HOME/.bashrc"
+cat > ${shellQuote(terminalShell)} <<'EOF'
+#!/bin/bash
+source ${shellQuote(autostartScript)} 2>/dev/null || true
+exec /bin/bash -i
+EOF
+chmod +x ${shellQuote(terminalShell)}
 `,
     {
       timeout: 120_000,
@@ -2832,7 +2969,7 @@ async function openSandboxTerminalResponse(
   const options = {
     cols: size.cols,
     rows: size.rows,
-    shell: "/bin/bash",
+    shell: sandboxTerminalShellPath(session.id),
   };
   await ensureSandboxTerminalPrepared(sandbox, env, session, lease.terminalSessionId);
   const open = async () => {
@@ -2863,7 +3000,7 @@ async function ensureSandboxTerminalPrepared(
     if (await sandboxTerminalProfileExists(terminalSession, session, workdir)) return;
     await prepareSandboxCodexAuth(terminalSession, env, workdir);
     await prepareSandboxRuntimeTools(terminalSession, session, workdir);
-    if (await sandboxTerminalProfileExists(terminalSession, session, workdir)) return;
+    return;
   } catch {
     // Missing or terminated SDK session; recreate below.
   }
@@ -2876,8 +3013,15 @@ async function sandboxTerminalProfileExists(
   workdir: string,
 ): Promise<boolean> {
   const marker = shellQuote(sandboxBashrcMarker(session));
+  const autostartScript = sandboxAutostartScriptPath(session.id);
+  const terminalShell = sandboxTerminalShellPath(session.id);
   const result = await sandbox.exec(
-    `test -d ${shellQuote(workdir)} && grep -Fqx ${marker} "$HOME/.bashrc"`,
+    [
+      `test -d ${shellQuote(workdir)}`,
+      `test -s ${shellQuote(autostartScript)}`,
+      `test -x ${shellQuote(terminalShell)}`,
+      `grep -Fqx ${marker} "$HOME/.bashrc"`,
+    ].join(" && "),
     { timeout: 10_000 },
   );
   return result.success;
@@ -5007,7 +5151,22 @@ function newSandboxLease(id: string): { sandboxId: string; terminalSessionId: st
 }
 
 function sandboxLeaseId(lease: { sandboxId: string; terminalSessionId: string }): string {
-  return `${sandboxLeasePrefix}${lease.sandboxId}:${lease.terminalSessionId}`;
+  return `${sandboxLeasePrefix}${lease.sandboxId}:${lease.terminalSessionId}:${sandboxLeaseProfile}`;
+}
+
+function isCurrentSandboxLease(leaseId: string | null | undefined): boolean {
+  return (
+    leaseId?.startsWith(sandboxLeasePrefix) === true && leaseId.endsWith(`:${sandboxLeaseProfile}`)
+  );
+}
+
+function sandboxLeaseRefreshStartedAt(leaseId: string): number | null {
+  const match = /:refreshing-(\d+)-[a-f0-9]+$/.exec(leaseId);
+  return match ? Number(match[1]) : null;
+}
+
+function sandboxLeaseWithoutRefresh(leaseId: string): string {
+  return leaseId.replace(/:refreshing-\d+-[a-f0-9]+$/, "");
 }
 
 function sandboxLeaseInfo(
@@ -5036,10 +5195,22 @@ function sandboxWorkdir(id: string): string {
   return `/workspace/${sandboxIdForSession(id)}`;
 }
 
+function sandboxAutostartScriptPath(id: string): string {
+  return `/tmp/.crabyard-autostart-${sandboxIdForSession(id)}.sh`;
+}
+
+function sandboxTerminalShellPath(id: string): string {
+  return `/tmp/.crabyard-terminal-${sandboxIdForSession(id)}.sh`;
+}
+
+function sandboxCheckoutErrorPath(id: string): string {
+  return `/tmp/crabyard-checkout-error-${sandboxIdForSession(id)}.txt`;
+}
+
 function sandboxBashrcMarker(
   session: Pick<InteractiveSession | InteractiveProvisionRequest, "id">,
 ): string {
-  return `# crabyard session ${session.id} autostart-v1`;
+  return `# crabyard session ${session.id} autostart-v2`;
 }
 
 function terminalSize(request: Request, name: "cols" | "rows", fallback: number): number {
