@@ -2894,6 +2894,7 @@ async function prepareSandboxCodexAuth(
   workdir: string,
 ): Promise<void> {
   const projectKey = JSON.stringify(workdir);
+  const workspaceKey = JSON.stringify("/workspace");
   const result = await sandbox.exec(
     `
 set -eu
@@ -2910,6 +2911,9 @@ sandbox_mode = "danger-full-access"
 goals = true
 
 [projects.${projectKey}]
+trust_level = "trusted"
+
+[projects.${workspaceKey}]
 trust_level = "trusted"
 EOF
 if command -v node >/dev/null 2>&1; then
@@ -3016,7 +3020,13 @@ if [ -z "\${CRABYARD_CODEX_AUTOSTART_CHECKED:-}" ]; then
       printf '\\n'
     elif [ -n "\${CRABYARD_COMMAND:-}" ]; then
       touch "$crabyard_autostart_marker" 2>/dev/null || true
-      env -u BASH_ENV -u PROMPT_COMMAND /bin/bash -c "$CRABYARD_COMMAND"
+      (
+        cd "$CRABYARD_WORKDIR" 2>/dev/null || {
+          printf 'Crabyard workdir is unavailable: %s\\n' "$CRABYARD_WORKDIR"
+          exit 127
+        }
+        env -u BASH_ENV -u PROMPT_COMMAND /bin/bash -c "$CRABYARD_COMMAND"
+      )
     fi
   fi
 fi
@@ -3124,6 +3134,8 @@ async function sandboxTerminalProfileExists(
       `test "$(git -C ${shellQuote(workdir)} config --get remote.origin.url)" = ${shellQuote(repoUrl)}`,
       `test -s ${shellQuote(autostartScript)}`,
       `test -x ${shellQuote(terminalShell)}`,
+      `grep -Fqx '[projects."/workspace"]' "$HOME/.codex/config.toml"`,
+      `grep -Fqx '        cd "$CRABYARD_WORKDIR" 2>/dev/null || {' ${shellQuote(autostartScript)}`,
       `grep -Fqx ${marker} "$HOME/.bashrc"`,
     ].join(" && "),
     { timeout: 10_000 },
