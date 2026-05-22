@@ -2660,7 +2660,7 @@ async function provisionWithSandbox(
   const workdir = sandboxWorkdir(session.id);
   const sandbox = getSandbox(env.SANDBOX, lease.sandboxId);
   try {
-    const terminalSession = await ensureSandboxDefaultSession(sandbox, lease.terminalSessionId);
+    const terminalSession = await ensureSandboxExecutionSession(sandbox, lease.terminalSessionId);
     await terminalSession.mkdir(workdir, { recursive: true });
     await setupSandboxTerminalSession(terminalSession, env, session, workdir);
   } catch (error) {
@@ -3028,14 +3028,8 @@ async function openSandboxTerminalResponse(
   };
   await ensureSandboxTerminalPrepared(sandbox, env, session, lease.terminalSessionId);
   const open = async () => {
-    return (
-      sandbox as CloudflareSandbox & {
-        terminal(
-          request: Request,
-          options?: { cols: number; rows: number; shell: string },
-        ): Promise<Response>;
-      }
-    ).terminal(request, options);
+    const terminalSession = await sandbox.getSession(lease.terminalSessionId);
+    return terminalSession.terminal(request, options);
   };
 
   try {
@@ -3057,7 +3051,7 @@ async function ensureSandboxTerminalPrepared(
 ): Promise<void> {
   const workdir = sandboxWorkdir(session.id);
   try {
-    const terminalSession = await ensureSandboxDefaultSession(sandbox, terminalSessionId);
+    const terminalSession = await ensureSandboxExecutionSession(sandbox, terminalSessionId);
     if (await sandboxTerminalProfileExists(terminalSession, session, workdir)) return;
     await setupSandboxTerminalSession(terminalSession, env, session, workdir);
     return;
@@ -3093,7 +3087,7 @@ async function sandboxTerminalProfileExists(
   return result.success;
 }
 
-async function ensureSandboxDefaultSession(
+async function ensureSandboxExecutionSession(
   sandbox: ReturnType<typeof getSandbox>,
   terminalSessionId: string,
 ): Promise<ExecutionSession> {
@@ -3127,8 +3121,8 @@ async function recreateSandboxTerminalSession(
   session: InteractiveSession,
   terminalSessionId: string,
 ): Promise<void> {
-  await sandbox.destroy().catch(() => undefined);
-  const terminalSession = await ensureSandboxDefaultSession(sandbox, terminalSessionId);
+  await sandbox.deleteSession(terminalSessionId).catch(() => undefined);
+  const terminalSession = await ensureSandboxExecutionSession(sandbox, terminalSessionId);
   await terminalSession.mkdir(sandboxWorkdir(session.id), { recursive: true });
   await setupSandboxTerminalSession(terminalSession, env, session, sandboxWorkdir(session.id));
 }
@@ -5202,7 +5196,7 @@ function newSandboxLease(id: string): { sandboxId: string; terminalSessionId: st
   const sandboxId = `${base.slice(0, 63 - suffix.length - 1)}-${suffix}`;
   return {
     sandboxId,
-    terminalSessionId: sandboxDefaultSessionId(sandboxId),
+    terminalSessionId: sandboxTerminalSessionId(id, suffix),
   };
 }
 
@@ -5238,12 +5232,14 @@ function sandboxLeaseInfo(
   const fallbackSandboxId = clean(sandboxId, 80) || sandboxIdForSession(session.id);
   return {
     sandboxId: fallbackSandboxId,
-    terminalSessionId: clean(terminalSessionId, 100) || sandboxDefaultSessionId(fallbackSandboxId),
+    terminalSessionId: clean(terminalSessionId, 100) || sandboxTerminalSessionId(session.id),
   };
 }
 
-function sandboxDefaultSessionId(sandboxId: string): string {
-  return `sandbox-${sandboxId}`;
+function sandboxTerminalSessionId(id: string, suffix?: string): string {
+  const base = clean(`terminal-${id}`.toLowerCase().replace(/[^a-z0-9_-]/g, "-"), 80);
+  if (!suffix) return base;
+  return `${base.slice(0, 80 - suffix.length - 1)}-${suffix}`;
 }
 
 function sandboxWorkdir(id: string): string {
