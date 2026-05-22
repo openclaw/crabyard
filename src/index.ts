@@ -298,7 +298,7 @@ type TerminalUpstream = {
   markConnected: () => Promise<void>;
 };
 
-type SandboxSessionTarget = Pick<ExecutionSession, "exec" | "mkdir">;
+type SandboxSessionTarget = Pick<ExecutionSession, "exec" | "gitCheckout" | "mkdir">;
 
 type ClawFleetInstancePayload = {
   name?: string;
@@ -504,7 +504,7 @@ const terminalClipboardMaxBytes = 10 * 1024 * 1024;
 const lanes = ["Todo", "Running", "Human Review", "Done"];
 const preferredRepo = "openclaw/openclaw";
 const sandboxLeasePrefix = "sandbox:";
-const sandboxLeaseProfile = "autostart-v3";
+const sandboxLeaseProfile = "autostart-v4";
 const activeRunStatuses: readonly RunStatus[] = ["queued", "leasing", "running"];
 const interactiveSessionStatuses: readonly InteractiveSessionStatus[] = [
   "provisioning",
@@ -2796,7 +2796,40 @@ async function prepareSandboxWorkspace(
   const quotedPrompt = shellQuote(session.prompt);
   const checkoutErrorPath = sandboxCheckoutErrorPath(session.id);
   const quotedCheckoutErrorPath = shellQuote(checkoutErrorPath);
-  await sandbox.exec(
+  const githubEnv = sandboxGitHubTokenEnv(env, session);
+  let sdkCheckoutError = "";
+  const resetResult = await sandbox.exec(
+    [
+      "set -eu",
+      `if [ ! -d ${quotedWorkdir}/.git ]; then`,
+      `  rm -rf ${quotedWorkdir}`,
+      `  mkdir -p ${quotedWorkdir}`,
+      `fi`,
+      `rm -f ${quotedCheckoutErrorPath}`,
+    ].join("\n"),
+    { timeout: 30_000 },
+  );
+  if (!resetResult.success) {
+    throw new Error(
+      clean(resetResult.stderr || resetResult.stdout || "workspace reset failed", 500),
+    );
+  }
+
+  const checkoutExists = await sandbox.exec(`test -d ${quotedWorkdir}/.git`, { timeout: 10_000 });
+  if (!checkoutExists.success) {
+    try {
+      await sandbox.gitCheckout(repoUrl, {
+        branch: session.branch,
+        targetDir: workdir,
+        depth: 1,
+        cloneTimeoutMs: 120_000,
+      });
+    } catch (error) {
+      sdkCheckoutError = clean(error instanceof Error ? error.message : String(error), 500);
+    }
+  }
+
+  const result = await sandbox.exec(
     [
       "set -eu",
       "git_with_github_auth() {",
@@ -2806,11 +2839,13 @@ async function prepareSandboxWorkspace(
       '    git "$@"',
       "  fi",
       "}",
-      `mkdir -p ${quotedWorkdir}`,
       `if [ ! -d ${quotedWorkdir}/.git ]; then`,
       `  tmp="${workdir}.clone.$$"`,
       `  rm -rf "$tmp"`,
+      `  rm -f ${quotedCheckoutErrorPath}`,
       `  if git_with_github_auth clone --depth 1 --branch ${quotedBranch} ${quotedRepoUrl} "$tmp" 2>/tmp/crabyard-git-clone.log || git_with_github_auth clone --depth 1 ${quotedRepoUrl} "$tmp" 2>>/tmp/crabyard-git-clone.log; then`,
+      `    rm -rf ${quotedWorkdir}`,
+      `    mkdir -p ${quotedWorkdir}`,
       `    cp -a "$tmp"/. ${quotedWorkdir}/`,
       `  else`,
       `    printf 'Repository checkout failed for %s branch %s. See /tmp/crabyard-git-clone.log.\\n' ${quotedRepoUrl} ${quotedBranch} > ${quotedCheckoutErrorPath}`,
@@ -2818,18 +2853,37 @@ async function prepareSandboxWorkspace(
       `  fi`,
       `  rm -rf "$tmp"`,
       "fi",
-      `if [ -d ${quotedWorkdir}/.git ]; then rm -f ${quotedCheckoutErrorPath}; fi`,
+      `if [ ! -d ${quotedWorkdir}/.git ]; then`,
+      `  if [ ! -s ${quotedCheckoutErrorPath} ]; then`,
+      `    printf 'Repository checkout failed for %s branch %s.\\n' ${quotedRepoUrl} ${quotedBranch} > ${quotedCheckoutErrorPath}`,
+      `  fi`,
+      `  cat ${quotedCheckoutErrorPath}`,
+      `  exit 70`,
+      `fi`,
+      `rm -f ${quotedCheckoutErrorPath}`,
       `cd ${quotedWorkdir}`,
+      `git config --global --add safe.directory ${quotedWorkdir} || true`,
       "git remote set-url origin " + quotedRepoUrl + " || true",
-      "git_with_github_auth fetch --depth 1 origin " + quotedBranch + " || true",
-      "git checkout " + quotedBranch + " || true",
-      "git_with_github_auth pull --ff-only origin " + quotedBranch + " || true",
+      "git_with_github_auth fetch --depth 1 origin " + quotedBranch,
+      "git checkout -B " + quotedBranch + " FETCH_HEAD",
+      `git rev-parse --verify HEAD >/dev/null`,
+      `test "$(git rev-parse --abbrev-ref HEAD)" = ${quotedBranch}`,
+      `test "$(git config --get remote.origin.url)" = ${quotedRepoUrl}`,
       quotedPrompt
         ? `printf '%s\n' ${quotedPrompt} > .crabyard-initial-prompt.txt`
         : "rm -f .crabyard-initial-prompt.txt",
     ].join("\n"),
-    { timeout: 120_000, env: sandboxGitHubTokenEnv(env, session) },
+    { timeout: 120_000, env: githubEnv },
   );
+  if (!result.success) {
+    throw new Error(
+      clean(
+        [sdkCheckoutError, result.stdout, result.stderr].filter(Boolean).join("\n") ||
+          "repository checkout failed",
+        700,
+      ),
+    );
+  }
 }
 
 async function prepareSandboxCodexAuth(
@@ -2926,10 +2980,12 @@ if [ -z "\${CRABYARD_CODEX_AUTOSTART_CHECKED:-}" ]; then
   crabyard_autostart_marker="$HOME/.cache/crabyard/\${CRABYARD_SESSION_ID:-session}.codex-autostarted"
   mkdir -p "$HOME/.cache/crabyard" 2>/dev/null || true
   if [ ! -e "$crabyard_autostart_marker" ]; then
-    if [ ! -s "\${CRABYARD_CHECKOUT_ERROR:-}" ]; then
+    if [ -s "\${CRABYARD_CHECKOUT_ERROR:-}" ]; then
+      printf '\\nCrabyard repository checkout failed:\\n'
+      cat "$CRABYARD_CHECKOUT_ERROR"
+      printf '\\n'
+    elif [ -n "\${CRABYARD_COMMAND:-}" ]; then
       touch "$crabyard_autostart_marker" 2>/dev/null || true
-    fi
-    if [ -n "\${CRABYARD_COMMAND:-}" ]; then
       env -u BASH_ENV -u PROMPT_COMMAND /bin/bash -c "$CRABYARD_COMMAND"
     fi
   fi
@@ -3000,6 +3056,7 @@ async function ensureSandboxTerminalPrepared(
   try {
     const terminalSession = await sandbox.getSession(terminalSessionId);
     if (await sandboxTerminalProfileExists(terminalSession, session, workdir)) return;
+    await prepareSandboxWorkspace(terminalSession, env, session, workdir);
     await prepareSandboxCodexAuth(terminalSession, env, workdir);
     await prepareSandboxRuntimeTools(terminalSession, session, workdir);
     return;
@@ -3017,9 +3074,15 @@ async function sandboxTerminalProfileExists(
   const marker = shellQuote(sandboxBashrcMarker(session));
   const autostartScript = sandboxAutostartScriptPath(session.id);
   const terminalShell = sandboxTerminalShellPath(session.id);
+  const repoUrl = `https://github.com/${session.repo}.git`;
   const result = await sandbox.exec(
     [
       `test -d ${shellQuote(workdir)}`,
+      `test -d ${shellQuote(workdir)}/.git`,
+      `test ! -s ${shellQuote(sandboxCheckoutErrorPath(session.id))}`,
+      `git -C ${shellQuote(workdir)} rev-parse --verify HEAD >/dev/null`,
+      `test "$(git -C ${shellQuote(workdir)} rev-parse --abbrev-ref HEAD)" = ${shellQuote(session.branch)}`,
+      `test "$(git -C ${shellQuote(workdir)} config --get remote.origin.url)" = ${shellQuote(repoUrl)}`,
       `test -s ${shellQuote(autostartScript)}`,
       `test -x ${shellQuote(terminalShell)}`,
       `grep -Fqx ${marker} "$HOME/.bashrc"`,
@@ -5212,7 +5275,7 @@ function sandboxCheckoutErrorPath(id: string): string {
 function sandboxBashrcMarker(
   session: Pick<InteractiveSession | InteractiveProvisionRequest, "id">,
 ): string {
-  return `# crabyard session ${session.id} autostart-v2`;
+  return `# crabyard session ${session.id} autostart-v4`;
 }
 
 function terminalSize(request: Request, name: "cols" | "rows", fallback: number): number {
