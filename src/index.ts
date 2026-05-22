@@ -2916,11 +2916,10 @@ export CRABYARD_BRANCH=${shellQuote(session.branch)}
 export CRABYARD_RUNTIME=${shellQuote(session.runtime)}
 export CRABYARD_COMMAND=${shellQuote(session.command)}
 export CRABYARD_CHECKOUT_ERROR=${shellQuote(sandboxCheckoutErrorPath(session.id))}
+export CRABYARD_WORKDIR=${shellQuote(workdir)}
 if [ -z "\${CRABYARD_SHELL_BOOTSTRAPPED:-}" ]; then
   export CRABYARD_SHELL_BOOTSTRAPPED=1
-  if [ "$PWD" = "/workspace" ]; then
-    cd ${shellQuote(workdir)} 2>/dev/null || true
-  fi
+  cd "$CRABYARD_WORKDIR" 2>/dev/null || true
 fi
 if [ -z "\${CRABYARD_CODEX_AUTOSTART_CHECKED:-}" ]; then
   export CRABYARD_CODEX_AUTOSTART_CHECKED=1
@@ -2929,7 +2928,7 @@ if [ -z "\${CRABYARD_CODEX_AUTOSTART_CHECKED:-}" ]; then
   if [ ! -e "$crabyard_autostart_marker" ] && [ ! -s "\${CRABYARD_CHECKOUT_ERROR:-}" ]; then
     touch "$crabyard_autostart_marker" 2>/dev/null || true
     if [ -n "\${CRABYARD_COMMAND:-}" ]; then
-      sh -lc "$CRABYARD_COMMAND"
+      env -u BASH_ENV -u PROMPT_COMMAND /bin/bash -c "$CRABYARD_COMMAND"
     fi
   fi
 fi
@@ -2946,6 +2945,7 @@ bashrc_tmp="$HOME/.bashrc.crabyard.$$"
 mv "$bashrc_tmp" "$HOME/.bashrc"
 cat > ${shellQuote(terminalShell)} <<'EOF'
 #!/bin/bash
+cd ${shellQuote(workdir)} 2>/dev/null || true
 source ${shellQuote(autostartScript)} 2>/dev/null || true
 exec /bin/bash -i
 EOF
