@@ -12,11 +12,7 @@ import {
   type Generated,
   type QueryResult,
 } from "kysely";
-import {
-  getSandbox,
-  type ExecutionSession,
-  type Sandbox as CloudflareSandbox,
-} from "@cloudflare/sandbox";
+import { getSandbox, type Sandbox as CloudflareSandbox } from "@cloudflare/sandbox";
 import {
   TerminalMessageType,
   decodeTerminalFrame,
@@ -299,7 +295,7 @@ type TerminalUpstream = {
 };
 
 type SandboxSessionTarget = Pick<
-  CloudflareSandbox | ExecutionSession,
+  CloudflareSandbox,
   "exec" | "gitCheckout" | "mkdir" | "setEnvVars"
 >;
 
@@ -2660,9 +2656,8 @@ async function provisionWithSandbox(
   const workdir = sandboxWorkdir(session.id);
   const sandbox = getSandbox(env.SANDBOX, lease.sandboxId);
   try {
-    const terminalSession = await ensureSandboxExecutionSession(sandbox, lease.terminalSessionId);
-    await terminalSession.mkdir(workdir, { recursive: true });
-    await setupSandboxTerminalSession(terminalSession, env, session, workdir);
+    await sandbox.mkdir(workdir, { recursive: true });
+    await setupSandboxTerminalSession(sandbox, env, session, workdir);
   } catch (error) {
     const message = clean(error instanceof Error ? error.message : String(error), 240);
     return failedProvision(`Cloudflare Sandbox provision failed: ${message}`);
@@ -3053,8 +3048,14 @@ async function openSandboxTerminalResponse(
   };
   await ensureSandboxTerminalPrepared(sandbox, env, session, lease.terminalSessionId);
   const open = async () => {
-    const terminalSession = await sandbox.getSession(lease.terminalSessionId);
-    return terminalSession.terminal(request, options);
+    return (
+      sandbox as CloudflareSandbox & {
+        terminal(
+          request: Request,
+          options?: { cols: number; rows: number; shell: string },
+        ): Promise<Response>;
+      }
+    ).terminal(request, options);
   };
 
   try {
@@ -3076,9 +3077,9 @@ async function ensureSandboxTerminalPrepared(
 ): Promise<void> {
   const workdir = sandboxWorkdir(session.id);
   try {
-    const terminalSession = await ensureSandboxExecutionSession(sandbox, terminalSessionId);
-    if (await sandboxTerminalProfileExists(terminalSession, session, workdir)) return;
-    await setupSandboxTerminalSession(terminalSession, env, session, workdir);
+    void terminalSessionId;
+    if (await sandboxTerminalProfileExists(sandbox, session, workdir)) return;
+    await setupSandboxTerminalSession(sandbox, env, session, workdir);
     return;
   } catch {
     // Missing or terminated default shell; recreate the sandbox below.
@@ -3112,44 +3113,6 @@ async function sandboxTerminalProfileExists(
   return result.success;
 }
 
-async function ensureSandboxExecutionSession(
-  sandbox: ReturnType<typeof getSandbox>,
-  terminalSessionId: string,
-): Promise<ExecutionSession> {
-  const request = new Request("http://localhost/api/session/create", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ id: terminalSessionId, cwd: "/tmp" }),
-  });
-  const response = await (sandbox as { fetch(request: Request): Promise<Response> }).fetch(request);
-  const body = await response.text();
-  if (!response.ok) {
-    if (!body.toLowerCase().includes("already exists")) {
-      throw new Error(clean(body || `session create failed with ${response.status}`, 700));
-    }
-  } else {
-    const parsed = parseJson<{ success?: boolean; error?: { message?: string } } | null>(
-      body,
-      null,
-    );
-    if (parsed && parsed.success === false) {
-      const message = clean(parsed.error?.message || body, 700);
-      if (!message.toLowerCase().includes("already exists")) throw new Error(message);
-    }
-    if (!parsed && body) {
-      throw new Error(clean(body, 700));
-    }
-  }
-  try {
-    return sandbox.getSession(terminalSessionId);
-  } catch (error) {
-    throw new Error(
-      clean(error instanceof Error ? error.message : String(error), 700) ||
-        "session wrapper unavailable",
-    );
-  }
-}
-
 async function setupSandboxTerminalSession(
   sandbox: SandboxSessionTarget,
   env: RuntimeEnv,
@@ -3169,10 +3132,9 @@ async function recreateSandboxTerminalSession(
   session: InteractiveSession,
   terminalSessionId: string,
 ): Promise<void> {
-  await sandbox.deleteSession(terminalSessionId).catch(() => undefined);
-  const terminalSession = await ensureSandboxExecutionSession(sandbox, terminalSessionId);
-  await terminalSession.mkdir(sandboxWorkdir(session.id), { recursive: true });
-  await setupSandboxTerminalSession(terminalSession, env, session, sandboxWorkdir(session.id));
+  void terminalSessionId;
+  await sandbox.mkdir(sandboxWorkdir(session.id), { recursive: true });
+  await setupSandboxTerminalSession(sandbox, env, session, sandboxWorkdir(session.id));
 }
 
 function sandboxSessionEnv(
