@@ -1797,7 +1797,11 @@ async function subscribeTerminalHubSession(
       const message = `terminal unavailable: ${
         error instanceof Error ? clean(error.message, 180) : "terminal connection failed"
       }`;
-      await markInteractiveTerminalUnavailable(env, user, id, Date.now(), message);
+      if (session.leaseId?.startsWith(sandboxLeasePrefix) && env.SANDBOX) {
+        await markInteractiveTerminalDetached(env, user, id, Date.now(), message);
+      } else {
+        await markInteractiveTerminalUnavailable(env, user, id, Date.now(), message);
+      }
       sendTerminalJson(client, TerminalMessageType.Error, id, {
         error: message,
       });
@@ -1884,7 +1888,11 @@ async function subscribeTerminalHubSession(
       if (viewCheck !== null) clearInterval(viewCheck);
       const message = "terminal unavailable: upstream terminal error";
       if (!isPassiveTerminalClose(closeReason)) {
-        void markInteractiveTerminalUnavailable(env, user, id, Date.now(), message);
+        const markTerminal =
+          session.leaseId?.startsWith(sandboxLeasePrefix) && env.SANDBOX
+            ? markInteractiveTerminalDetached
+            : markInteractiveTerminalUnavailable;
+        void markTerminal(env, user, id, Date.now(), message);
         sendTerminalJson(client, TerminalMessageType.Error, id, { error: message });
       }
     });
@@ -1913,11 +1921,9 @@ async function openInteractiveTerminalUpstream(
   if (session.leaseId?.startsWith(sandboxLeasePrefix) && env.SANDBOX) {
     const lease = sandboxLeaseInfo(session);
     const sandbox = getSandbox(env.SANDBOX, lease.sandboxId);
-    const terminalSession = await sandbox.getSession(lease.terminalSessionId);
-    const upstreamResponse = await terminalSession.terminal(request, {
+    const upstreamResponse = await openSandboxTerminalResponse(request, env, sandbox, session, {
       cols,
       rows,
-      shell: sandboxStartupScriptPath(session),
     });
     const upstream = upstreamResponse.webSocket;
     if (!upstream || upstreamResponse.status !== 101) {
@@ -2274,11 +2280,9 @@ async function interactiveSandboxTerminal(
   if (!env.SANDBOX) throw serviceUnavailable("Sandbox binding is not configured");
   const lease = sandboxLeaseInfo(session);
   const sandbox = getSandbox(env.SANDBOX, lease.sandboxId);
-  const terminalSession = await sandbox.getSession(lease.terminalSessionId);
-  const upstreamResponse = await terminalSession.terminal(request, {
+  const upstreamResponse = await openSandboxTerminalResponse(request, env, sandbox, session, {
     cols: terminalSize(request, "cols", 120),
     rows: terminalSize(request, "rows", 34),
-    shell: sandboxStartupScriptPath(session),
   });
   const upstream = upstreamResponse.webSocket;
   if (!upstream || upstreamResponse.status !== 101) {
@@ -2753,6 +2757,53 @@ fi
   );
 }
 
+async function openSandboxTerminalResponse(
+  request: Request,
+  env: RuntimeEnv,
+  sandbox: ReturnType<typeof getSandbox>,
+  session: InteractiveSession,
+  size: { cols: number; rows: number },
+): Promise<Response> {
+  const lease = sandboxLeaseInfo(session);
+  const options = {
+    cols: size.cols,
+    rows: size.rows,
+    shell: sandboxStartupScriptPath(session),
+  };
+  const open = async () => {
+    const terminalSession = await sandbox.getSession(lease.terminalSessionId);
+    return terminalSession.terminal(request, options);
+  };
+
+  try {
+    const response = await open();
+    if (response.webSocket && response.status === 101) return response;
+  } catch {
+    // A previous PTY disconnect can leave the SDK execution session terminated.
+  }
+
+  await recreateSandboxTerminalSession(sandbox, env, session, lease.terminalSessionId);
+  return open();
+}
+
+async function recreateSandboxTerminalSession(
+  sandbox: ReturnType<typeof getSandbox>,
+  env: RuntimeEnv,
+  session: InteractiveSession,
+  terminalSessionId: string,
+): Promise<void> {
+  await sandbox.deleteSession(terminalSessionId).catch(() => undefined);
+  await sandbox
+    .createSession({
+      id: terminalSessionId,
+      env: sandboxSessionEnv(env, session),
+      cwd: sandboxWorkdir(session.id),
+    })
+    .catch((error: unknown) => {
+      if (!String(error).toLowerCase().includes("already exists")) throw error;
+    });
+}
+
 async function writeSandboxStartupScript(
   sandbox: ReturnType<typeof getSandbox>,
   session: InteractiveProvisionRequest,
@@ -2825,7 +2876,7 @@ exec /bin/bash -l
 
 function sandboxSessionEnv(
   env: RuntimeEnv,
-  session: InteractiveProvisionRequest,
+  session: InteractiveProvisionRequest | InteractiveSession,
 ): Record<string, string | undefined> {
   return {
     CRABYARD_SESSION_ID: session.id,
@@ -2836,7 +2887,7 @@ function sandboxSessionEnv(
     COLORTERM: "truecolor",
     TERM_PROGRAM: "ghostty",
     TERM_PROGRAM_VERSION: "web",
-    ...githubTokenEnv(session),
+    ...("githubToken" in session ? githubTokenEnv(session) : {}),
     OPENAI_API_KEY: env.OPENAI_API_KEY,
     OPENAI_BASE_URL: env.OPENAI_BASE_URL,
     OPENAI_ORG_ID: env.OPENAI_ORG_ID,
