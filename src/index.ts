@@ -3116,14 +3116,37 @@ async function ensureSandboxExecutionSession(
   sandbox: ReturnType<typeof getSandbox>,
   terminalSessionId: string,
 ): Promise<ExecutionSession> {
+  const request = new Request("http://localhost/api/session/create", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id: terminalSessionId, cwd: "/tmp" }),
+  });
+  const response = await (sandbox as { fetch(request: Request): Promise<Response> }).fetch(request);
+  const body = await response.text();
+  if (!response.ok) {
+    if (!body.toLowerCase().includes("already exists")) {
+      throw new Error(clean(body || `session create failed with ${response.status}`, 700));
+    }
+  } else {
+    const parsed = parseJson<{ success?: boolean; error?: { message?: string } } | null>(
+      body,
+      null,
+    );
+    if (parsed && parsed.success === false) {
+      const message = clean(parsed.error?.message || body, 700);
+      if (!message.toLowerCase().includes("already exists")) throw new Error(message);
+    }
+    if (!parsed && body) {
+      throw new Error(clean(body, 700));
+    }
+  }
   try {
-    return await sandbox.createSession({
-      id: terminalSessionId,
-      cwd: "/tmp",
-    });
-  } catch (error) {
-    if (!String(error).toLowerCase().includes("already exists")) throw error;
     return sandbox.getSession(terminalSessionId);
+  } catch (error) {
+    throw new Error(
+      clean(error instanceof Error ? error.message : String(error), 700) ||
+        "session wrapper unavailable",
+    );
   }
 }
 
