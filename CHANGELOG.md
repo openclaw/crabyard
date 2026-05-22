@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Provision Cloudflare Sandbox Codex workspaces through explicit setup and PTY sessions so new sessions open with the selected repo checked out.
 - Expose the Cloudflare Sandbox control port from the Crabyard container image so production Codex sessions can create workspaces.
 - Use the fresh per-session Cloudflare Sandbox default session instead of a second named execution session for Codex workspace provisioning.
 - Retry transient Cloudflare API failures during automatic Worker deploys.

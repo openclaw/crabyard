@@ -294,8 +294,9 @@ type TerminalUpstream = {
   markConnected: () => Promise<void>;
 };
 
+type SandboxExecutionSession = Awaited<ReturnType<CloudflareSandbox["createSession"]>>;
 type SandboxSessionTarget = Pick<
-  CloudflareSandbox,
+  SandboxExecutionSession,
   "exec" | "gitCheckout" | "mkdir" | "setEnvVars"
 >;
 
@@ -2656,8 +2657,7 @@ async function provisionWithSandbox(
   const workdir = sandboxWorkdir(session.id);
   const sandbox = getSandbox(env.SANDBOX, lease.sandboxId);
   try {
-    await sandbox.mkdir(workdir, { recursive: true });
-    await setupSandboxTerminalSession(sandbox, env, session, workdir);
+    await setupSandboxTerminalSession(sandbox, env, session, workdir, lease.terminalSessionId);
   } catch (error) {
     const message = clean(error instanceof Error ? error.message : String(error), 240);
     return failedProvision(`Cloudflare Sandbox provision failed: ${message}`);
@@ -2884,7 +2884,7 @@ async function prepareSandboxCodexAuth(
   workdir: string,
 ): Promise<void> {
   const projectKey = JSON.stringify(workdir);
-  await sandbox.exec(
+  const result = await sandbox.exec(
     `
 set -eu
 export CODEX_HOME="$HOME/.codex"
@@ -2928,6 +2928,9 @@ fi
       },
     },
   );
+  if (!result.success) {
+    throw new Error(clean(result.stderr || result.stdout || "Codex auth setup failed", 700));
+  }
 }
 
 async function prepareSandboxRuntimeTools(
@@ -2938,7 +2941,7 @@ async function prepareSandboxRuntimeTools(
 ): Promise<void> {
   const autostartScript = sandboxAutostartScriptPath(session.id);
   const terminalShell = sandboxTerminalShellPath(session.id);
-  await sandbox.exec(
+  const result = await sandbox.exec(
     `
 set -eu
 export CODEX_HOME="$HOME/.codex"
@@ -3031,6 +3034,9 @@ chmod +x ${shellQuote(terminalShell)}
       env: commandEnv,
     },
   );
+  if (!result.success) {
+    throw new Error(clean(result.stderr || result.stdout || "runtime tool setup failed", 700));
+  }
 }
 
 async function openSandboxTerminalResponse(
@@ -3047,15 +3053,9 @@ async function openSandboxTerminalResponse(
     shell: sandboxTerminalShellPath(session.id),
   };
   await ensureSandboxTerminalPrepared(sandbox, env, session, lease.terminalSessionId);
+  let terminalSession = await sandbox.getSession(lease.terminalSessionId);
   const open = async () => {
-    return (
-      sandbox as CloudflareSandbox & {
-        terminal(
-          request: Request,
-          options?: { cols: number; rows: number; shell: string },
-        ): Promise<Response>;
-      }
-    ).terminal(request, options);
+    return terminalSession.terminal(request, options);
   };
 
   try {
@@ -3066,6 +3066,7 @@ async function openSandboxTerminalResponse(
   }
 
   await recreateSandboxTerminalSession(sandbox, env, session, lease.terminalSessionId);
+  terminalSession = await sandbox.getSession(lease.terminalSessionId);
   return open();
 }
 
@@ -3077,9 +3078,8 @@ async function ensureSandboxTerminalPrepared(
 ): Promise<void> {
   const workdir = sandboxWorkdir(session.id);
   try {
-    void terminalSessionId;
     if (await sandboxTerminalProfileExists(sandbox, session, workdir)) return;
-    await setupSandboxTerminalSession(sandbox, env, session, workdir);
+    await setupSandboxTerminalSession(sandbox, env, session, workdir, terminalSessionId);
     return;
   } catch {
     // Missing or terminated default shell; recreate the sandbox below.
@@ -3088,15 +3088,23 @@ async function ensureSandboxTerminalPrepared(
 }
 
 async function sandboxTerminalProfileExists(
-  sandbox: SandboxSessionTarget,
+  sandbox: CloudflareSandbox,
   session: InteractiveSession,
   workdir: string,
 ): Promise<boolean> {
+  const setup = await createSandboxSession(
+    sandbox,
+    sandboxSetupSessionId(session.id),
+    "/workspace",
+    {
+      CRABYARD_SESSION_ID: session.id,
+    },
+  );
   const marker = shellQuote(sandboxBashrcMarker(session));
   const autostartScript = sandboxAutostartScriptPath(session.id);
   const terminalShell = sandboxTerminalShellPath(session.id);
   const repoUrl = `https://github.com/${session.repo}.git`;
-  const result = await sandbox.exec(
+  const result = await setup.exec(
     [
       `test -d ${shellQuote(workdir)}`,
       `test -d ${shellQuote(workdir)}/.git`,
@@ -3114,16 +3122,30 @@ async function sandboxTerminalProfileExists(
 }
 
 async function setupSandboxTerminalSession(
-  sandbox: SandboxSessionTarget,
+  sandbox: CloudflareSandbox,
   env: RuntimeEnv,
   session: InteractiveProvisionRequest | InteractiveSession,
   workdir: string,
+  terminalSessionId: string,
 ): Promise<void> {
-  await sandbox.mkdir(workdir, { recursive: true });
-  await sandbox.setEnvVars(sandboxSessionEnv(env, session));
-  await prepareSandboxWorkspace(sandbox, env, session, workdir);
-  await prepareSandboxCodexAuth(sandbox, env, workdir);
-  await prepareSandboxRuntimeTools(sandbox, session, workdir, sandboxGitHubTokenEnv(env, session));
+  const sessionEnv = sandboxSessionEnv(env, session);
+  const setup = await createFreshSandboxSession(
+    sandbox,
+    sandboxSetupSessionId(session.id),
+    "/workspace",
+    sessionEnv,
+  );
+  await runSandboxSetupStep("workspace mkdir", () => setup.mkdir(workdir, { recursive: true }));
+  await runSandboxSetupStep("repository checkout", () =>
+    prepareSandboxWorkspace(setup, env, session, workdir),
+  );
+  await runSandboxSetupStep("Codex auth", () => prepareSandboxCodexAuth(setup, env, workdir));
+  await runSandboxSetupStep("runtime tools", () =>
+    prepareSandboxRuntimeTools(setup, session, workdir, sandboxGitHubTokenEnv(env, session)),
+  );
+  await runSandboxSetupStep("terminal session", () =>
+    createFreshSandboxSession(sandbox, terminalSessionId, workdir, sessionEnv),
+  );
 }
 
 async function recreateSandboxTerminalSession(
@@ -3132,9 +3154,13 @@ async function recreateSandboxTerminalSession(
   session: InteractiveSession,
   terminalSessionId: string,
 ): Promise<void> {
-  void terminalSessionId;
-  await sandbox.mkdir(sandboxWorkdir(session.id), { recursive: true });
-  await setupSandboxTerminalSession(sandbox, env, session, sandboxWorkdir(session.id));
+  await setupSandboxTerminalSession(
+    sandbox,
+    env,
+    session,
+    sandboxWorkdir(session.id),
+    terminalSessionId,
+  );
 }
 
 function sandboxSessionEnv(
@@ -5252,6 +5278,10 @@ function sandboxTerminalSessionId(id: string, suffix?: string): string {
   return `${base.slice(0, 80 - suffix.length - 1)}-${suffix}`;
 }
 
+function sandboxSetupSessionId(id: string): string {
+  return clean(`setup-${id}`.toLowerCase().replace(/[^a-z0-9_-]/g, "-"), 80);
+}
+
 function sandboxWorkdir(id: string): string {
   return `/workspace/${sandboxIdForSession(id)}`;
 }
@@ -5299,6 +5329,61 @@ function isPassiveTerminalClose(reason: string | undefined): boolean {
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\"'\"'")}'`;
+}
+
+function compactEnvVars(env: Record<string, string | undefined>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(env).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+  );
+}
+
+function isSandboxSessionAlreadyExists(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.name === "SessionAlreadyExistsError" || /session .*already exists/i.test(error.message))
+  );
+}
+
+async function createSandboxSession(
+  sandbox: CloudflareSandbox,
+  id: string,
+  cwd: string,
+  env: Record<string, string | undefined>,
+): Promise<SandboxExecutionSession> {
+  try {
+    return await sandbox.createSession({
+      id,
+      cwd,
+      env: compactEnvVars(env),
+      commandTimeoutMs: 300_000,
+    });
+  } catch (error) {
+    if (!isSandboxSessionAlreadyExists(error)) throw error;
+    return sandbox.getSession(id);
+  }
+}
+
+async function createFreshSandboxSession(
+  sandbox: CloudflareSandbox,
+  id: string,
+  cwd: string,
+  env: Record<string, string | undefined>,
+): Promise<SandboxExecutionSession> {
+  try {
+    await sandbox.deleteSession(id);
+  } catch {
+    // The SDK returns an error when the session is absent or already terminated.
+  }
+  return createSandboxSession(sandbox, id, cwd, env);
+}
+
+async function runSandboxSetupStep(step: string, operation: () => Promise<unknown>): Promise<void> {
+  try {
+    await operation();
+  } catch (error) {
+    const message = clean(error instanceof Error ? error.message : String(error), 500);
+    throw new Error(`${step}: ${message || "failed"}`);
+  }
 }
 
 function interactiveCommand(value: unknown): string {
