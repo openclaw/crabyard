@@ -2788,7 +2788,6 @@ async function prepareSandboxWorkspace(
   const githubEnv = sandboxGitHubTokenEnv(env, session);
   const resetResult = await sandbox.exec(
     [
-      "set -eu",
       `if [ ! -d ${quotedWorkdir}/.git ]; then`,
       `  rm -rf ${quotedWorkdir}`,
       `  mkdir -p ${quotedWorkdir}`,
@@ -2805,7 +2804,7 @@ async function prepareSandboxWorkspace(
 
   const result = await sandbox.exec(
     [
-      "set -eu",
+      "checkout_status=0",
       "git_with_github_auth() {",
       '  if [ -n "${GITHUB_TOKEN:-}" ]; then',
       '    git -c "http.https://github.com/.extraheader=AUTHORIZATION: bearer ${GITHUB_TOKEN}" "$@"',
@@ -2818,38 +2817,50 @@ async function prepareSandboxWorkspace(
       `  rm -rf "$tmp"`,
       `  rm -f ${quotedCheckoutErrorPath}`,
       `  if git_with_github_auth clone --depth 1 --branch ${quotedBranch} ${quotedRepoUrl} "$tmp" 2>/tmp/crabyard-git-clone.log || git_with_github_auth clone --depth 1 ${quotedRepoUrl} "$tmp" 2>>/tmp/crabyard-git-clone.log; then`,
-      `    rm -rf ${quotedWorkdir}`,
-      `    mkdir -p ${quotedWorkdir}`,
-      `    cp -a "$tmp"/. ${quotedWorkdir}/`,
+      `    if rm -rf ${quotedWorkdir} && mkdir -p ${quotedWorkdir} && cp -a "$tmp"/. ${quotedWorkdir}/; then`,
+      `      :`,
+      `    else`,
+      `      checkout_status=$?`,
+      `      printf 'Repository checkout copy failed for %s branch %s.\\n' ${quotedRepoUrl} ${quotedBranch} > ${quotedCheckoutErrorPath}`,
+      `    fi`,
       `  else`,
       `    printf 'Repository checkout failed for %s branch %s. See /tmp/crabyard-git-clone.log.\\n' ${quotedRepoUrl} ${quotedBranch} > ${quotedCheckoutErrorPath}`,
       `    cat /tmp/crabyard-git-clone.log >> ${quotedCheckoutErrorPath} || true`,
+      `    checkout_status=70`,
       `  fi`,
       `  rm -rf "$tmp"`,
       "fi",
-      `if [ ! -d ${quotedWorkdir}/.git ]; then`,
+      `if [ "$checkout_status" -eq 0 ] && [ ! -d ${quotedWorkdir}/.git ]; then`,
       `  if [ ! -s ${quotedCheckoutErrorPath} ]; then`,
       `    printf 'Repository checkout failed for %s branch %s.\\n' ${quotedRepoUrl} ${quotedBranch} > ${quotedCheckoutErrorPath}`,
       `  fi`,
-      `  cat ${quotedCheckoutErrorPath}`,
-      `  exit 70`,
+      `  checkout_status=70`,
       `fi`,
-      `rm -f ${quotedCheckoutErrorPath}`,
-      `cd ${quotedWorkdir}`,
-      `git config --global --add safe.directory ${quotedWorkdir} || true`,
-      "git remote set-url origin " + quotedRepoUrl + " || true",
-      "git_with_github_auth fetch --depth 1 origin " + quotedBranch,
-      "git checkout -B " + quotedBranch + " FETCH_HEAD",
-      `git rev-parse --verify HEAD >/dev/null`,
-      `test "$(git rev-parse --abbrev-ref HEAD)" = ${quotedBranch}`,
-      `test "$(git config --get remote.origin.url)" = ${quotedRepoUrl}`,
+      `if [ "$checkout_status" -eq 0 ]; then`,
+      `  rm -f ${quotedCheckoutErrorPath}`,
+      `  cd ${quotedWorkdir} || checkout_status=$?`,
+      `fi`,
+      `if [ "$checkout_status" -eq 0 ]; then git config --global --add safe.directory ${quotedWorkdir} || true; fi`,
+      `if [ "$checkout_status" -eq 0 ]; then git remote set-url origin ${quotedRepoUrl} || true; fi`,
+      `if [ "$checkout_status" -eq 0 ]; then git_with_github_auth fetch --depth 1 origin ${quotedBranch} || checkout_status=$?; fi`,
+      `if [ "$checkout_status" -eq 0 ]; then git checkout -B ${quotedBranch} FETCH_HEAD || checkout_status=$?; fi`,
+      `if [ "$checkout_status" -eq 0 ]; then git rev-parse --verify HEAD >/dev/null || checkout_status=$?; fi`,
+      `if [ "$checkout_status" -eq 0 ]; then test "$(git rev-parse --abbrev-ref HEAD)" = ${quotedBranch} || checkout_status=$?; fi`,
+      `if [ "$checkout_status" -eq 0 ]; then test "$(git config --get remote.origin.url)" = ${quotedRepoUrl} || checkout_status=$?; fi`,
       quotedPrompt
-        ? `printf '%s\n' ${quotedPrompt} > .crabyard-initial-prompt.txt`
-        : "rm -f .crabyard-initial-prompt.txt",
+        ? `if [ "$checkout_status" -eq 0 ]; then printf '%s\n' ${quotedPrompt} > .crabyard-initial-prompt.txt || checkout_status=$?; fi`
+        : `if [ "$checkout_status" -eq 0 ]; then rm -f .crabyard-initial-prompt.txt || checkout_status=$?; fi`,
+      `if [ "$checkout_status" -eq 0 ]; then`,
+      `  printf '\\nCRABYARD_CHECKOUT_OK\\n'`,
+      `else`,
+      `  if [ -s ${quotedCheckoutErrorPath} ]; then cat ${quotedCheckoutErrorPath}; fi`,
+      `  printf '\\nCRABYARD_CHECKOUT_FAILED %s\\n' "$checkout_status"`,
+      `fi`,
     ].join("\n"),
     { timeout: 120_000, env: githubEnv },
   );
-  if (!result.success) {
+  const checkoutMarker = result.stdout.trim().split(/\r?\n/).at(-1);
+  if (!result.success || checkoutMarker !== "CRABYARD_CHECKOUT_OK") {
     throw new Error(
       clean(
         [result.stdout, result.stderr].filter(Boolean).join("\n") || "repository checkout failed",
