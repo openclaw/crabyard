@@ -3101,7 +3101,7 @@ async function createSandboxTerminalSession(
     return await sandbox.createSession({
       id: terminalSessionId,
       env: sandboxSessionEnv(env, session),
-      cwd: "/workspace",
+      cwd: "/",
       commandTimeoutMs: 60 * 60 * 1000,
     });
   } catch (error) {
