@@ -3100,7 +3100,7 @@ async function ensureSandboxDefaultSession(
   try {
     return await sandbox.createSession({
       id: terminalSessionId,
-      cwd: "/",
+      cwd: "/tmp",
     });
   } catch (error) {
     if (!String(error).toLowerCase().includes("already exists")) throw error;
