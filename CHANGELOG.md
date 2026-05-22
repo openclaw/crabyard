@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Start each Cloudflare Sandbox Codex session with a fresh sandbox/terminal lease so recycled session IDs do not attach to stale shells.
 - Keep failed Codex session cleanup from leaving stale focused terminals behind, and make Sandbox checkout failures non-fatal with visible diagnostics.
 - Auto-continue to GitHub OAuth for unauthenticated app loads when GitHub login is available.
 - Normalize interactive Codex commands so `--yolo` cannot be stored or launched as `--yolosandbox`.

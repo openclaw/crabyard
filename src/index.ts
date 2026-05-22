@@ -1705,9 +1705,8 @@ async function writeTerminalClipboardFile(
   }
   const mediaType = clean(rawMediaType || "application/octet-stream", 120);
   const name = safeClipboardFilename(rawName, mediaType);
-  const sandboxId =
-    session.leaseId.slice(sandboxLeasePrefix.length) || sandboxIdForSession(session.id);
-  const sandbox = getSandbox(env.SANDBOX, sandboxId);
+  const lease = sandboxLeaseInfo(session);
+  const sandbox = getSandbox(env.SANDBOX, lease.sandboxId);
   const directory = `${sandboxWorkdir(session.id)}/.crabyard/clipboard`;
   const path = `${directory}/${Date.now()}-${crypto.randomUUID().slice(0, 8)}-${name}`;
   await sandbox.mkdir(directory, { recursive: true });
@@ -1912,10 +1911,9 @@ async function openInteractiveTerminalUpstream(
 ): Promise<TerminalUpstream> {
   const now = Date.now();
   if (session.leaseId?.startsWith(sandboxLeasePrefix) && env.SANDBOX) {
-    const sandboxId =
-      session.leaseId?.slice(sandboxLeasePrefix.length) || sandboxIdForSession(session.id);
-    const sandbox = getSandbox(env.SANDBOX, sandboxId);
-    const terminalSession = await sandbox.getSession(sandboxTerminalSessionId(session.id));
+    const lease = sandboxLeaseInfo(session);
+    const sandbox = getSandbox(env.SANDBOX, lease.sandboxId);
+    const terminalSession = await sandbox.getSession(lease.terminalSessionId);
     const upstreamResponse = await terminalSession.terminal(request, {
       cols,
       rows,
@@ -2274,10 +2272,9 @@ async function interactiveSandboxTerminal(
   canSendLeft?: () => Promise<boolean>,
 ): Promise<Response> {
   if (!env.SANDBOX) throw serviceUnavailable("Sandbox binding is not configured");
-  const sandboxId =
-    session.leaseId?.slice(sandboxLeasePrefix.length) || sandboxIdForSession(session.id);
-  const sandbox = getSandbox(env.SANDBOX, sandboxId);
-  const terminalSession = await sandbox.getSession(sandboxTerminalSessionId(session.id));
+  const lease = sandboxLeaseInfo(session);
+  const sandbox = getSandbox(env.SANDBOX, lease.sandboxId);
+  const terminalSession = await sandbox.getSession(lease.terminalSessionId);
   const upstreamResponse = await terminalSession.terminal(request, {
     cols: terminalSize(request, "cols", 120),
     rows: terminalSize(request, "rows", 34),
@@ -2631,16 +2628,15 @@ async function provisionWithSandbox(
     return failedProvision("OPENAI_API_KEY is not configured for Cloudflare Sandbox Codex");
   }
 
-  const sandboxId = sandboxIdForSession(session.id);
+  const lease = newSandboxLease(session.id);
   const workdir = sandboxWorkdir(session.id);
-  const terminalSessionId = sandboxTerminalSessionId(session.id);
-  const sandbox = getSandbox(env.SANDBOX, sandboxId);
+  const sandbox = getSandbox(env.SANDBOX, lease.sandboxId);
   try {
     await sandbox.mkdir(workdir, { recursive: true });
     await prepareSandboxWorkspace(sandbox, session, workdir);
     await writeSandboxStartupScript(sandbox, session, workdir);
     await sandbox.createSession({
-      id: terminalSessionId,
+      id: lease.terminalSessionId,
       cwd: workdir,
       env: sandboxSessionEnv(env, session),
       commandTimeoutMs: 60 * 60 * 1000,
@@ -2652,7 +2648,7 @@ async function provisionWithSandbox(
 
   return {
     status: "ready",
-    leaseId: `${sandboxLeasePrefix}${sandboxId}`,
+    leaseId: sandboxLeaseId(lease),
     attachUrl: `/api/interactive-sessions/${encodeURIComponent(session.id)}/pty`,
     vncUrl: null,
     message: `Cloudflare Sandbox ready for ${session.repo}`,
@@ -4844,8 +4840,40 @@ function sandboxIdForSession(id: string): string {
   return clean(`crabyard-${id}`.toLowerCase().replace(/[^a-z0-9_-]/g, "-"), 63);
 }
 
-function sandboxTerminalSessionId(id: string): string {
-  return clean(`terminal-${id}`.toLowerCase().replace(/[^a-z0-9_-]/g, "-"), 80);
+function newSandboxLease(id: string): { sandboxId: string; terminalSessionId: string } {
+  const suffix = crypto.randomUUID().slice(0, 8).toLowerCase();
+  const base = sandboxIdForSession(id);
+  const sandboxId = `${base.slice(0, 63 - suffix.length - 1)}-${suffix}`;
+  return {
+    sandboxId,
+    terminalSessionId: sandboxTerminalSessionId(id, suffix),
+  };
+}
+
+function sandboxLeaseId(lease: { sandboxId: string; terminalSessionId: string }): string {
+  return `${sandboxLeasePrefix}${lease.sandboxId}:${lease.terminalSessionId}`;
+}
+
+function sandboxLeaseInfo(
+  session: Pick<InteractiveSession | InteractiveProvisionRequest, "id"> & {
+    leaseId?: string | null;
+  },
+): { sandboxId: string; terminalSessionId: string } {
+  const rawLease = "leaseId" in session ? session.leaseId : null;
+  const raw = rawLease?.startsWith(sandboxLeasePrefix)
+    ? rawLease.slice(sandboxLeasePrefix.length)
+    : "";
+  const [sandboxId, terminalSessionId] = raw.split(":");
+  return {
+    sandboxId: clean(sandboxId, 80) || sandboxIdForSession(session.id),
+    terminalSessionId: clean(terminalSessionId, 100) || sandboxTerminalSessionId(session.id),
+  };
+}
+
+function sandboxTerminalSessionId(id: string, suffix?: string): string {
+  const base = clean(`terminal-${id}`.toLowerCase().replace(/[^a-z0-9_-]/g, "-"), 80);
+  if (!suffix) return base;
+  return `${base.slice(0, 80 - suffix.length - 1)}-${suffix}`;
 }
 
 function sandboxWorkdir(id: string): string {
