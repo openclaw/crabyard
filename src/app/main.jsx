@@ -543,6 +543,12 @@ function App() {
       body: { ids },
     });
     setState(result.state);
+    const removed = new Set(result.removedIds || []);
+    if (removed.has(focusedSessionIdRef.current)) {
+      setFocusedSessionId(null);
+      if (!sharedToken) setSessionUrl(null, { grid: true });
+    }
+    for (const id of removed) disposeTerminal(id);
     return result;
   }
 
@@ -1530,7 +1536,7 @@ function SessionTools({
         Grid
       </button>
       {deadCount ? (
-        <button class="danger" disabled={focused} onClick={cleanupDeadInteractiveSessions}>
+        <button class="danger" onClick={cleanupDeadInteractiveSessions}>
           Clean dead ({deadCount})
         </button>
       ) : null}
@@ -1612,7 +1618,7 @@ function SessionCell(props) {
       </header>
       <div class="session-terminal-wrap">
         <TerminalMount
-          key={session.id}
+          key={terminalMountKey(session)}
           session={session}
           focused={props.focused}
           drawerOpen={props.drawerOpen}
@@ -1624,6 +1630,11 @@ function SessionCell(props) {
       </footer>
     </article>
   );
+}
+
+function terminalMountKey(session) {
+  if (session.kind !== "interactive") return session.id;
+  return [session.id, session.command, session.leaseId || ""].join(":");
 }
 
 function isLocalInteractiveSession(session) {

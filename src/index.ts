@@ -2683,8 +2683,12 @@ async function prepareSandboxWorkspace(
       `if [ ! -d ${quotedWorkdir}/.git ]; then`,
       `  tmp="${workdir}.clone.$$"`,
       `  rm -rf "$tmp"`,
-      `  git_with_github_auth clone --depth 1 --branch ${quotedBranch} ${quotedRepoUrl} "$tmp" || git_with_github_auth clone --depth 1 ${quotedRepoUrl} "$tmp"`,
-      `  cp -a "$tmp"/. ${quotedWorkdir}/`,
+      `  if git_with_github_auth clone --depth 1 --branch ${quotedBranch} ${quotedRepoUrl} "$tmp" 2>/tmp/crabyard-git-clone.log || git_with_github_auth clone --depth 1 ${quotedRepoUrl} "$tmp" 2>>/tmp/crabyard-git-clone.log; then`,
+      `    cp -a "$tmp"/. ${quotedWorkdir}/`,
+      `  else`,
+      `    printf 'Repository checkout failed for %s branch %s. See /tmp/crabyard-git-clone.log.\\n' ${quotedRepoUrl} ${quotedBranch} > ${quotedWorkdir}/.crabyard-checkout-error.txt`,
+      `    cat /tmp/crabyard-git-clone.log >> ${quotedWorkdir}/.crabyard-checkout-error.txt || true`,
+      `  fi`,
       `  rm -rf "$tmp"`,
       "fi",
       `cd ${quotedWorkdir}`,
@@ -2721,6 +2725,12 @@ cd ${shellQuote(workdir)}
 printf '\\033[1;36mCrabyard %s\\033[0m %s on %s\\n' "$CRABYARD_SESSION_ID" "$CRABYARD_REPO" "$CRABYARD_BRANCH"
 if [ -s .crabyard-initial-prompt.txt ]; then
   printf '\\033[2mInitial prompt is saved in .crabyard-initial-prompt.txt\\033[0m\\n'
+fi
+if [ -s .crabyard-checkout-error.txt ]; then
+  printf '\\033[31mRepository checkout failed; Codex was not started.\\033[0m\\n'
+  cat .crabyard-checkout-error.txt
+  printf '\\n\\033[2mOpening a shell in the empty workspace so you can inspect/fix credentials.\\033[0m\\n'
+  exec /bin/bash -l
 fi
 if command -v npm >/dev/null 2>&1; then
   printf '\\033[2mUpdating Codex CLI to npm latest...\\033[0m\\n'

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Keep failed Codex session cleanup from leaving stale focused terminals behind, and make Sandbox checkout failures non-fatal with visible diagnostics.
 - Auto-continue to GitHub OAuth for unauthenticated app loads when GitHub login is available.
 - Normalize interactive Codex commands so `--yolo` cannot be stored or launched as `--yolosandbox`.
 - Pass encrypted per-session GitHub OAuth credentials into Cloudflare Sandbox Codex sessions so `gh` and git can push/open PRs as the signed-in user.
