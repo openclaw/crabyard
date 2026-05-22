@@ -2925,8 +2925,10 @@ if [ -z "\${CRABYARD_CODEX_AUTOSTART_CHECKED:-}" ]; then
   export CRABYARD_CODEX_AUTOSTART_CHECKED=1
   crabyard_autostart_marker="$HOME/.cache/crabyard/\${CRABYARD_SESSION_ID:-session}.codex-autostarted"
   mkdir -p "$HOME/.cache/crabyard" 2>/dev/null || true
-  if [ ! -e "$crabyard_autostart_marker" ] && [ ! -s "\${CRABYARD_CHECKOUT_ERROR:-}" ]; then
-    touch "$crabyard_autostart_marker" 2>/dev/null || true
+  if [ ! -e "$crabyard_autostart_marker" ]; then
+    if [ ! -s "\${CRABYARD_CHECKOUT_ERROR:-}" ]; then
+      touch "$crabyard_autostart_marker" 2>/dev/null || true
+    fi
     if [ -n "\${CRABYARD_COMMAND:-}" ]; then
       env -u BASH_ENV -u PROMPT_COMMAND /bin/bash -c "$CRABYARD_COMMAND"
     fi
