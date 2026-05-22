@@ -743,7 +743,7 @@ async function api(request: Request, env: RuntimeEnv): Promise<Response> {
   const user = await requireUser(request, env);
 
   if (request.method === "GET" && url.pathname === "/api/session") {
-    return json({ user, auth: authMethods(env, await hasSessionGitHubToken(request, env)) });
+    return json({ user, auth: authMethods(env) });
   }
 
   if (request.method === "GET" && url.pathname === "/api/state") {
@@ -1071,23 +1071,21 @@ async function readState(
 ): Promise<Record<string, unknown>> {
   await reconcileStalledRuns(env, Date.now());
   const db = database(env);
-  const [settings, allow, repos, cards, interactiveSessions, workflows, githubTokenAvailable] =
-    await Promise.all([
-      readSettings(env),
-      user.role === "owner"
-        ? db.selectFrom("allow_entries").select(["value", "role"]).orderBy("value").execute()
-        : Promise.resolve([]),
-      db.selectFrom("repos").select("repo").where("enabled", "=", 1).orderBy("repo").execute(),
-      readCards(env),
-      readInteractiveSessions(env, user),
-      user.role === "owner" ? readWorkflowSummaries(env) : Promise.resolve([]),
-      hasSessionGitHubToken(request, env),
-    ]);
+  const [settings, allow, repos, cards, interactiveSessions, workflows] = await Promise.all([
+    readSettings(env),
+    user.role === "owner"
+      ? db.selectFrom("allow_entries").select(["value", "role"]).orderBy("value").execute()
+      : Promise.resolve([]),
+    db.selectFrom("repos").select("repo").where("enabled", "=", 1).orderBy("repo").execute(),
+    readCards(env),
+    readInteractiveSessions(env, user),
+    user.role === "owner" ? readWorkflowSummaries(env) : Promise.resolve([]),
+  ]);
   const repoNames = sortRepos(repos.map((row) => row.repo));
 
   return {
     user,
-    auth: authMethods(env, githubTokenAvailable),
+    auth: authMethods(env),
     org: settings.org ?? "OpenClaw",
     cap: numberSetting(settings.cap, 20),
     retention: settings.retention ?? "30",
@@ -3956,10 +3954,6 @@ async function createSession(
   return cookie(sessionCookie, token, maxAgeSeconds);
 }
 
-async function hasSessionGitHubToken(request: Request, env: RuntimeEnv): Promise<boolean> {
-  return Boolean(await sessionGitHubToken(request, env));
-}
-
 async function sessionGitHubToken(request: Request, env: RuntimeEnv): Promise<string | undefined> {
   const token = cookies(request).get(sessionCookie);
   if (!token) return undefined;
@@ -4304,10 +4298,9 @@ function strongerRole(left: Role | null, right: Role): Role {
   return rank[right] > rank[left] ? right : left;
 }
 
-function authMethods(env: RuntimeEnv, githubWrite = false): Record<string, boolean> {
+function authMethods(env: RuntimeEnv): Record<string, boolean> {
   return {
     github: Boolean(env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET),
-    githubWrite,
     token: Boolean(env.CRABYARD_BOOTSTRAP_TOKEN),
   };
 }
