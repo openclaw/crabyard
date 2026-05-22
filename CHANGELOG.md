@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Auto-start the configured Codex command once when a new Cloudflare Sandbox shell opens, then return to bash after Codex exits.
 - Start Cloudflare Sandbox terminals with plain bash from the prepared workspace instead of a generated startup script.
 - Start each Cloudflare Sandbox Codex session with a fresh sandbox/terminal lease so recycled session IDs do not attach to stale shells.
 - Open Cloudflare Sandbox Codex sessions into a reusable shell with Codex pre-authenticated from the Worker OpenAI key instead of making Codex the terminal process.

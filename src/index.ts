@@ -2800,6 +2800,17 @@ if [ -z "\${CRABYARD_SHELL_BOOTSTRAPPED:-}" ]; then
     cd ${shellQuote(workdir)} 2>/dev/null || true
   fi
 fi
+if [ -z "\${CRABYARD_CODEX_AUTOSTART_CHECKED:-}" ]; then
+  export CRABYARD_CODEX_AUTOSTART_CHECKED=1
+  crabyard_autostart_marker="$HOME/.cache/crabyard/\${CRABYARD_SESSION_ID:-session}.codex-autostarted"
+  mkdir -p "$HOME/.cache/crabyard" 2>/dev/null || true
+  if [ ! -e "$crabyard_autostart_marker" ] && [ ! -s .crabyard-checkout-error.txt ]; then
+    touch "$crabyard_autostart_marker" 2>/dev/null || true
+    if [ -n "\${CRABYARD_COMMAND:-}" ]; then
+      sh -lc "$CRABYARD_COMMAND"
+    fi
+  fi
+fi
 EOF
 fi
 `,
@@ -5028,7 +5039,7 @@ function sandboxWorkdir(id: string): string {
 function sandboxBashrcMarker(
   session: Pick<InteractiveSession | InteractiveProvisionRequest, "id">,
 ): string {
-  return `# crabyard session ${session.id}`;
+  return `# crabyard session ${session.id} autostart-v1`;
 }
 
 function terminalSize(request: Request, name: "cols" | "rows", fallback: number): number {
