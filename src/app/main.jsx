@@ -41,7 +41,7 @@ const emptyState = {
   retention: "30",
   merge: "guarded",
 };
-const deadInteractiveStatuses = new Set(["stopped", "expired", "failed"]);
+const deadInteractiveStatuses = new Set(["stopped", "expired", "failed", "unavailable"]);
 
 function initialState(initialSessionLink) {
   if (!initialSessionLink.id) return emptyState;
@@ -513,6 +513,12 @@ function App() {
     const session = findInteractiveSession(id);
     const label = session ? `${session.repo} (${session.id})` : id;
     if (!window.confirm(`Clean up dead Codex session ${label}?`)) return null;
+    if (session?.routePlaceholder) {
+      removeInteractiveSession(id);
+      if (focusedSessionIdRef.current === id) setFocusedSessionId(null);
+      if (!sharedToken) setSessionUrl(null, { grid: true });
+      return { removedIds: [id] };
+    }
     return cleanupInteractiveSessions([id]);
   }
 
