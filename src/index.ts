@@ -298,7 +298,10 @@ type TerminalUpstream = {
   markConnected: () => Promise<void>;
 };
 
-type SandboxSessionTarget = Pick<ExecutionSession, "exec" | "gitCheckout" | "mkdir">;
+type SandboxSessionTarget = Pick<
+  CloudflareSandbox | ExecutionSession,
+  "exec" | "gitCheckout" | "mkdir" | "setEnvVars"
+>;
 
 type ClawFleetInstancePayload = {
   name?: string;
@@ -2658,13 +2661,7 @@ async function provisionWithSandbox(
   const sandbox = getSandbox(env.SANDBOX, lease.sandboxId);
   try {
     await sandbox.mkdir(workdir, { recursive: true });
-    const terminalSession = await createSandboxTerminalSession(
-      sandbox,
-      env,
-      session,
-      lease.terminalSessionId,
-    );
-    await setupSandboxTerminalSession(terminalSession, env, session, workdir);
+    await setupSandboxTerminalSession(sandbox, env, session, workdir);
   } catch (error) {
     const message = clean(error instanceof Error ? error.message : String(error), 240);
     return failedProvision(`Cloudflare Sandbox provision failed: ${message}`);
@@ -3030,8 +3027,14 @@ async function openSandboxTerminalResponse(
   };
   await ensureSandboxTerminalPrepared(sandbox, env, session, lease.terminalSessionId);
   const open = async () => {
-    const terminalSession = await sandbox.getSession(lease.terminalSessionId);
-    return terminalSession.terminal(request, options);
+    return (
+      sandbox as CloudflareSandbox & {
+        terminal(
+          request: Request,
+          options?: { cols: number; rows: number; shell: string },
+        ): Promise<Response>;
+      }
+    ).terminal(request, options);
   };
 
   try {
@@ -3053,14 +3056,12 @@ async function ensureSandboxTerminalPrepared(
 ): Promise<void> {
   const workdir = sandboxWorkdir(session.id);
   try {
-    const terminalSession = await sandbox.getSession(terminalSessionId);
-    if (await sandboxTerminalProfileExists(terminalSession, session, workdir)) return;
-    await prepareSandboxWorkspace(terminalSession, env, session, workdir);
-    await prepareSandboxCodexAuth(terminalSession, env, workdir);
-    await prepareSandboxRuntimeTools(terminalSession, session, workdir);
+    void terminalSessionId;
+    if (await sandboxTerminalProfileExists(sandbox, session, workdir)) return;
+    await setupSandboxTerminalSession(sandbox, env, session, workdir);
     return;
   } catch {
-    // Missing or terminated SDK session; recreate below.
+    // Missing or terminated default shell; recreate the sandbox below.
   }
   await recreateSandboxTerminalSession(sandbox, env, session, terminalSessionId);
 }
@@ -3091,25 +3092,6 @@ async function sandboxTerminalProfileExists(
   return result.success;
 }
 
-async function createSandboxTerminalSession(
-  sandbox: ReturnType<typeof getSandbox>,
-  env: RuntimeEnv,
-  session: InteractiveProvisionRequest | InteractiveSession,
-  terminalSessionId: string,
-): Promise<ExecutionSession> {
-  try {
-    return await sandbox.createSession({
-      id: terminalSessionId,
-      env: sandboxSessionEnv(env, session),
-      cwd: "/",
-      commandTimeoutMs: 60 * 60 * 1000,
-    });
-  } catch (error) {
-    if (!String(error).toLowerCase().includes("already exists")) throw error;
-    return sandbox.getSession(terminalSessionId);
-  }
-}
-
 async function setupSandboxTerminalSession(
   sandbox: SandboxSessionTarget,
   env: RuntimeEnv,
@@ -3117,6 +3099,7 @@ async function setupSandboxTerminalSession(
   workdir: string,
 ): Promise<void> {
   await sandbox.mkdir(workdir, { recursive: true });
+  await sandbox.setEnvVars(sandboxSessionEnv(env, session));
   await prepareSandboxWorkspace(sandbox, env, session, workdir);
   await prepareSandboxCodexAuth(sandbox, env, workdir);
   await prepareSandboxRuntimeTools(sandbox, session, workdir, sandboxGitHubTokenEnv(env, session));
@@ -3128,15 +3111,10 @@ async function recreateSandboxTerminalSession(
   session: InteractiveSession,
   terminalSessionId: string,
 ): Promise<void> {
-  await sandbox.deleteSession(terminalSessionId).catch(() => undefined);
+  void terminalSessionId;
+  await sandbox.destroy().catch(() => undefined);
   await sandbox.mkdir(sandboxWorkdir(session.id), { recursive: true });
-  const terminalSession = await createSandboxTerminalSession(
-    sandbox,
-    env,
-    session,
-    terminalSessionId,
-  );
-  await setupSandboxTerminalSession(terminalSession, env, session, sandboxWorkdir(session.id));
+  await setupSandboxTerminalSession(sandbox, env, session, sandboxWorkdir(session.id));
 }
 
 function sandboxSessionEnv(
@@ -5208,7 +5186,7 @@ function newSandboxLease(id: string): { sandboxId: string; terminalSessionId: st
   const sandboxId = `${base.slice(0, 63 - suffix.length - 1)}-${suffix}`;
   return {
     sandboxId,
-    terminalSessionId: sandboxTerminalSessionId(id, suffix),
+    terminalSessionId: sandboxDefaultSessionId(sandboxId),
   };
 }
 
@@ -5241,16 +5219,15 @@ function sandboxLeaseInfo(
     ? rawLease.slice(sandboxLeasePrefix.length)
     : "";
   const [sandboxId, terminalSessionId] = raw.split(":");
+  const fallbackSandboxId = clean(sandboxId, 80) || sandboxIdForSession(session.id);
   return {
-    sandboxId: clean(sandboxId, 80) || sandboxIdForSession(session.id),
-    terminalSessionId: clean(terminalSessionId, 100) || sandboxTerminalSessionId(session.id),
+    sandboxId: fallbackSandboxId,
+    terminalSessionId: clean(terminalSessionId, 100) || sandboxDefaultSessionId(fallbackSandboxId),
   };
 }
 
-function sandboxTerminalSessionId(id: string, suffix?: string): string {
-  const base = clean(`terminal-${id}`.toLowerCase().replace(/[^a-z0-9_-]/g, "-"), 80);
-  if (!suffix) return base;
-  return `${base.slice(0, 80 - suffix.length - 1)}-${suffix}`;
+function sandboxDefaultSessionId(sandboxId: string): string {
+  return `sandbox-${sandboxId}`;
 }
 
 function sandboxWorkdir(id: string): string {
