@@ -2947,13 +2947,38 @@ async function prepareSandboxRuntimeTools(
     `
 set -eu
 export CODEX_HOME="$HOME/.codex"
-if command -v npm >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1; then
-  timeout 45s npm install -g @openai/codex@latest >/tmp/crabyard-codex-install.log 2>&1 || true
+if ! command -v npm >/dev/null 2>&1; then
+  printf 'npm is required to install the latest Codex CLI.\\n' >/tmp/crabyard-codex-install.log
+  cat /tmp/crabyard-codex-install.log
+  exit 72
+fi
+if command -v timeout >/dev/null 2>&1; then
+  timeout 120s npm install -g @openai/codex@latest >/tmp/crabyard-codex-install.log 2>&1
+else
+  npm install -g @openai/codex@latest >/tmp/crabyard-codex-install.log 2>&1
+fi
+if ! command -v codex >/dev/null 2>&1; then
+  cat /tmp/crabyard-codex-install.log
+  exit 72
 fi
 if [ -n "\${GITHUB_TOKEN:-}" ]; then
   git config --global credential.helper '!f() { test "$1" = get && printf "username=x-access-token\\npassword=%s\\n" "$GITHUB_TOKEN"; }; f'
   git config --global user.name ${shellQuote(session.owner)}
   git config --global user.email ${shellQuote(`${session.owner}@users.noreply.github.com`)}
+  if ! command -v gh >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update >/tmp/crabyard-gh-install.log 2>&1
+    apt-get install -y --no-install-recommends ca-certificates curl gnupg >/tmp/crabyard-gh-install.log 2>&1
+    mkdir -p /etc/apt/keyrings
+    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      | dd of=/etc/apt/keyrings/githubcli-archive-keyring.gpg >/tmp/crabyard-gh-install.log 2>&1
+    chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+      > /etc/apt/sources.list.d/github-cli.list
+    apt-get update >/tmp/crabyard-gh-install.log 2>&1
+    apt-get install -y --no-install-recommends gh >/tmp/crabyard-gh-install.log 2>&1
+    rm -rf /var/lib/apt/lists/*
+  fi
   if command -v gh >/dev/null 2>&1; then
     gh auth setup-git -h github.com >/dev/null 2>&1 || true
   fi
@@ -3007,7 +3032,7 @@ EOF
 chmod +x ${shellQuote(terminalShell)}
 `,
     {
-      timeout: 120_000,
+      timeout: 300_000,
       env: commandEnv,
     },
   );
