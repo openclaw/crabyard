@@ -2663,7 +2663,6 @@ async function provisionWithSandbox(
       env,
       session,
       lease.terminalSessionId,
-      workdir,
     );
     await setupSandboxTerminalSession(terminalSession, env, session, workdir);
   } catch (error) {
@@ -3097,13 +3096,12 @@ async function createSandboxTerminalSession(
   env: RuntimeEnv,
   session: InteractiveProvisionRequest | InteractiveSession,
   terminalSessionId: string,
-  workdir: string,
 ): Promise<ExecutionSession> {
   try {
     return await sandbox.createSession({
       id: terminalSessionId,
       env: sandboxSessionEnv(env, session),
-      cwd: workdir,
+      cwd: "/workspace",
       commandTimeoutMs: 60 * 60 * 1000,
     });
   } catch (error) {
@@ -3137,7 +3135,6 @@ async function recreateSandboxTerminalSession(
     env,
     session,
     terminalSessionId,
-    sandboxWorkdir(session.id),
   );
   await setupSandboxTerminalSession(terminalSession, env, session, sandboxWorkdir(session.id));
 }
