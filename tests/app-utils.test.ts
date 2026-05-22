@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   isActiveRun,
+  interactiveCommand,
   linkedInteractiveSessionPlaceholder,
   optimisticInteractiveSession,
   sessionItems,
@@ -79,6 +80,17 @@ test("optimistic interactive sessions use runtime-specific pending copy", () => 
   assert.equal(session.runtime, "crabbox");
   assert.equal(session.lastEvent, "Requesting Crabbox...");
   assert.deepEqual(session.logs, ["Requesting Crabbox...", "Waiting for session id..."]);
+});
+
+test("interactive command defaults to yolo without sandbox suffix", () => {
+  const data = new FormData();
+  data.set("repo", "openclaw/openclaw");
+
+  const session = optimisticInteractiveSession(data, "steipete");
+
+  assert.equal(session.command, "codex --yolo");
+  assert.equal(interactiveCommand(" codex   --yolosandbox "), "codex --yolo");
+  assert.match(terminalText({ ...session, kind: "interactive" }), /^\$ codex --yolo\r\nrepo /);
 });
 
 test("linked session placeholders render a best-effort Codex card", () => {

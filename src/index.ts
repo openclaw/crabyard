@@ -1117,7 +1117,7 @@ async function createInteractiveSession(
   const runtime = oneOf(body.runtime, ["crabbox", "container"], "crabbox") as
     | "crabbox"
     | "container";
-  const command = clean(body.command, 240) || defaultInteractiveCommand;
+  const command = interactiveCommand(body.command);
   const prompt = clean(body.prompt, 4000);
   const owner = actor(user);
   const now = Date.now();
@@ -2564,7 +2564,7 @@ async function provisionInteractiveEndpoint(
   const runtime = oneOf(session.runtime, ["crabbox", "container"], "crabbox") as
     | "crabbox"
     | "container";
-  const command = clean(session.command, 240) || defaultInteractiveCommand;
+  const command = interactiveCommand(session.command);
   const prompt = clean(session.prompt, 4000);
   const owner = clean(session.owner, 240);
   const githubToken = clean(session.githubToken, 4000) || undefined;
@@ -2716,6 +2716,7 @@ export CRABYARD_SESSION_ID=${shellQuote(session.id)}
 export CRABYARD_REPO=${shellQuote(session.repo)}
 export CRABYARD_BRANCH=${shellQuote(session.branch)}
 export CRABYARD_RUNTIME=${shellQuote(session.runtime)}
+export CRABYARD_COMMAND=${shellQuote(session.command)}
 cd ${shellQuote(workdir)}
 printf '\\033[1;36mCrabyard %s\\033[0m %s on %s\\n' "$CRABYARD_SESSION_ID" "$CRABYARD_REPO" "$CRABYARD_BRANCH"
 if [ -s .crabyard-initial-prompt.txt ]; then
@@ -2765,11 +2766,12 @@ else
   printf 'OPENAI_API_KEY is not configured for this session.\\n'
 fi
 printf '\\033[2J\\033[H'
-if command -v ${shellFirstWord(session.command)} >/dev/null 2>&1; then
-  exec ${session.command}
+CRABYARD_COMMAND_BIN="\${CRABYARD_COMMAND%%[[:space:]]*}"
+if command -v "$CRABYARD_COMMAND_BIN" >/dev/null 2>&1; then
+  exec bash -lc "$CRABYARD_COMMAND"
 fi
 if command -v codex >/dev/null 2>&1; then
-  exec ${defaultInteractiveCommand}
+  exec bash -lc ${shellQuote(defaultInteractiveCommand)}
 fi
 printf 'Codex CLI is not installed in this image. Opening bash.\\n'
 exec /bin/bash -l
@@ -4873,8 +4875,13 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\"'\"'")}'`;
 }
 
-function shellFirstWord(command: string): string {
-  return shellQuote(command.trim().split(/\s+/, 1)[0] || "codex");
+function interactiveCommand(value: unknown): string {
+  return (
+    clean(value, 240)
+      .replace(/\s+/g, " ")
+      .replace(/--yolosandbox\b/g, "--yolo")
+      .trim() || defaultInteractiveCommand
+  );
 }
 
 function directPortUrl(base: string, port: unknown, path: string): string | null {

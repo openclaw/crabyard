@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Normalize interactive Codex commands so `--yolo` cannot be stored or launched as `--yolosandbox`.
 - Pass encrypted per-session GitHub OAuth credentials into Cloudflare Sandbox Codex sessions so `gh` and git can push/open PRs as the signed-in user.
 - Render `/sessions/:id` links as best-effort Codex session cards before authenticated or shared data loads.
 - Show a clean provisioning placeholder for new Codex sessions and dispose stale terminal mounts when switching sessions.

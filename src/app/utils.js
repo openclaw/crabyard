@@ -212,7 +212,7 @@ export function optimisticInteractiveSession(data, owner) {
     repo,
     branch,
     runtime,
-    command: String(data.get("command") || "codex --yolo"),
+    command: interactiveCommand(data.get("command")),
     prompt: String(data.get("prompt") || ""),
     owner: owner || "local",
     status: "provisioning",
@@ -237,6 +237,13 @@ export function optimisticInteractiveSession(data, owner) {
     logs: [`Requesting ${runtimeLabel}...`, "Waiting for session id..."],
     title: `${repo} · ${branch}`,
   };
+}
+
+export function interactiveCommand(value) {
+  return String(value || "codex --yolo")
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/--yolosandbox\b/g, "--yolo");
 }
 
 export function linkedInteractiveSessionPlaceholder(id, options = {}) {
