@@ -90,7 +90,8 @@ test("interactive command defaults to yolo without sandbox suffix", () => {
 
   assert.equal(session.command, "codex --yolo");
   assert.equal(interactiveCommand(" codex   --yolosandbox "), "codex --yolo");
-  assert.match(terminalText({ ...session, kind: "interactive" }), /^\$ codex --yolo\r\nrepo /);
+  assert.match(terminalText({ ...session, kind: "interactive" }), /^Preparing Codex\r\n/);
+  assert.doesNotMatch(terminalText({ ...session, kind: "interactive" }), /Requesting/);
 });
 
 test("linked session placeholders render a best-effort Codex card", () => {
@@ -98,6 +99,6 @@ test("linked session placeholders render a best-effort Codex card", () => {
 
   assert.equal(session.routePlaceholder, true);
   assert.equal(isActiveRun(session), true);
-  assert.match(terminalText(session), /\$ codex attach IS-101/);
-  assert.match(terminalText(session), /Loading Codex session/);
+  assert.match(terminalText(session), /^Preparing Codex\r\n/);
+  assert.match(terminalText(session), /Loading session/);
 });

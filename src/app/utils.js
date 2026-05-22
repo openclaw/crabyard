@@ -93,6 +93,14 @@ export function isActiveRun(session) {
   return ["queued", "leasing", "running"].includes(session.run?.status);
 }
 
+export function isProvisioningInteractiveSession(session) {
+  return (
+    session?.kind === "interactive" &&
+    ((session.routePlaceholder && session.status === "loading") ||
+      ["provisioning", "pending_adapter"].includes(session.status))
+  );
+}
+
 export function runtimeCapabilityLabel(session) {
   const capabilities = runCapabilities(session);
   if (capabilities.vnc) return "VNC eligible";
@@ -131,6 +139,15 @@ function sessionSortTime(session) {
 
 export function terminalText(session) {
   if (session.kind === "interactive") {
+    if (isProvisioningInteractiveSession(session)) {
+      const detail =
+        session.status === "pending_adapter"
+          ? "Runtime adapter pending."
+          : session.routePlaceholder
+            ? "Loading session..."
+            : "Provisioning sandbox...";
+      return [`Preparing Codex`, session.repo || "Codex session", detail].join("\r\n") + "\r\n";
+    }
     if (session.routePlaceholder) {
       const logs =
         Array.isArray(session.logs) && session.logs.length

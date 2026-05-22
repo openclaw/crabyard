@@ -8,6 +8,7 @@ import {
   hasRunCapability,
   issueNumber,
   isActiveRun,
+  isProvisioningInteractiveSession,
   lanes,
   linkedInteractiveSessionPlaceholder,
   optimisticInteractiveSession,
@@ -1828,6 +1829,8 @@ function TerminalMount({ session, focused, drawerOpen }) {
   const hideTimer = useRef(null);
   const mountedSessionId = useRef(null);
   const [visible, setVisible] = useState(focused);
+  const provisioning = isProvisioningInteractiveSession(session);
+  const localSession = isLocalInteractiveSession(session);
 
   useLayoutEffect(
     () => () => {
@@ -1888,7 +1891,7 @@ function TerminalMount({ session, focused, drawerOpen }) {
   useLayoutEffect(() => {
     const mount = ref.current;
     if (!mount) return;
-    const active = drawerOpen && visible && !isLocalInteractiveSession(session);
+    const active = drawerOpen && visible && !localSession && !provisioning;
     if (mountedSessionId.current && mountedSessionId.current !== session.id) {
       disposeTerminal(mountedSessionId.current);
       mountedSessionId.current = null;
@@ -1899,32 +1902,61 @@ function TerminalMount({ session, focused, drawerOpen }) {
         disposeTerminal(mountedSessionId.current);
         mountedSessionId.current = null;
       }
+      mount.innerHTML = "";
       return;
     }
     mountedSessionId.current = session.id;
     void mountTerminal(session, mount, { focused });
-  }, [session, focused, drawerOpen, visible]);
+  }, [session, focused, drawerOpen, visible, provisioning, localSession]);
 
-  const terminalActive = drawerOpen && visible && !isLocalInteractiveSession(session);
+  const terminalActive = drawerOpen && visible && !localSession && !provisioning;
 
   return (
-    <div
-      ref={ref}
-      class="ghostty-terminal"
-      data-session-id={terminalActive ? session.id : ""}
-      aria-label={`${session.id} terminal`}
-    >
-      {isLocalInteractiveSession(session) ? (
-        <div class="terminal-provisioning">
-          <strong>Provisioning workspace</strong>
-          <span>{session.repo}</span>
-          <small>{session.lastEvent || "Waiting for session id..."}</small>
-        </div>
+    <div class="ghostty-terminal" aria-label={`${session.id} terminal`}>
+      <div
+        ref={ref}
+        class="terminal-surface"
+        data-session-id={terminalActive ? session.id : ""}
+        hidden={!terminalActive}
+      />
+      {provisioning ? (
+        <TerminalProvisioning session={session} />
+      ) : localSession ? (
+        <TerminalLocalStatus session={session} />
       ) : !visible ? (
         <div class="terminal-placeholder">Terminal paused offscreen</div>
       ) : null}
     </div>
   );
+}
+
+function TerminalProvisioning({ session }) {
+  return (
+    <div class="terminal-provisioning">
+      <span class="terminal-progress" aria-hidden="true" />
+      <strong>{session.routePlaceholder ? "Loading Codex" : "Preparing Codex"}</strong>
+      <span>{session.repo || "Codex session"}</span>
+      <small>{terminalProvisioningDetail(session)}</small>
+    </div>
+  );
+}
+
+function TerminalLocalStatus({ session }) {
+  return (
+    <div class={`terminal-provisioning ${session.status === "failed" ? "failed" : ""}`}>
+      <span class="terminal-progress" aria-hidden="true" />
+      <strong>{humanStatus(session.status || "Pending")}</strong>
+      <span>{session.repo || "Codex session"}</span>
+      <small>{session.lastEvent || session.logs?.at?.(-1) || "Waiting for session id"}</small>
+    </div>
+  );
+}
+
+function terminalProvisioningDetail(session) {
+  if (session.status === "pending_adapter") return "Runtime adapter pending";
+  if (isLocalInteractiveSession(session)) return session.lastEvent || "Requesting workspace";
+  if (session.routePlaceholder) return "Opening shared session";
+  return "Provisioning sandbox and terminal";
 }
 
 function AdminDrawer(props) {
