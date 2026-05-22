@@ -1413,6 +1413,7 @@ function SessionsDrawer(props) {
   const focused = focusedCandidate && isSessionGridItem(focusedCandidate) ? focusedCandidate : null;
   const gridItems = props.allSessionItems.filter(isSessionGridItem);
   const sessions = focused ? [focused] : orderedSessionItems(gridItems, props.sessionLayout);
+  const singleSession = sessions.length === 1;
   useEffect(() => {
     if (!open) return;
     disposeMissingTerminals(new Set(sessions.map((session) => session.id)));
@@ -1435,7 +1436,7 @@ function SessionsDrawer(props) {
           <section
             class={`session-grid ${props.sessionLayout.columns !== "auto" && !focused ? "fixed-columns" : ""} ${
               props.sessionLayout.edit && !focused ? "layout-editing" : ""
-            } ${focused ? "focus-mode" : ""}`}
+            } ${focused ? "focus-mode" : ""} ${singleSession ? "single-session" : ""}`}
             style={{
               "--session-columns":
                 props.sessionLayout.columns !== "auto" && !focused
