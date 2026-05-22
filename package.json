@@ -9,7 +9,13 @@
     "test": "node --test --experimental-strip-types tests/*.test.ts",
     "lint": "oxlint --ignore-pattern node_modules --ignore-pattern src/generated.ts .",
     "format": "oxfmt --check .",
-    "check": "node scripts/generate-assets.mjs && tsgo --noEmit && oxlint --ignore-pattern node_modules --ignore-pattern src/generated.ts . && oxfmt --check ."
+    "check": "node scripts/generate-assets.mjs && tsgo --noEmit && oxlint --ignore-pattern node_modules --ignore-pattern src/generated.ts . && oxfmt --check .",
+    "check:changed": "pnpm run check",
+    "test:changed": "pnpm run test",
+    "crabbox:hydrate": "crabbox actions hydrate",
+    "crabbox:run": "crabbox run",
+    "crabbox:stop": "crabbox stop",
+    "crabbox:warmup": "crabbox warmup"
   },
   "dependencies": {
     "@cloudflare/sandbox": "0.10.1",
