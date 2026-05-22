@@ -2660,12 +2660,7 @@ async function provisionWithSandbox(
   const workdir = sandboxWorkdir(session.id);
   const sandbox = getSandbox(env.SANDBOX, lease.sandboxId);
   try {
-    const terminalSession = await ensureSandboxDefaultSession(
-      sandbox,
-      env,
-      session,
-      lease.terminalSessionId,
-    );
+    const terminalSession = await ensureSandboxDefaultSession(sandbox, lease.terminalSessionId);
     await terminalSession.mkdir(workdir, { recursive: true });
     await setupSandboxTerminalSession(terminalSession, env, session, workdir);
   } catch (error) {
@@ -3062,12 +3057,7 @@ async function ensureSandboxTerminalPrepared(
 ): Promise<void> {
   const workdir = sandboxWorkdir(session.id);
   try {
-    const terminalSession = await ensureSandboxDefaultSession(
-      sandbox,
-      env,
-      session,
-      terminalSessionId,
-    );
+    const terminalSession = await ensureSandboxDefaultSession(sandbox, terminalSessionId);
     if (await sandboxTerminalProfileExists(terminalSession, session, workdir)) return;
     await setupSandboxTerminalSession(terminalSession, env, session, workdir);
     return;
@@ -3105,16 +3095,12 @@ async function sandboxTerminalProfileExists(
 
 async function ensureSandboxDefaultSession(
   sandbox: ReturnType<typeof getSandbox>,
-  env: RuntimeEnv,
-  session: InteractiveProvisionRequest | InteractiveSession,
   terminalSessionId: string,
 ): Promise<ExecutionSession> {
   try {
     return await sandbox.createSession({
       id: terminalSessionId,
-      env: sandboxSessionEnv(env, session),
       cwd: "/",
-      commandTimeoutMs: 60 * 60 * 1000,
     });
   } catch (error) {
     if (!String(error).toLowerCase().includes("already exists")) throw error;
@@ -3142,12 +3128,7 @@ async function recreateSandboxTerminalSession(
   terminalSessionId: string,
 ): Promise<void> {
   await sandbox.destroy().catch(() => undefined);
-  const terminalSession = await ensureSandboxDefaultSession(
-    sandbox,
-    env,
-    session,
-    terminalSessionId,
-  );
+  const terminalSession = await ensureSandboxDefaultSession(sandbox, terminalSessionId);
   await terminalSession.mkdir(sandboxWorkdir(session.id), { recursive: true });
   await setupSandboxTerminalSession(terminalSession, env, session, sandboxWorkdir(session.id));
 }
