@@ -1685,6 +1685,9 @@ function InteractiveSessionActions(props) {
   const shareLabel = session.shareMode === "link_read" ? "Unshare" : "Share";
   const multiplayerAction = session.multiplayerMode ? "disable_multiplayer" : "enable_multiplayer";
   const multiplayerLabel = session.multiplayerMode ? "Solo input" : "Multiplayer";
+  const multiplayerTooltip = session.multiplayerMode
+    ? 'Multiplayer attribution is on. Submitted prompts are prepended with a <sender id="" name=""/> tag for the model.'
+    : 'Turn on multiplayer attribution. Submitted prompts will be prepended with a <sender id="" name=""/> tag for the model.';
   const handleShare = () => {
     if (shareAction === "disable_share")
       return props.interactiveSessionAction(session.id, shareAction);
@@ -1695,7 +1698,11 @@ function InteractiveSessionActions(props) {
       <>
         {canManage ? <button onClick={handleShare}>{shareLabel}</button> : null}
         {canManage ? (
-          <button onClick={() => props.interactiveSessionAction(session.id, multiplayerAction)}>
+          <button
+            aria-pressed={session.multiplayerMode}
+            title={multiplayerTooltip}
+            onClick={() => props.interactiveSessionAction(session.id, multiplayerAction)}
+          >
             {multiplayerLabel}
           </button>
         ) : null}
@@ -1718,7 +1725,11 @@ function InteractiveSessionActions(props) {
     <>
       {canManage ? <button onClick={handleShare}>{shareLabel}</button> : null}
       {canManage ? (
-        <button onClick={() => props.interactiveSessionAction(session.id, multiplayerAction)}>
+        <button
+          aria-pressed={session.multiplayerMode}
+          title={multiplayerTooltip}
+          onClick={() => props.interactiveSessionAction(session.id, multiplayerAction)}
+        >
           {multiplayerLabel}
         </button>
       ) : null}

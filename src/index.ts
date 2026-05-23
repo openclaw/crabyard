@@ -291,6 +291,7 @@ type TerminalHubSubscription = {
   markClosing: (reason: string) => void;
   viewCheck: ReturnType<typeof setInterval> | null;
   inputLine: string;
+  inputControlSequence: "escape" | "csi" | "osc" | "oscEscape" | null;
   cols: number;
   rows: number;
 };
@@ -1703,9 +1704,16 @@ async function interactiveTerminalHub(
             return;
           }
           if (subscription.upstream.readyState === WebSocket.OPEN) {
-            subscription.upstream.send(
-              await multiplayerTerminalInputPayload(env, subscription, user, frame.payload),
+            const inputs = await multiplayerTerminalInputPayloads(
+              env,
+              subscription,
+              user,
+              frame.payload,
             );
+            for (const [index, input] of inputs.entries()) {
+              if (index > 0) await sleep(index === inputs.length - 1 ? 80 : 2);
+              subscription.upstream.send(input);
+            }
           }
           return;
         }
@@ -1901,6 +1909,7 @@ async function subscribeTerminalHubSession(
       markClosing,
       viewCheck,
       inputLine: "",
+      inputControlSequence: null,
       cols,
       rows,
     });
@@ -2607,15 +2616,15 @@ function interactiveTerminalHeaders(
   return headers;
 }
 
-async function multiplayerTerminalInputPayload(
+async function multiplayerTerminalInputPayloads(
   env: RuntimeEnv,
   subscription: TerminalHubSubscription,
   user: User | null,
   payload: Uint8Array,
-): Promise<Uint8Array> {
+): Promise<Uint8Array[]> {
   const submitted = terminalSubmittedLine(subscription, payload);
   if (!user || !submitted || !submitted.text.trim()) {
-    return payload;
+    return [payload];
   }
   const enabled = await readInteractiveSessionMultiplayerMode(
     env,
@@ -2623,12 +2632,13 @@ async function multiplayerTerminalInputPayload(
     subscription.session.multiplayerMode,
   );
   if (!enabled) {
-    return payload;
+    return [payload];
   }
 
-  const label = terminalActorLabel(actor(user));
-  const attributed = `${label}:\n${submitted.text}${submitted.eol}`;
-  return encoder.encode(submitted.replaceCurrentLine ? `\x15${attributed}` : attributed);
+  const sender = terminalSenderTag(user);
+  const attributed = `${sender} ${terminalSingleLineInput(submitted.text)}${submitted.eol}`;
+  const chunks = submitted.replaceCurrentLine ? ["\x15", ...attributed] : [...attributed];
+  return chunks.map((chunk) => encoder.encode(chunk));
 }
 
 async function readInteractiveSessionMultiplayerMode(
@@ -2673,6 +2683,17 @@ function terminalSubmittedLine(
 
 function updateTerminalInputLine(subscription: TerminalHubSubscription, text: string): void {
   for (const char of text) {
+    if (subscription.inputControlSequence) {
+      subscription.inputControlSequence = nextTerminalControlSequenceState(
+        subscription.inputControlSequence,
+        char,
+      );
+      continue;
+    }
+    if (char === "\x1b") {
+      subscription.inputControlSequence = "escape";
+      continue;
+    }
     if (char === "\r" || char === "\n" || char === "\x03" || char === "\x15") {
       subscription.inputLine = "";
     } else if (char === "\x7f" || char === "\b") {
@@ -2681,6 +2702,28 @@ function updateTerminalInputLine(subscription: TerminalHubSubscription, text: st
       subscription.inputLine = `${subscription.inputLine}${char}`.slice(-4000);
     }
   }
+}
+
+function nextTerminalControlSequenceState(
+  state: "escape" | "csi" | "osc" | "oscEscape",
+  char: string,
+): "escape" | "csi" | "osc" | "oscEscape" | null {
+  if (state === "escape") {
+    if (char === "[") return "csi";
+    if (char === "]") return "osc";
+    return null;
+  }
+  if (state === "csi") {
+    const code = char.charCodeAt(0);
+    return code >= 0x40 && code <= 0x7e ? null : "csi";
+  }
+  if (state === "osc") {
+    if (char === "\x07") return null;
+    if (char === "\x1b") return "oscEscape";
+    return "osc";
+  }
+  if (char === "\\") return null;
+  return char === "\x1b" ? "oscEscape" : "osc";
 }
 
 function isPlainTerminalText(value: string): boolean {
@@ -2692,17 +2735,31 @@ function isPlainTerminalText(value: string): boolean {
   return true;
 }
 
-function terminalActorLabel(value: string): string {
-  const label = [...value]
+function terminalSingleLineInput(value: string): string {
+  return value.replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(/\n/g, "\\n");
+}
+
+function terminalSenderTag(user: User): string {
+  const id = terminalXmlAttribute(user.subject);
+  const name = terminalXmlAttribute(user.name ?? actor(user));
+  return `<sender id="${id}" name="${name}"/>`;
+}
+
+function terminalXmlAttribute(value: string): string {
+  return [...value]
     .map((char) => {
       const code = char.charCodeAt(0);
-      return code < 32 || code === 127 || char === ":" ? " " : char;
+      return code < 32 || code === 127 ? " " : char;
     })
     .join("")
     .replace(/\s+/g, " ")
     .trim()
-    .slice(0, 80);
-  return label || "user";
+    .slice(0, 120)
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 function bridgeWebSockets(
@@ -5898,6 +5955,10 @@ function securityHeaders(contentType: string, cache = true): HeadersInit {
     "referrer-policy": "no-referrer",
     "cache-control": cache ? "public, max-age=300" : "no-store",
   };
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function base64Bytes(value: string): Uint8Array {
