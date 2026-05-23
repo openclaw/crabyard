@@ -12,7 +12,11 @@ import {
   type Generated,
   type QueryResult,
 } from "kysely";
-import { getSandbox, type Sandbox as CloudflareSandbox } from "@cloudflare/sandbox";
+import {
+  getSandbox,
+  type Sandbox as CloudflareSandbox,
+  type SessionTerminatedError as CloudflareSandboxSessionError,
+} from "@cloudflare/sandbox";
 import {
   TerminalMessageType,
   decodeTerminalFrame,
@@ -3328,7 +3332,7 @@ async function setupSandboxTerminalSession(
   terminalSessionId: string,
 ): Promise<void> {
   const sessionEnv = sandboxSessionEnv(env, session);
-  const setup = await createFreshSandboxSession(
+  const setup = await createSandboxSession(
     sandbox,
     sandboxSetupSessionId(session.id),
     "/workspace",
@@ -5550,11 +5554,62 @@ function compactEnvVars(env: Record<string, string | undefined>): Record<string,
   );
 }
 
-function isSandboxSessionAlreadyExists(error: unknown): boolean {
+type SandboxErrorDetails = {
+  code?: CloudflareSandboxSessionError["code"];
+  context?: unknown;
+};
+
+function isSandboxSessionAlreadyExists(error: unknown, sessionId: string): boolean {
+  return hasSandboxSessionErrorCode(error, "SESSION_ALREADY_EXISTS", sessionId);
+}
+
+function isSandboxSessionAlreadyGone(error: unknown, sessionId: string): boolean {
   return (
-    error instanceof Error &&
-    (error.name === "SessionAlreadyExistsError" || /session .*already exists/i.test(error.message))
+    hasSandboxSessionErrorCode(error, "SESSION_DESTROYED", sessionId) ||
+    hasSandboxSessionErrorCode(error, "SESSION_TERMINATED", sessionId) ||
+    hasSandboxSessionErrorCode(error, "FILE_NOT_FOUND", sessionId)
   );
+}
+
+function hasSandboxSessionErrorCode(
+  error: unknown,
+  code: CloudflareSandboxSessionError["code"],
+  sessionId: string,
+): boolean {
+  const response = sandboxErrorResponse(error);
+  if (response?.code !== code) return false;
+  const responseSessionId = sandboxErrorSessionId(response);
+  return responseSessionId === null || responseSessionId === sessionId;
+}
+
+function sandboxErrorResponse(error: unknown): SandboxErrorDetails | null {
+  if (!error || typeof error !== "object") return null;
+  const response = (error as { errorResponse?: unknown }).errorResponse;
+  if (response && typeof response === "object") {
+    return response as SandboxErrorDetails;
+  }
+  return error as SandboxErrorDetails;
+}
+
+function sandboxErrorSessionId(response: SandboxErrorDetails): string | null {
+  const context = response.context;
+  if (!context || typeof context !== "object") return null;
+  const sessionId = (context as { sessionId?: unknown }).sessionId;
+  return typeof sessionId === "string" ? sessionId : null;
+}
+
+async function createNewSandboxSession(
+  sandbox: CloudflareSandbox,
+  id: string,
+  cwd: string,
+  env: Record<string, string | undefined>,
+): Promise<SandboxExecutionSession> {
+  return sandbox.createSession({
+    id,
+    cwd,
+    env: compactEnvVars(env),
+    commandTimeoutMs: 300_000,
+  });
 }
 
 async function createSandboxSession(
@@ -5564,14 +5619,9 @@ async function createSandboxSession(
   env: Record<string, string | undefined>,
 ): Promise<SandboxExecutionSession> {
   try {
-    return await sandbox.createSession({
-      id,
-      cwd,
-      env: compactEnvVars(env),
-      commandTimeoutMs: 300_000,
-    });
+    return await createNewSandboxSession(sandbox, id, cwd, env);
   } catch (error) {
-    if (!isSandboxSessionAlreadyExists(error)) throw error;
+    if (!isSandboxSessionAlreadyExists(error, id)) throw error;
     return sandbox.getSession(id);
   }
 }
@@ -5584,10 +5634,15 @@ async function createFreshSandboxSession(
 ): Promise<SandboxExecutionSession> {
   try {
     await sandbox.deleteSession(id);
-  } catch {
-    // The SDK returns an error when the session is absent or already terminated.
+  } catch (error) {
+    if (!isSandboxSessionAlreadyGone(error, id)) throw error;
   }
-  return createSandboxSession(sandbox, id, cwd, env);
+  try {
+    return await createNewSandboxSession(sandbox, id, cwd, env);
+  } catch (error) {
+    if (!isSandboxSessionAlreadyExists(error, id)) throw error;
+    throw new Error(`fresh sandbox session ${id} still exists after delete`, { cause: error });
+  }
 }
 
 async function runSandboxSetupStep(step: string, operation: () => Promise<unknown>): Promise<void> {
