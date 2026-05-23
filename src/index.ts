@@ -2397,6 +2397,7 @@ const tools = [
   "unzip", "zip", "sqlite3", "shellcheck", "crabbox"
 ];
 const workdir = process.env.CRABYARD_WORKDIR || "";
+const repo = process.env.CRABYARD_REPO || "";
 const home = process.env.HOME || "/root";
 function run(command, args) {
   try {
@@ -2437,11 +2438,22 @@ const checkout = {
   remote: workdir ? run("git", ["-C", workdir, "config", "--get", "remote.origin.url"]).replace(/\\/\\/[^/@]+@/g, "//<redacted>@") || null : null
 };
 const codexHome = process.env.CODEX_HOME || home + "/.codex";
+const repoPermissionsRaw = repo ? run("gh", ["api", "repos/" + repo, "--jq", ".permissions"]) : "";
+let repoPermissions = null;
+try {
+  repoPermissions = repoPermissionsRaw ? JSON.parse(repoPermissionsRaw) : null;
+} catch {}
 const diagnostics = {
   available: true,
   imageVersion: process.env.CRABYARD_IMAGE_VERSION || null,
   cwd: process.cwd(),
   checkout,
+  github: {
+    credentialFilePresent: fs.existsSync(home + "/.config/crabyard/github-credential"),
+    ghAuthenticated: Boolean(run("gh", ["api", "user", "--jq", ".login"])),
+    repo,
+    permissions: repoPermissions
+  },
   codex: {
     home: codexHome,
     configPresent: fs.existsSync(codexHome + "/config.toml"),
@@ -2453,7 +2465,7 @@ const diagnostics = {
 console.log(JSON.stringify(diagnostics));
 NODE
 `,
-    { timeout: 20_000, env: { CRABYARD_WORKDIR: workdir } },
+    { timeout: 20_000, env: { CRABYARD_WORKDIR: workdir, CRABYARD_REPO: session.repo } },
   );
   if (!result.success) {
     return {
