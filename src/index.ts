@@ -915,7 +915,7 @@ async function tokenLogin(request: Request, env: RuntimeEnv): Promise<Response> 
     teams: [],
   };
   await upsertUser(env, user, now);
-  const cookieHeader = await createSession(env, user.subject, now);
+  const cookieHeader = await createSession(env, request, user.subject, now);
   return json({ user, auth: authMethods(env) }, { headers: { "set-cookie": cookieHeader } });
 }
 
@@ -934,7 +934,7 @@ async function githubLogin(request: Request, env: RuntimeEnv): Promise<Response>
   target.searchParams.set("state", state);
 
   return redirect(target.toString(), {
-    "set-cookie": cookie(oauthStateCookie, state, 600),
+    "set-cookie": cookie(request, oauthStateCookie, state, 600),
   });
 }
 
@@ -1001,6 +1001,7 @@ async function githubCallback(request: Request, env: RuntimeEnv): Promise<Respon
   await upsertUser(env, authorized, now);
   const session = await createSession(
     env,
+    request,
     authorized.subject,
     now,
     githubSessionSeconds,
@@ -1017,7 +1018,7 @@ async function logout(request: Request, env: RuntimeEnv): Promise<Response> {
       .where("token_hash", "=", await sha256(token))
       .execute();
   }
-  return json({ ok: true }, { headers: { "set-cookie": cookie(sessionCookie, "", 0) } });
+  return json({ ok: true }, { headers: { "set-cookie": cookie(request, sessionCookie, "", 0) } });
 }
 
 async function requireUser(request: Request, env: RuntimeEnv): Promise<User> {
@@ -4483,6 +4484,7 @@ async function upsertUser(env: RuntimeEnv, user: User, now: number): Promise<voi
 
 async function createSession(
   env: RuntimeEnv,
+  request: Request,
   subject: string,
   now: number,
   maxAgeSeconds = bootstrapSessionSeconds,
@@ -4504,7 +4506,7 @@ async function createSession(
       github_token_ciphertext: githubTokenCiphertext,
     })
     .execute();
-  return cookie(sessionCookie, token, maxAgeSeconds);
+  return cookie(request, sessionCookie, token, maxAgeSeconds);
 }
 
 async function sessionGitHubToken(request: Request, env: RuntimeEnv): Promise<string | undefined> {
@@ -5247,8 +5249,9 @@ function cookies(request: Request): Map<string, string> {
   return result;
 }
 
-function cookie(name: string, value: string, maxAge: number): string {
-  return `${name}=${encodeURIComponent(value)}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${maxAge}`;
+function cookie(request: Request, name: string, value: string, maxAge: number): string {
+  const secure = new URL(request.url).protocol === "https:" ? "; Secure" : "";
+  return `${name}=${encodeURIComponent(value)}; HttpOnly${secure}; SameSite=Lax; Path=/; Max-Age=${maxAge}`;
 }
 
 async function sha256(value: string): Promise<string> {
