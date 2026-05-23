@@ -41,6 +41,16 @@ export function terminalSubmittedLine(
     return { text: line, eol: text, replaceCurrentLine: true };
   }
 
+  if (state.line && !state.controlSequence) {
+    const eol = text.endsWith("\r") ? "\r" : text.endsWith("\n") ? "\n" : "";
+    const line = eol ? text.slice(0, -1) : "";
+    if (eol && isPlainTerminalText(line)) {
+      const submitted = `${state.line}${line}`;
+      state.line = "";
+      return { text: submitted, eol, replaceCurrentLine: true };
+    }
+  }
+
   if (!state.line) {
     const eol = text.endsWith("\r") ? "\r" : text.endsWith("\n") ? "\n" : "";
     const line = eol ? text.slice(0, -1) : "";

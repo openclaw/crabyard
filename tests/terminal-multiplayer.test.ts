@@ -43,6 +43,29 @@ test("multiplayer input tracks interleaved writers on the shared session line", 
   );
 });
 
+test("multiplayer input attributes a final text fragment batched with enter", () => {
+  const state = newTerminalInputState();
+
+  assert.deepEqual(
+    multiplayerTerminalInputPayloadsForMode(state, user, encoder.encode("hel"), true),
+    [encoder.encode("hel")],
+  );
+
+  assert.equal(
+    text(multiplayerTerminalInputPayloadsForMode(state, user, encoder.encode("lo\r"), true)),
+    '\x15<sender name="Admin 1"/> hello\r',
+  );
+});
+
+test("multiplayer input does not attribute text while a control sequence is pending", () => {
+  const state = newTerminalInputState();
+  state.line = "hello";
+  state.controlSequence = "csi";
+
+  const payload = encoder.encode("D\r");
+  assert.deepEqual(multiplayerTerminalInputPayloadsForMode(state, user, payload, true), [payload]);
+});
+
 test("multiplayer disabled forwards input unchanged", () => {
   const state = newTerminalInputState();
   const typed = encoder.encode("hello ");
