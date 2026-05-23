@@ -3230,8 +3230,8 @@ async function openSandboxTerminalResponse(
     shell: sandboxTerminalShellPath(session.id),
   };
   await ensureSandboxTerminalPrepared(sandbox, env, session, lease.terminalSessionId);
-  let terminalSession = await sandbox.getSession(lease.terminalSessionId);
   const open = async () => {
+    const terminalSession = await sandbox.getSession(lease.terminalSessionId);
     return terminalSession.terminal(request, options);
   };
 
@@ -3243,7 +3243,6 @@ async function openSandboxTerminalResponse(
   }
 
   await recreateSandboxTerminalSession(sandbox, env, session, lease.terminalSessionId);
-  terminalSession = await sandbox.getSession(lease.terminalSessionId);
   return open();
 }
 
