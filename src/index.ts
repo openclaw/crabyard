@@ -2783,9 +2783,8 @@ function terminalSingleLineInput(value: string): string {
 }
 
 function terminalSenderTag(user: User): string {
-  const id = terminalXmlAttribute(user.subject);
   const name = terminalXmlAttribute(user.name ?? actor(user));
-  return `<sender id="${id}" name="${name}"/>`;
+  return `<sender name="${name}"/>`;
 }
 
 function terminalXmlAttribute(value: string): string {
