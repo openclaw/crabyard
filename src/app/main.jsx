@@ -1789,8 +1789,8 @@ function InteractiveSessionActions(props) {
   const multiplayerAction = session.multiplayerMode ? "disable_multiplayer" : "enable_multiplayer";
   const multiplayerLabel = session.multiplayerMode ? "Solo input" : "Multiplayer";
   const multiplayerTooltip = session.multiplayerMode
-    ? 'Multiplayer attribution is on. Submitted prompts are prepended with an <s n=""/> tag for the model.'
-    : 'Turn on multiplayer attribution. Submitted prompts will be prepended with an <s n=""/> tag for the model.';
+    ? 'Multiplayer attribution is on. Submitted prompts are prepended with a <sender name=""/> tag for the model.'
+    : 'Turn on multiplayer attribution. Submitted prompts will be prepended with a <sender name=""/> tag for the model.';
   const handleShare = () => {
     if (shareAction === "disable_share")
       return props.interactiveSessionAction(session.id, shareAction);
