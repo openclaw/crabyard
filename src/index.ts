@@ -67,6 +67,7 @@ type RuntimeEnv = Env & {
   CRABYARD_CLAWFLEET_URL?: string;
   CRABYARD_CLAWFLEET_TOKEN?: string;
   CRABYARD_CLAWFLEET_PUBLIC_URL?: string;
+  CRABYARD_SSH_GATEWAY_TOKEN?: string;
   CRABYARD_TOKEN_ENCRYPTION_KEY?: string;
   OPENAI_API_KEY?: string;
   OPENAI_BASE_URL?: string;
@@ -489,6 +490,28 @@ type AuditEventTable = {
   created_at: number;
 };
 
+type SshKeyTable = {
+  fingerprint: string;
+  subject: string;
+  public_key: string;
+  label: string | null;
+  github_token_ciphertext: string | null;
+  created_at: number;
+  last_used_at: number;
+  revoked_at: number | null;
+};
+
+type SshLinkCodeTable = {
+  code_hash: string;
+  fingerprint: string;
+  public_key: string;
+  label: string | null;
+  remote_ip: string | null;
+  expires_at: number;
+  consumed_at: number | null;
+  created_at: number;
+};
+
 type Database = {
   settings: SettingsTable;
   allow_entries: AllowEntryTable;
@@ -502,6 +525,8 @@ type Database = {
   repo_workflows: RepoWorkflowTable;
   events: EventTable;
   audit_events: AuditEventTable;
+  ssh_keys: SshKeyTable;
+  ssh_link_codes: SshLinkCodeTable;
 };
 
 type CompilableQuery = {
@@ -513,8 +538,10 @@ const decoder = new TextDecoder();
 const terminalInputStates = new Map<string, TerminalInputState>();
 const sessionCookie = "crabyard_session";
 const oauthStateCookie = "crabyard_oauth_state";
+const sshLinkCookie = "crabyard_ssh_link";
 const bootstrapSessionSeconds = 60 * 60;
 const githubSessionSeconds = 60 * 15;
+const sshLinkSeconds = 5 * 60;
 const terminalClipboardMaxBytes = 10 * 1024 * 1024;
 const lanes = ["Todo", "Running", "Human Review", "Done"];
 const preferredRepo = "openclaw/openclaw";
@@ -700,6 +727,11 @@ export default {
         return await githubCallback(request, env);
       }
 
+      const sshLinkMatch = url.pathname.match(/^\/ssh\/link\/([^/]+)$/);
+      if (sshLinkMatch && (request.method === "GET" || request.method === "POST")) {
+        return await sshLink(request, env, decodeURIComponent(sshLinkMatch[1] ?? ""));
+      }
+
       if (url.pathname.startsWith("/api/")) {
         return await api(request, env);
       }
@@ -750,6 +782,31 @@ async function api(request: Request, env: RuntimeEnv): Promise<Response> {
 
   if (request.method === "POST" && url.pathname === "/api/provision/interactive") {
     return json(await provisionInteractiveEndpoint(request, env));
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/ssh/auth") {
+    return json(await sshAuth(request, env));
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/ssh/state") {
+    return json(await sshState(request, env));
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/ssh/interactive-sessions") {
+    return json(await sshCreateInteractiveSession(request, env), { status: 201 });
+  }
+
+  const sshInteractivePtyMatch = url.pathname.match(
+    /^\/api\/ssh\/interactive-sessions\/([^/]+)\/pty$/,
+  );
+  if (request.method === "GET" && sshInteractivePtyMatch) {
+    const user = await requireSshGatewayUser(request, env);
+    return interactiveSessionPty(
+      request,
+      env,
+      user,
+      decodeURIComponent(sshInteractivePtyMatch[1] ?? ""),
+    );
   }
 
   const sharedSessionMatch = url.pathname.match(/^\/api\/shared-sessions\/([^/]+)$/);
@@ -1057,7 +1114,139 @@ async function githubCallback(request: Request, env: RuntimeEnv): Promise<Respon
     githubSessionSeconds,
     tokenBody.access_token,
   );
-  return redirect("/app", { "set-cookie": session });
+  const pendingSshCode = cookies(request).get(sshLinkCookie);
+  return redirect(pendingSshCode ? `/ssh/link/${encodeURIComponent(pendingSshCode)}` : "/app", {
+    "set-cookie": session,
+  });
+}
+
+async function sshLink(request: Request, env: RuntimeEnv, code: string): Promise<Response> {
+  const codeHash = await sha256(code);
+  const row = await database(env)
+    .selectFrom("ssh_link_codes")
+    .select(["fingerprint", "label", "expires_at", "consumed_at"])
+    .where("code_hash", "=", codeHash)
+    .executeTakeFirst();
+  if (!row || row.consumed_at || row.expires_at <= Date.now()) {
+    return text(
+      "SSH link expired. Re-run ssh crabyard to get a fresh link.\n",
+      "text/plain",
+      {},
+      410,
+    );
+  }
+
+  if (request.method === "POST") {
+    const user = await requireUser(request, env);
+    if (!user.subject.startsWith("github:")) {
+      throw forbidden("Sign in with GitHub before linking an SSH key");
+    }
+    const githubToken = await sessionGitHubToken(request, env);
+    if (!githubToken) {
+      throw forbidden("Sign in with GitHub again before linking an SSH key");
+    }
+    await consumeSshLink(env, user, code, Date.now(), githubToken);
+    return redirect("/app?ssh=linked", {
+      "set-cookie": cookie(request, sshLinkCookie, "", 0),
+    });
+  }
+
+  const user = await optionalUser(request, env);
+  if (user) {
+    if (!user.subject.startsWith("github:")) {
+      return text(
+        "Sign in with GitHub before linking an SSH key.\n",
+        "text/plain; charset=utf-8",
+        { "cache-control": "no-store" },
+        403,
+      );
+    }
+    return text(
+      sshLinkConfirmHtml(code, row.fingerprint, row.label, actor(user)),
+      "text/html; charset=utf-8",
+      { "cache-control": "no-store" },
+    );
+  }
+
+  return redirect("/login/github", {
+    "set-cookie": cookie(request, sshLinkCookie, code, sshLinkSeconds),
+  });
+}
+
+async function consumeSshLink(
+  env: RuntimeEnv,
+  user: User,
+  code: string,
+  now: number,
+  githubToken: string,
+): Promise<void> {
+  const codeHash = await sha256(code);
+  const db = database(env);
+  const row = await db
+    .selectFrom("ssh_link_codes")
+    .select(["fingerprint", "public_key", "label", "expires_at", "consumed_at"])
+    .where("code_hash", "=", codeHash)
+    .executeTakeFirst();
+  if (!row || row.consumed_at || row.expires_at <= now) {
+    throw badRequest("SSH link expired");
+  }
+  const githubTokenCiphertext = await sealSecret(env, githubToken);
+  await executeBatch(env, [
+    db
+      .insertInto("ssh_keys")
+      .values({
+        fingerprint: row.fingerprint,
+        subject: user.subject,
+        public_key: row.public_key,
+        label: row.label,
+        github_token_ciphertext: githubTokenCiphertext,
+        created_at: now,
+        last_used_at: now,
+        revoked_at: null,
+      })
+      .onConflict((oc) =>
+        oc.column("fingerprint").doUpdateSet({
+          subject: user.subject,
+          public_key: row.public_key,
+          label: row.label,
+          github_token_ciphertext: githubTokenCiphertext,
+          last_used_at: now,
+          revoked_at: null,
+        }),
+      ),
+    db.updateTable("ssh_link_codes").set({ consumed_at: now }).where("code_hash", "=", codeHash),
+  ]);
+  await audit(env, user, `ssh key linked ${row.fingerprint}`, now);
+}
+
+function sshLinkConfirmHtml(
+  code: string,
+  fingerprint: string,
+  label: string | null,
+  user: string,
+): string {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Link SSH key - Crabyard</title>
+  <style>
+    body{font:16px/1.45 system-ui,sans-serif;margin:3rem;max-width:44rem;color:#111;background:#fff}
+    code{background:#f3f4f6;padding:.15rem .35rem;border-radius:.25rem;word-break:break-all}
+    button{font:inherit;padding:.65rem 1rem;border:0;border-radius:.4rem;background:#111;color:#fff}
+  </style>
+</head>
+<body>
+  <h1>Link SSH key</h1>
+  <p>Signed in as <strong>${htmlEscape(user)}</strong>.</p>
+  <p>Fingerprint: <code>${htmlEscape(fingerprint)}</code></p>
+  ${label ? `<p>Label: <code>${htmlEscape(label)}</code></p>` : ""}
+  <form method="post" action="/ssh/link/${encodeURIComponent(code)}">
+    <button type="submit">Link this key</button>
+  </form>
+</body>
+</html>`;
 }
 
 async function logout(request: Request, env: RuntimeEnv): Promise<Response> {
@@ -1141,6 +1330,227 @@ async function optionalUser(request: Request, env: RuntimeEnv): Promise<User | n
   }
 }
 
+async function sshAuth(request: Request, env: RuntimeEnv): Promise<Record<string, unknown>> {
+  requireSshGateway(request, env);
+  const body = await readJson<{
+    fingerprint?: string;
+    publicKey?: string;
+    label?: string;
+    remoteIp?: string;
+    createLink?: boolean;
+  }>(request);
+  const fingerprint = clean(body.fingerprint, 120);
+  const publicKey = clean(body.publicKey, 4000);
+  const label = clean(body.label, 200) || null;
+  const remoteIp = clean(body.remoteIp, 120) || null;
+  if (!fingerprint || !publicKey) throw badRequest("fingerprint and publicKey are required");
+
+  const now = Date.now();
+  if (!body.createLink) {
+    const user = await readSshUser(env, fingerprint);
+    if (!user) return { authorized: false };
+    await database(env)
+      .updateTable("ssh_keys")
+      .set({ last_used_at: now })
+      .where("fingerprint", "=", fingerprint)
+      .execute();
+    return { authorized: true, user };
+  }
+
+  const db = database(env);
+  await db.deleteFrom("ssh_link_codes").where("expires_at", "<=", now).execute();
+  if (remoteIp) {
+    const recent =
+      (
+        await sql<{ count: number }>`
+        SELECT count(*) AS count
+        FROM ssh_link_codes
+        WHERE remote_ip = ${remoteIp}
+          AND consumed_at IS NULL
+          AND created_at > ${now - 10 * 60 * 1000}
+      `.execute(db)
+      ).rows[0]?.count ?? 0;
+    if (recent >= 20) throw tooManyRequests("too many SSH link attempts; retry later");
+  }
+  await db
+    .deleteFrom("ssh_link_codes")
+    .where("fingerprint", "=", fingerprint)
+    .where("consumed_at", "is", null)
+    .execute();
+
+  const code = crypto.randomUUID() + crypto.randomUUID();
+  await db
+    .insertInto("ssh_link_codes")
+    .values({
+      code_hash: await sha256(code),
+      fingerprint,
+      public_key: publicKey,
+      label,
+      remote_ip: remoteIp,
+      expires_at: now + sshLinkSeconds * 1000,
+      consumed_at: null,
+      created_at: now,
+    })
+    .execute();
+  const linkUrl = new URL(request.url);
+  linkUrl.pathname = `/ssh/link/${encodeURIComponent(code)}`;
+  linkUrl.search = "";
+  return {
+    authorized: false,
+    linkUrl: linkUrl.toString(),
+    expiresAt: now + sshLinkSeconds * 1000,
+  };
+}
+
+async function sshState(request: Request, env: RuntimeEnv): Promise<Record<string, unknown>> {
+  const user = await requireSshGatewayUser(request, env);
+  const state = await readState(request, env, user);
+  return { ...state, ssh: true };
+}
+
+async function sshCreateInteractiveSession(
+  request: Request,
+  env: RuntimeEnv,
+): Promise<{ session: InteractiveSession }> {
+  const user = await requireSshGatewayUser(request, env);
+  requireRole(user, "maintainer");
+  const githubToken = await sshKeyGitHubToken(request, env);
+  if (user.subject.startsWith("github:") && !githubToken) {
+    throw forbidden("GitHub credentials are not connected to this SSH key; re-link the key");
+  }
+  const body = await readJson<{
+    repo?: string;
+    branch?: string;
+    runtime?: string;
+    command?: string;
+    prompt?: string;
+  }>(request);
+  if (!normalizeRepo(body.repo)) {
+    const repo = await database(env)
+      .selectFrom("repos")
+      .select("repo")
+      .where("enabled", "=", 1)
+      .orderBy("repo")
+      .executeTakeFirst();
+    body.repo = repo?.repo ?? preferredRepo;
+  }
+  const result = await createInteractiveSessionFromInput(env, user, body, githubToken);
+  await audit(env, user, `ssh interactive session created ${result.session.id}`, Date.now());
+  return result;
+}
+
+async function requireSshGatewayUser(request: Request, env: RuntimeEnv): Promise<User> {
+  requireSshGateway(request, env);
+  const fingerprint = sshFingerprint(request);
+  if (!fingerprint) throw badRequest("fingerprint is required");
+  const user = await readSshUser(env, fingerprint);
+  if (!user) throw unauthorized();
+  return user;
+}
+
+function requireSshGateway(request: Request, env: RuntimeEnv): void {
+  if (!env.CRABYARD_SSH_GATEWAY_TOKEN) throw serviceUnavailable("SSH gateway is not configured");
+  const authorization = request.headers.get("authorization") ?? "";
+  if (authorization !== `Bearer ${env.CRABYARD_SSH_GATEWAY_TOKEN}`) throw unauthorized();
+}
+
+async function readSshUser(env: RuntimeEnv, fingerprint: string): Promise<User | null> {
+  const row = await database(env)
+    .selectFrom("ssh_keys as k")
+    .innerJoin("users as u", "u.subject", "k.subject")
+    .select([
+      "u.subject",
+      "u.login",
+      "u.email",
+      "u.name",
+      "u.role",
+      "u.allowed",
+      "u.teams",
+      "k.github_token_ciphertext",
+    ])
+    .where("k.fingerprint", "=", fingerprint)
+    .where("k.revoked_at", "is", null)
+    .executeTakeFirst();
+  if (!row) return null;
+  const user: User = {
+    subject: row.subject,
+    login: row.login,
+    email: row.email,
+    name: row.name,
+    role: row.role,
+    allowed: row.allowed === 1,
+    teams: parseJson(row.teams, []),
+  };
+  if (user.subject.startsWith("github:")) {
+    if (!row.github_token_ciphertext) {
+      throw forbidden("SSH key needs to be re-linked with GitHub");
+    }
+    const githubToken = await openSecret(env, row.github_token_ciphertext);
+    if (!githubToken) throw forbidden("SSH key GitHub credentials are unavailable");
+    const freshUser = await refreshGitHubUser(env, githubToken).catch(() => null);
+    if (!freshUser || freshUser.subject !== user.subject) {
+      throw forbidden("GitHub membership refresh failed");
+    }
+    const authorized = await authorize(env, freshUser);
+    if (!authorized.allowed) throw forbidden("user is no longer allowlisted");
+    await upsertUser(env, authorized, Date.now());
+    return authorized;
+  }
+  const authorized = await authorize(env, user);
+  if (!authorized.allowed) throw forbidden("user is no longer allowlisted");
+  return authorized;
+}
+
+async function sshKeyGitHubToken(request: Request, env: RuntimeEnv): Promise<string | undefined> {
+  requireSshGateway(request, env);
+  const fingerprint = sshFingerprint(request);
+  if (!fingerprint) throw badRequest("fingerprint is required");
+  const user = await requireSshGatewayUser(request, env);
+  return sshKeyGitHubTokenByFingerprint(env, fingerprint, user.subject);
+}
+
+async function sshGatewayKeyGitHubToken(
+  request: Request,
+  env: RuntimeEnv,
+  user: User,
+): Promise<string | undefined> {
+  if (!isSshGatewayRequest(request, env)) return undefined;
+  const fingerprint = sshFingerprint(request);
+  return fingerprint ? sshKeyGitHubTokenByFingerprint(env, fingerprint, user.subject) : undefined;
+}
+
+async function sshKeyGitHubTokenByFingerprint(
+  env: RuntimeEnv,
+  fingerprint: string,
+  subject: string,
+): Promise<string | undefined> {
+  const row = await database(env)
+    .selectFrom("ssh_keys")
+    .select("github_token_ciphertext")
+    .where("fingerprint", "=", fingerprint)
+    .where("subject", "=", subject)
+    .where("revoked_at", "is", null)
+    .executeTakeFirst();
+  return row?.github_token_ciphertext
+    ? ((await openSecret(env, row.github_token_ciphertext)) ?? undefined)
+    : undefined;
+}
+
+function isSshGatewayRequest(request: Request, env: RuntimeEnv): boolean {
+  return Boolean(
+    env.CRABYARD_SSH_GATEWAY_TOKEN &&
+    request.headers.get("authorization") === `Bearer ${env.CRABYARD_SSH_GATEWAY_TOKEN}`,
+  );
+}
+
+function sshFingerprint(request: Request): string {
+  const url = new URL(request.url);
+  return (
+    clean(request.headers.get("x-crabyard-ssh-fingerprint"), 120) ||
+    clean(url.searchParams.get("fingerprint"), 120)
+  );
+}
+
 async function readState(
   request: Request,
   env: RuntimeEnv,
@@ -1187,6 +1597,25 @@ async function createInteractiveSession(
     command?: string;
     prompt?: string;
   }>(request);
+  const githubToken = await sessionGitHubToken(request, env);
+  if (user.subject.startsWith("github:") && !githubToken) {
+    throw forbidden("GitHub PR credentials are not connected; sign in with GitHub again");
+  }
+  return createInteractiveSessionFromInput(env, user, body, githubToken);
+}
+
+async function createInteractiveSessionFromInput(
+  env: RuntimeEnv,
+  user: User,
+  body: {
+    repo?: string;
+    branch?: string;
+    runtime?: string;
+    command?: string;
+    prompt?: string;
+  },
+  githubToken?: string,
+): Promise<{ session: InteractiveSession }> {
   const repo = normalizeRepo(body.repo);
   if (!repo) throw badRequest("repo is required");
   await requireRepo(env, repo);
@@ -1198,10 +1627,6 @@ async function createInteractiveSession(
   const prompt = clean(body.prompt, 4000);
   const owner = actor(user);
   const now = Date.now();
-  const githubToken = await sessionGitHubToken(request, env);
-  if (user.subject.startsWith("github:") && !githubToken) {
-    throw forbidden("GitHub PR credentials are not connected; sign in with GitHub again");
-  }
   const db = database(env);
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const id = await nextInteractiveSessionId(env);
@@ -2993,7 +3418,7 @@ async function ensureCurrentSandboxLease(
     throw serviceUnavailable("session owner must reconnect to refresh Cloudflare Sandbox lease");
   }
   const githubToken = user?.subject.startsWith("github:")
-    ? await sessionGitHubToken(request, env)
+    ? (session.githubToken ?? (await sessionGitHubToken(request, env)))
     : undefined;
   if (user.subject.startsWith("github:") && !githubToken) {
     throw forbidden("GitHub PR credentials are not connected; sign in with GitHub again");
@@ -4714,7 +5139,9 @@ async function sandboxSessionWithGitHubToken(
 ): Promise<InteractiveSession & { githubToken?: string }> {
   if (!user?.subject.startsWith("github:")) return session;
   if (actor(user) !== session.owner) return session;
-  const githubToken = await sessionGitHubToken(request, env);
+  const githubToken =
+    (await sessionGitHubToken(request, env)) ??
+    (await sshGatewayKeyGitHubToken(request, env, user));
   return githubToken ? { ...session, githubToken } : session;
 }
 
@@ -5522,6 +5949,14 @@ function clean(value: unknown, max: number): string {
     .slice(0, max);
 }
 
+function htmlEscape(value: unknown): string {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
 function decodeHeaderValue(value: string | null): string {
   if (!value) return "";
   try {
@@ -5980,6 +6415,10 @@ function serviceUnavailable(message: string): Error {
 
 function badRequest(message: string): Error {
   return Object.assign(new Error(message), { status: 400 });
+}
+
+function tooManyRequests(message: string): Error {
+  return Object.assign(new Error(message), { status: 429 });
 }
 
 function notFound(message: string): Error {

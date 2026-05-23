@@ -1,2 +1,7 @@
 *
 !Dockerfile
+!Dockerfile.ssh-gateway
+!go.mod
+!go.sum
+!cmd/
+!cmd/**

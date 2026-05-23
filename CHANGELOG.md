@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add a Go SSH gateway with GitHub OAuth key onboarding, linked-key auth, session listing, Codex session creation, and PTY attach support.
 - Treat missing Cloudflare Sandbox terminal sessions as already removed before recreation so fresh Codex session provisioning can recover instead of failing with `Session 'terminal-...' not found`.
 - Persist per-session GitHub OAuth credentials inside Cloudflare Sandbox terminals so `gh` and `git push` keep working after Codex starts.
 - Add opt-in multiplayer mode for interactive Codex sessions so submitted prompts are prefixed with the current actor. Thanks @RomneyDa.

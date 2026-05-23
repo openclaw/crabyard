@@ -1,0 +1,576 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/coder/websocket"
+	"golang.org/x/crypto/ssh"
+)
+
+type apiClient struct {
+	baseURL string
+	token   string
+	client  *http.Client
+}
+
+type authResponse struct {
+	Authorized bool   `json:"authorized"`
+	LinkURL    string `json:"linkUrl"`
+	User       user   `json:"user"`
+}
+
+type user struct {
+	Login   string `json:"login"`
+	Email   string `json:"email"`
+	Subject string `json:"subject"`
+	Role    string `json:"role"`
+}
+
+type stateResponse struct {
+	User                user                 `json:"user"`
+	Repos               []string             `json:"repos"`
+	InteractiveSessions []interactiveSession `json:"interactiveSessions"`
+	Cards               []card               `json:"cards"`
+}
+
+type interactiveSession struct {
+	ID        string `json:"id"`
+	Repo      string `json:"repo"`
+	Branch    string `json:"branch"`
+	Runtime   string `json:"runtime"`
+	Status    string `json:"status"`
+	LastEvent string `json:"lastEvent"`
+}
+
+type card struct {
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	Repo      string `json:"repo"`
+	Lane      string `json:"lane"`
+	LastEvent string `json:"lastEvent"`
+}
+
+type createSessionRequest struct {
+	Repo    string `json:"repo,omitempty"`
+	Branch  string `json:"branch,omitempty"`
+	Runtime string `json:"runtime,omitempty"`
+	Command string `json:"command,omitempty"`
+	Prompt  string `json:"prompt,omitempty"`
+}
+
+type createSessionResponse struct {
+	Session interactiveSession `json:"session"`
+}
+
+type keyAuth struct {
+	authorized  bool
+	fingerprint string
+	publicKey   string
+	linkURL     string
+	user        user
+}
+
+type sessionPTY struct {
+	cols uint32
+	rows uint32
+}
+
+func main() {
+	var addr string
+	var apiURL string
+	var token string
+	var hostKeyPath string
+	var ephemeralHostKey bool
+	flag.StringVar(&addr, "addr", env("CRABYARD_SSH_ADDR", ":2222"), "SSH listen address")
+	flag.StringVar(&apiURL, "api", env("CRABYARD_API_URL", "http://127.0.0.1:8787"), "Crabyard Worker URL")
+	flag.StringVar(&token, "token", os.Getenv("CRABYARD_SSH_GATEWAY_TOKEN"), "Worker SSH gateway token")
+	flag.StringVar(&hostKeyPath, "host-key", os.Getenv("CRABYARD_SSH_HOST_KEY"), "SSH host private key path")
+	flag.BoolVar(&ephemeralHostKey, "ephemeral-host-key", false, "use a generated host key for local development only")
+	flag.Parse()
+
+	if token == "" {
+		log.Fatal("CRABYARD_SSH_GATEWAY_TOKEN is required")
+	}
+
+	signer, err := loadHostKey(hostKeyPath, ephemeralHostKey)
+	if err != nil {
+		log.Fatalf("host key: %v", err)
+	}
+
+	client := &apiClient{
+		baseURL: strings.TrimRight(apiURL, "/"),
+		token:   token,
+		client:  &http.Client{Timeout: 5 * time.Minute},
+	}
+
+	config := &ssh.ServerConfig{
+		ServerVersion: "SSH-2.0-Crabyard",
+		PublicKeyCallback: func(meta ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
+			linkMode := meta.User() == "link" || meta.User() == "onboard"
+			auth, err := client.auth(
+				context.Background(),
+				key,
+				meta.User(),
+				remoteHost(meta.RemoteAddr()),
+				linkMode,
+			)
+			if err != nil {
+				log.Printf("auth %s: %v", meta.RemoteAddr(), err)
+				return nil, err
+			}
+			if !auth.authorized && !linkMode {
+				return nil, fmt.Errorf("SSH key is not linked; use ssh link@host to link it")
+			}
+			extensions := map[string]string{
+				"authorized":  fmt.Sprintf("%t", auth.authorized),
+				"fingerprint": auth.fingerprint,
+				"public_key":  auth.publicKey,
+				"link_url":    auth.linkURL,
+				"login":       auth.user.Login,
+				"role":        auth.user.Role,
+			}
+			return &ssh.Permissions{Extensions: extensions}, nil
+		},
+	}
+	config.AddHostKey(signer)
+
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("crabyard ssh gateway listening on %s -> %s", addr, apiURL)
+
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			log.Printf("accept: %v", err)
+			continue
+		}
+		go handleConn(conn, config, client)
+	}
+}
+
+func handleConn(raw net.Conn, config *ssh.ServerConfig, client *apiClient) {
+	defer raw.Close()
+	conn, chans, reqs, err := ssh.NewServerConn(raw, config)
+	if err != nil {
+		log.Printf("handshake %s: %v", raw.RemoteAddr(), err)
+		return
+	}
+	defer conn.Close()
+	go ssh.DiscardRequests(reqs)
+
+	for ch := range chans {
+		if ch.ChannelType() != "session" {
+			ch.Reject(ssh.UnknownChannelType, "session channels only")
+			continue
+		}
+		channel, requests, err := ch.Accept()
+		if err != nil {
+			log.Printf("channel accept: %v", err)
+			continue
+		}
+		go handleSession(channel, requests, conn.Permissions, client)
+	}
+}
+
+func handleSession(channel ssh.Channel, requests <-chan *ssh.Request, perms *ssh.Permissions, client *apiClient) {
+	defer channel.Close()
+	pty := sessionPTY{cols: 120, rows: 34}
+	for req := range requests {
+		switch req.Type {
+		case "pty-req":
+			var payload struct {
+				Term   string
+				Cols   uint32
+				Rows   uint32
+				Width  uint32
+				Height uint32
+				Modes  string
+			}
+			ssh.Unmarshal(req.Payload, &payload)
+			if payload.Cols > 0 {
+				pty.cols = payload.Cols
+			}
+			if payload.Rows > 0 {
+				pty.rows = payload.Rows
+			}
+			req.Reply(true, nil)
+		case "window-change":
+			var payload struct {
+				Cols   uint32
+				Rows   uint32
+				Width  uint32
+				Height uint32
+			}
+			ssh.Unmarshal(req.Payload, &payload)
+			if payload.Cols > 0 {
+				pty.cols = payload.Cols
+			}
+			if payload.Rows > 0 {
+				pty.rows = payload.Rows
+			}
+		case "shell":
+			req.Reply(true, nil)
+			exit := runCommand(context.Background(), channel, perms, client, "", pty)
+			replyExit(channel, exit)
+			return
+		case "exec":
+			var payload struct{ Command string }
+			ssh.Unmarshal(req.Payload, &payload)
+			req.Reply(true, nil)
+			exit := runCommand(context.Background(), channel, perms, client, payload.Command, pty)
+			replyExit(channel, exit)
+			return
+		default:
+			req.Reply(false, nil)
+		}
+	}
+}
+
+func runCommand(ctx context.Context, out io.ReadWriter, perms *ssh.Permissions, client *apiClient, command string, pty sessionPTY) uint32 {
+	auth := keyAuth{
+		authorized:  perms.Extensions["authorized"] == "true",
+		fingerprint: perms.Extensions["fingerprint"],
+		publicKey:   perms.Extensions["public_key"],
+		linkURL:     perms.Extensions["link_url"],
+		user: user{
+			Login: perms.Extensions["login"],
+			Role:  perms.Extensions["role"],
+		},
+	}
+	if !auth.authorized {
+		fmt.Fprintf(out, "Crabyard SSH key not linked.\n\nOpen this URL to connect it:\n%s\n\nThen run ssh again.\n", auth.linkURL)
+		return 1
+	}
+
+	args := strings.Fields(command)
+	if len(args) == 0 {
+		printHelp(out, auth.user)
+		return 0
+	}
+	switch args[0] {
+	case "help", "-h", "--help":
+		printHelp(out, auth.user)
+		return 0
+	case "whoami":
+		state, err := client.state(ctx, auth.fingerprint)
+		if err != nil {
+			fmt.Fprintf(out, "error: %v\n", err)
+			return 1
+		}
+		fmt.Fprintf(
+			out,
+			"login: %s\nrole: %s\nfingerprint: %s\n",
+			terminalSafe(displayUser(state.User)),
+			terminalSafe(state.User.Role),
+			terminalSafe(auth.fingerprint),
+		)
+		return 0
+	case "list", "ls":
+		state, err := client.state(ctx, auth.fingerprint)
+		if err != nil {
+			fmt.Fprintf(out, "error: %v\n", err)
+			return 1
+		}
+		printList(out, state)
+		return 0
+	case "new":
+		session, err := client.createSession(ctx, auth.fingerprint, parseCreate(args[1:], out, client, auth.fingerprint))
+		if err != nil {
+			fmt.Fprintf(out, "error: %v\n", err)
+			return 1
+		}
+		fmt.Fprintf(out, "session: %s\nrepo: %s\nstatus: %s\nattach: ssh crabyard attach %s\n", session.ID, session.Repo, session.Status, session.ID)
+		return client.attach(ctx, auth.fingerprint, session.ID, out, pty)
+	case "attach":
+		if len(args) < 2 {
+			fmt.Fprintln(out, "usage: attach SESSION_ID")
+			return 2
+		}
+		return client.attach(ctx, auth.fingerprint, args[1], out, pty)
+	case "open":
+		fmt.Fprintf(out, "%s/app/\n", client.baseURL)
+		return 0
+	default:
+		fmt.Fprintf(out, "unknown command: %s\n\n", args[0])
+		printHelp(out, auth.user)
+		return 2
+	}
+}
+
+func printHelp(out io.Writer, user user) {
+	fmt.Fprintf(out, "Crabyard SSH\nlogin: %s\nrole: %s\n\n", terminalSafe(displayUser(user)), terminalSafe(user.Role))
+	fmt.Fprintln(out, "commands:")
+	fmt.Fprintln(out, "  whoami")
+	fmt.Fprintln(out, "  list")
+	fmt.Fprintln(out, "  new [--repo owner/repo] [--branch main] [--runtime container|crabbox] [--command codex] [prompt]")
+	fmt.Fprintln(out, "  attach SESSION_ID")
+	fmt.Fprintln(out, "  open")
+}
+
+func printList(out io.Writer, state stateResponse) {
+	fmt.Fprintf(out, "user: %s (%s)\n", terminalSafe(displayUser(state.User)), terminalSafe(state.User.Role))
+	fmt.Fprintf(out, "repos: %s\n", compactList(state.Repos, 12))
+	fmt.Fprintln(out, "\nsessions:")
+	if len(state.InteractiveSessions) == 0 {
+		fmt.Fprintln(out, "  none")
+	} else {
+		for _, s := range state.InteractiveSessions {
+			fmt.Fprintf(
+				out,
+				"  %s: %s %s %s %s\n",
+				terminalSafe(s.ID),
+				terminalSafe(s.Status),
+				terminalSafe(s.Runtime),
+				terminalSafe(s.Repo),
+				terminalSafe(s.LastEvent),
+			)
+		}
+	}
+	fmt.Fprintln(out, "\ncards:")
+	if len(state.Cards) == 0 {
+		fmt.Fprintln(out, "  none")
+		return
+	}
+	for _, c := range state.Cards {
+		fmt.Fprintf(
+			out,
+			"  %s: %s %s %s\n",
+			terminalSafe(c.ID),
+			terminalSafe(c.Lane),
+			terminalSafe(c.Repo),
+			terminalSafe(c.Title),
+		)
+	}
+}
+
+func compactList(values []string, limit int) string {
+	if len(values) == 0 {
+		return "none"
+	}
+	if len(values) <= limit {
+		return strings.Join(terminalSafeSlice(values), ", ")
+	}
+	return fmt.Sprintf("%s, +%d more", strings.Join(terminalSafeSlice(values[:limit]), ", "), len(values)-limit)
+}
+
+func terminalSafeSlice(values []string) []string {
+	safe := make([]string, len(values))
+	for i, value := range values {
+		safe[i] = terminalSafe(value)
+	}
+	return safe
+}
+
+func terminalSafe(value string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' || r == '\t' {
+			return ' '
+		}
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
+			return -1
+		}
+		return r
+	}, value)
+}
+
+func parseCreate(args []string, out io.Writer, client *apiClient, fingerprint string) createSessionRequest {
+	fs := flag.NewFlagSet("new", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	var req createSessionRequest
+	fs.StringVar(&req.Repo, "repo", "", "repo")
+	fs.StringVar(&req.Branch, "branch", "main", "branch")
+	fs.StringVar(&req.Runtime, "runtime", "", "runtime")
+	fs.StringVar(&req.Command, "command", "", "command")
+	_ = fs.Parse(args)
+	req.Prompt = strings.Join(fs.Args(), " ")
+	if req.Repo == "" {
+		if state, err := client.state(context.Background(), fingerprint); err == nil && len(state.Repos) > 0 {
+			req.Repo = state.Repos[0]
+		}
+	}
+	return req
+}
+
+func (c *apiClient) auth(ctx context.Context, key ssh.PublicKey, sshUser string, remote string, createLink bool) (keyAuth, error) {
+	fingerprint := ssh.FingerprintSHA256(key)
+	publicKey := string(bytes.TrimSpace(ssh.MarshalAuthorizedKey(key)))
+	var response authResponse
+	err := c.do(ctx, http.MethodPost, "/api/ssh/auth", fingerprint, map[string]any{
+		"fingerprint": fingerprint,
+		"publicKey":   publicKey,
+		"label":       strings.TrimSpace(sshUser),
+		"remoteIp":    remote,
+		"createLink":  createLink,
+	}, &response)
+	return keyAuth{
+		authorized:  response.Authorized,
+		fingerprint: fingerprint,
+		publicKey:   publicKey,
+		linkURL:     response.LinkURL,
+		user:        response.User,
+	}, err
+}
+
+func (c *apiClient) state(ctx context.Context, fingerprint string) (stateResponse, error) {
+	var response stateResponse
+	err := c.do(ctx, http.MethodGet, "/api/ssh/state", fingerprint, nil, &response)
+	return response, err
+}
+
+func (c *apiClient) createSession(ctx context.Context, fingerprint string, request createSessionRequest) (interactiveSession, error) {
+	var response createSessionResponse
+	err := c.do(ctx, http.MethodPost, "/api/ssh/interactive-sessions", fingerprint, request, &response)
+	return response.Session, err
+}
+
+func (c *apiClient) attach(ctx context.Context, fingerprint string, id string, terminal io.ReadWriter, pty sessionPTY) uint32 {
+	u, err := url.Parse(c.baseURL)
+	if err != nil {
+		fmt.Fprintf(terminal, "error: %v\n", err)
+		return 1
+	}
+	switch u.Scheme {
+	case "https":
+		u.Scheme = "wss"
+	default:
+		u.Scheme = "ws"
+	}
+	u.Path = "/api/ssh/interactive-sessions/" + url.PathEscape(id) + "/pty"
+	q := u.Query()
+	q.Set("fingerprint", fingerprint)
+	q.Set("cols", fmt.Sprint(pty.cols))
+	q.Set("rows", fmt.Sprint(pty.rows))
+	u.RawQuery = q.Encode()
+
+	headers := http.Header{}
+	headers.Set("Authorization", "Bearer "+c.token)
+	headers.Set("X-Crabyard-SSH-Fingerprint", fingerprint)
+	ws, _, err := websocket.Dial(ctx, u.String(), &websocket.DialOptions{HTTPHeader: headers})
+	if err != nil {
+		fmt.Fprintf(terminal, "attach failed: %v\n", err)
+		return 1
+	}
+	defer ws.Close(websocket.StatusNormalClosure, "")
+	netConn := websocket.NetConn(ctx, ws, websocket.MessageBinary)
+	defer netConn.Close()
+
+	errCh := make(chan error, 2)
+	go func() {
+		_, err := io.Copy(netConn, terminal)
+		errCh <- err
+	}()
+	go func() {
+		_, err := io.Copy(terminal, netConn)
+		errCh <- err
+	}()
+	err = <-errCh
+	if err != nil && !errors.Is(err, net.ErrClosed) && !strings.Contains(err.Error(), "closed") {
+		fmt.Fprintf(terminal, "\nattach closed: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+func (c *apiClient) do(ctx context.Context, method string, path string, fingerprint string, body any, out any) error {
+	var reader io.Reader
+	if body != nil {
+		payload, err := json.Marshal(body)
+		if err != nil {
+			return err
+		}
+		reader = bytes.NewReader(payload)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reader)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/json")
+	if fingerprint != "" {
+		req.Header.Set("X-Crabyard-SSH-Fingerprint", fingerprint)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("crabyard api %s: %s", resp.Status, strings.TrimSpace(string(data)))
+	}
+	if out == nil {
+		return nil
+	}
+	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+func replyExit(channel ssh.Channel, code uint32) {
+	_, _ = channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{code}))
+}
+
+func displayUser(u user) string {
+	if u.Login != "" {
+		return "@" + u.Login
+	}
+	if u.Email != "" {
+		return u.Email
+	}
+	if u.Subject != "" {
+		return u.Subject
+	}
+	return "unknown"
+}
+
+func loadHostKey(path string, allowEphemeral bool) (ssh.Signer, error) {
+	if path != "" {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		return ssh.ParsePrivateKey(data)
+	}
+	if !allowEphemeral {
+		return nil, errors.New("CRABYARD_SSH_HOST_KEY or --host-key is required")
+	}
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+	log.Print("using ephemeral SSH host key; set CRABYARD_SSH_HOST_KEY for production")
+	return ssh.NewSignerFromKey(privateKey)
+}
+
+func env(key string, fallback string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
+}
+
+func remoteHost(addr net.Addr) string {
+	host, _, err := net.SplitHostPort(addr.String())
+	if err == nil {
+		return host
+	}
+	return addr.String()
+}

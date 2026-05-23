@@ -165,6 +165,7 @@ Configure these in Cloudflare Workers dashboard:
 - `CRABYARD_CLAWFLEET_URL` – Optional ClawFleet dashboard/API URL used by `/api/provision/interactive` for `crabbox` sessions
 - `CRABYARD_CLAWFLEET_TOKEN` – Optional bearer token sent to ClawFleet
 - `CRABYARD_CLAWFLEET_PUBLIC_URL` – Optional public ClawFleet URL used when building attach/VNC links
+- `CRABYARD_SSH_GATEWAY_TOKEN` – Shared bearer token for the Go SSH gateway internal API
 - `OPENAI_API_KEY` – Required for built-in Cloudflare Sandbox Codex CLI sessions; passed only into the sandbox session environment
 
 ### Verify Deployment
@@ -216,6 +217,27 @@ wrangler dev
 # Apply migrations locally
 wrangler d1 migrations apply crabyard-ai --local
 ```
+
+### SSH Gateway
+
+The Worker exposes an internal SSH onboarding API guarded by `CRABYARD_SSH_GATEWAY_TOKEN`.
+Run the Go gateway next to a host that can accept raw SSH:
+
+```bash
+CRABYARD_API_URL=https://crabyard.openclaw.ai \
+CRABYARD_SSH_GATEWAY_TOKEN=... \
+CRABYARD_SSH_HOST_KEY=/var/lib/crabyard/ssh_host_ed25519_key \
+CRABYARD_SSH_ADDR=:2222 \
+go run ./cmd/crabyard-ssh-gateway
+```
+
+Unknown public keys get a short GitHub OAuth link through `ssh link@host`. Linked keys can
+run `whoami`, `list`, `new`, and `attach SESSION_ID`; `new` creates an interactive Codex
+session and attaches.
+
+Production currently exposes the gateway at `ssh.crabyard.ai` as a DNS-only `A` record.
+Use `ssh link@ssh.crabyard.ai` once to connect a GitHub-backed SSH key, then run
+`ssh ssh.crabyard.ai whoami` or `ssh ssh.crabyard.ai list`.
 
 ### Project Structure
 
