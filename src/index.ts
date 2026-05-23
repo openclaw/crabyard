@@ -250,6 +250,10 @@ type InteractiveSession = {
   logs: string[];
 };
 
+type SandboxRuntimeSession = (InteractiveProvisionRequest | InteractiveSession) & {
+  githubToken?: string;
+};
+
 type InteractiveProvisionRequest = {
   id: string;
   repo: string;
@@ -1937,7 +1941,8 @@ async function openInteractiveTerminalUpstream(
 ): Promise<TerminalUpstream> {
   const now = Date.now();
   if (session.leaseId?.startsWith(sandboxLeasePrefix) && env.SANDBOX) {
-    const sandboxSession = await ensureCurrentSandboxLease(request, env, user, session);
+    const runtimeSession = await sandboxSessionWithGitHubToken(request, env, user, session);
+    const sandboxSession = await ensureCurrentSandboxLease(request, env, user, runtimeSession);
     const lease = sandboxLeaseInfo(sandboxSession);
     const sandbox = getSandbox(env.SANDBOX, lease.sandboxId);
     const upstreamResponse = await openSandboxTerminalResponse(
@@ -2303,7 +2308,8 @@ async function interactiveSandboxTerminal(
   canSendLeft?: () => Promise<boolean>,
 ): Promise<Response> {
   if (!env.SANDBOX) throw serviceUnavailable("Sandbox binding is not configured");
-  const sandboxSession = await ensureCurrentSandboxLease(request, env, user, session);
+  const runtimeSession = await sandboxSessionWithGitHubToken(request, env, user, session);
+  const sandboxSession = await ensureCurrentSandboxLease(request, env, user, runtimeSession);
   const lease = sandboxLeaseInfo(sandboxSession);
   const sandbox = getSandbox(env.SANDBOX, lease.sandboxId);
   const upstreamResponse = await openSandboxTerminalResponse(
@@ -2815,8 +2821,8 @@ async function ensureCurrentSandboxLease(
   request: Request,
   env: RuntimeEnv,
   user: User | null,
-  session: InteractiveSession,
-): Promise<InteractiveSession> {
+  session: InteractiveSession & { githubToken?: string },
+): Promise<InteractiveSession & { githubToken?: string }> {
   if (!env.SANDBOX || isCurrentSandboxLease(session.leaseId)) return session;
   const originalLeaseId = session.leaseId;
   if (!originalLeaseId) {
@@ -2911,13 +2917,14 @@ async function ensureCurrentSandboxLease(
     attachUrl: provisioned.attachUrl,
     vncUrl: provisioned.vncUrl,
     lastEvent: "Cloudflare Sandbox lease refreshed",
+    ...(githubToken ? { githubToken } : {}),
   };
 }
 
 async function prepareSandboxWorkspace(
   sandbox: SandboxSessionTarget,
   env: RuntimeEnv,
-  session: InteractiveProvisionRequest | InteractiveSession,
+  session: SandboxRuntimeSession,
   workdir: string,
 ): Promise<void> {
   const repoUrl = `https://github.com/${session.repo}.git`;
@@ -3049,6 +3056,10 @@ preferred_auth_method = "apikey"
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
 
+[shell_environment_policy]
+inherit = "all"
+ignore_default_excludes = true
+
 [features]
 goals = true
 
@@ -3091,7 +3102,7 @@ fi
 
 async function prepareSandboxRuntimeTools(
   sandbox: SandboxSessionTarget,
-  session: InteractiveProvisionRequest | InteractiveSession,
+  session: SandboxRuntimeSession,
   workdir: string,
   commandEnv: Record<string, string | undefined> = {},
 ): Promise<void> {
@@ -3125,11 +3136,20 @@ if [ -z "$installed_codex" ] || { [ -n "$latest_codex" ] && [ "$installed_codex"
   fi
 fi
 if [ -n "\${GITHUB_TOKEN:-}" ]; then
-  git config --global credential.helper '!f() { test "$1" = get && printf "username=x-access-token\\npassword=%s\\n" "$GITHUB_TOKEN"; }; f'
+  crabyard_credential_file="$HOME/.config/crabyard/github-credential"
+  mkdir -p "$(dirname "$crabyard_credential_file")"
+  {
+    printf 'username=x-access-token\\n'
+    printf 'password=%s\\n' "$GITHUB_TOKEN"
+  } > "$crabyard_credential_file"
+  chmod 600 "$crabyard_credential_file"
+  git config --global credential.helper "!f() { test \\"\\$1\\" = get && cat '$crabyard_credential_file'; }; f"
   git config --global user.name ${shellQuote(session.owner)}
   git config --global user.email ${shellQuote(`${session.owner}@users.noreply.github.com`)}
   if command -v gh >/dev/null 2>&1; then
+    printf '%s\\n' "$GITHUB_TOKEN" | gh auth login --hostname github.com --with-token >/dev/null 2>&1 || true
     gh auth setup-git -h github.com >/dev/null 2>&1 || true
+    chmod -R go-rwx "$HOME/.config/gh" 2>/dev/null || true
   fi
 fi
 mkdir -p "$(dirname ${shellQuote(autostartScript)})"
@@ -3200,7 +3220,7 @@ async function openSandboxTerminalResponse(
   request: Request,
   env: RuntimeEnv,
   sandbox: ReturnType<typeof getSandbox>,
-  session: InteractiveSession,
+  session: InteractiveSession & { githubToken?: string },
   size: { cols: number; rows: number },
 ): Promise<Response> {
   const lease = sandboxLeaseInfo(session);
@@ -3230,12 +3250,12 @@ async function openSandboxTerminalResponse(
 async function ensureSandboxTerminalPrepared(
   sandbox: ReturnType<typeof getSandbox>,
   env: RuntimeEnv,
-  session: InteractiveSession,
+  session: InteractiveSession & { githubToken?: string },
   terminalSessionId: string,
 ): Promise<void> {
   const workdir = sandboxWorkdir(session.id);
   try {
-    if (await sandboxTerminalProfileExists(sandbox, session, workdir)) return;
+    if (await sandboxTerminalProfileExists(sandbox, env, session, workdir)) return;
     await setupSandboxTerminalSession(sandbox, env, session, workdir, terminalSessionId);
     return;
   } catch {
@@ -3246,7 +3266,8 @@ async function ensureSandboxTerminalPrepared(
 
 async function sandboxTerminalProfileExists(
   sandbox: CloudflareSandbox,
-  session: InteractiveSession,
+  env: RuntimeEnv,
+  session: InteractiveSession & { githubToken?: string },
   workdir: string,
 ): Promise<boolean> {
   const setup = await createSandboxSession(
@@ -3261,29 +3282,36 @@ async function sandboxTerminalProfileExists(
   const autostartScript = sandboxAutostartScriptPath(session.id);
   const terminalShell = sandboxTerminalShellPath(session.id);
   const repoUrl = `https://github.com/${session.repo}.git`;
-  const result = await setup.exec(
-    [
-      `test -d ${shellQuote(workdir)}`,
-      `test -d ${shellQuote(workdir)}/.git`,
-      `test ! -s ${shellQuote(sandboxCheckoutErrorPath(session.id))}`,
-      `git -C ${shellQuote(workdir)} rev-parse --verify HEAD >/dev/null`,
-      `test "$(git -C ${shellQuote(workdir)} rev-parse --abbrev-ref HEAD)" = ${shellQuote(session.branch)}`,
-      `test "$(git -C ${shellQuote(workdir)} config --get remote.origin.url)" = ${shellQuote(repoUrl)}`,
-      `test -s ${shellQuote(autostartScript)}`,
-      `test -x ${shellQuote(terminalShell)}`,
-      `grep -Fqx '[projects."/workspace"]' "$HOME/.codex/config.toml"`,
-      `grep -Fqx '        cd "$CRABYARD_WORKDIR" 2>/dev/null || {' ${shellQuote(autostartScript)}`,
-      `grep -Fqx ${marker} "$HOME/.bashrc"`,
-    ].join(" && "),
-    { timeout: 10_000 },
-  );
+  const requiresGitHubAuth = Boolean(sandboxGitHubTokenEnv(env, session).GITHUB_TOKEN);
+  const checks = [
+    `test -d ${shellQuote(workdir)}`,
+    `test -d ${shellQuote(workdir)}/.git`,
+    `test ! -s ${shellQuote(sandboxCheckoutErrorPath(session.id))}`,
+    `git -C ${shellQuote(workdir)} rev-parse --verify HEAD >/dev/null`,
+    `test "$(git -C ${shellQuote(workdir)} rev-parse --abbrev-ref HEAD)" = ${shellQuote(session.branch)}`,
+    `test "$(git -C ${shellQuote(workdir)} config --get remote.origin.url)" = ${shellQuote(repoUrl)}`,
+    `test -s ${shellQuote(autostartScript)}`,
+    `test -x ${shellQuote(terminalShell)}`,
+    `grep -Fqx '[shell_environment_policy]' "$HOME/.codex/config.toml"`,
+    `grep -Fqx '[projects."/workspace"]' "$HOME/.codex/config.toml"`,
+    `grep -Fqx '        cd "$CRABYARD_WORKDIR" 2>/dev/null || {' ${shellQuote(autostartScript)}`,
+    `grep -Fqx ${marker} "$HOME/.bashrc"`,
+  ];
+  if (requiresGitHubAuth) {
+    checks.push(
+      `test -s "$HOME/.config/crabyard/github-credential"`,
+      `git config --global --get-all credential.helper | grep -F "$HOME/.config/crabyard/github-credential" >/dev/null`,
+      `! command -v gh >/dev/null 2>&1 || gh auth status -h github.com >/dev/null 2>&1`,
+    );
+  }
+  const result = await setup.exec(checks.join(" && "), { timeout: 10_000 });
   return result.success;
 }
 
 async function setupSandboxTerminalSession(
   sandbox: CloudflareSandbox,
   env: RuntimeEnv,
-  session: InteractiveProvisionRequest | InteractiveSession,
+  session: SandboxRuntimeSession,
   workdir: string,
   terminalSessionId: string,
 ): Promise<void> {
@@ -3310,7 +3338,7 @@ async function setupSandboxTerminalSession(
 async function recreateSandboxTerminalSession(
   sandbox: ReturnType<typeof getSandbox>,
   env: RuntimeEnv,
-  session: InteractiveSession,
+  session: InteractiveSession & { githubToken?: string },
   terminalSessionId: string,
 ): Promise<void> {
   await setupSandboxTerminalSession(
@@ -3324,7 +3352,7 @@ async function recreateSandboxTerminalSession(
 
 function sandboxSessionEnv(
   env: RuntimeEnv,
-  session: InteractiveProvisionRequest | InteractiveSession,
+  session: SandboxRuntimeSession,
 ): Record<string, string | undefined> {
   return {
     CRABYARD_SESSION_ID: session.id,
@@ -3353,7 +3381,7 @@ function githubTokenEnv(session: Pick<InteractiveProvisionRequest, "githubToken"
 
 function sandboxGitHubTokenEnv(
   env: RuntimeEnv,
-  session: InteractiveProvisionRequest | InteractiveSession,
+  session: SandboxRuntimeSession,
 ): { GITHUB_TOKEN?: string; GH_TOKEN?: string } {
   const token = "githubToken" in session ? session.githubToken : undefined;
   const githubToken = token || env.GITHUB_TOKEN;
@@ -4519,6 +4547,18 @@ async function sessionGitHubToken(request: Request, env: RuntimeEnv): Promise<st
   return row?.github_token_ciphertext
     ? ((await openSecret(env, row.github_token_ciphertext)) ?? undefined)
     : undefined;
+}
+
+async function sandboxSessionWithGitHubToken(
+  request: Request,
+  env: RuntimeEnv,
+  user: User | null,
+  session: InteractiveSession,
+): Promise<InteractiveSession & { githubToken?: string }> {
+  if (!user?.subject.startsWith("github:")) return session;
+  if (actor(user) !== session.owner) return session;
+  const githubToken = await sessionGitHubToken(request, env);
+  return githubToken ? { ...session, githubToken } : session;
 }
 
 async function sealSecret(env: RuntimeEnv, value: string): Promise<string | null> {

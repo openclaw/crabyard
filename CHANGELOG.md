@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Persist per-session GitHub OAuth credentials inside Cloudflare Sandbox terminals so `gh` and `git push` keep working after Codex starts.
 - Expand the Codex sessions grid to full available height when only one session is visible.
 - Pre-bake Cloudflare Sandbox images with Codex, pnpm, GitHub CLI, Crabbox, and common build/debug tools, plus a session diagnostics endpoint.
 - Trust the Cloudflare Sandbox workspace root as well as the checked-out repo so provisioned Codex sessions skip the directory trust prompt.
