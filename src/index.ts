@@ -247,6 +247,7 @@ type InteractiveSession = {
   controller: string | null;
   controlGrantedAt: number | null;
   controlExpiresAt: number | null;
+  multiplayerMode: boolean;
   canControl?: boolean;
   canManage?: boolean;
   canRequestControl?: boolean;
@@ -289,6 +290,7 @@ type TerminalHubSubscription = {
   canInput: () => Promise<boolean>;
   markClosing: (reason: string) => void;
   viewCheck: ReturnType<typeof setInterval> | null;
+  inputLine: string;
   cols: number;
   rows: number;
 };
@@ -443,6 +445,7 @@ type InteractiveSessionTable = {
   controller: string | null;
   control_granted_at: number | null;
   control_expires_at: number | null;
+  multiplayer_mode: number;
 };
 
 type RepoWorkflowTable = {
@@ -1183,6 +1186,7 @@ async function createInteractiveSession(
           controller: null,
           control_granted_at: null,
           control_expires_at: null,
+          multiplayer_mode: 0,
         })
         .execute();
       await appendInteractiveSessionEvent(env, id, user, "interactive workspace requested", now);
@@ -1373,6 +1377,35 @@ async function mutateInteractiveSession(
       .execute();
     await appendInteractiveSessionEvent(env, id, user, "session sharing disabled", now);
     await audit(env, user, `interactive session share disabled ${id}`, now);
+    return {
+      session: decorateInteractiveSession(
+        (await readInteractiveSession(env, id)) as InteractiveSession,
+        user,
+        env,
+      ),
+    };
+  }
+
+  if (action === "enable_multiplayer" || action === "disable_multiplayer") {
+    if (!canManage) throw forbidden("only the session owner or maintainer can change multiplayer");
+    const enabled = action === "enable_multiplayer";
+    const message = enabled ? "multiplayer mode enabled" : "multiplayer mode disabled";
+    await database(env)
+      .updateTable("interactive_sessions")
+      .set({
+        multiplayer_mode: enabled ? 1 : 0,
+        updated_at: now,
+        last_event: message,
+      })
+      .where("id", "=", id)
+      .execute();
+    await appendInteractiveSessionEvent(env, id, user, message, now);
+    await audit(
+      env,
+      user,
+      `interactive session multiplayer ${enabled ? "enabled" : "disabled"} ${id}`,
+      now,
+    );
     return {
       session: decorateInteractiveSession(
         (await readInteractiveSession(env, id)) as InteractiveSession,
@@ -1670,7 +1703,9 @@ async function interactiveTerminalHub(
             return;
           }
           if (subscription.upstream.readyState === WebSocket.OPEN) {
-            subscription.upstream.send(frame.payload);
+            subscription.upstream.send(
+              await multiplayerTerminalInputPayload(env, subscription, user, frame.payload),
+            );
           }
           return;
         }
@@ -1865,6 +1900,7 @@ async function subscribeTerminalHubSession(
       canInput,
       markClosing,
       viewCheck,
+      inputLine: "",
       cols,
       rows,
     });
@@ -2569,6 +2605,104 @@ function interactiveTerminalHeaders(
   });
   if (authorization) headers.set("authorization", authorization);
   return headers;
+}
+
+async function multiplayerTerminalInputPayload(
+  env: RuntimeEnv,
+  subscription: TerminalHubSubscription,
+  user: User | null,
+  payload: Uint8Array,
+): Promise<Uint8Array> {
+  const submitted = terminalSubmittedLine(subscription, payload);
+  if (!user || !submitted || !submitted.text.trim()) {
+    return payload;
+  }
+  const enabled = await readInteractiveSessionMultiplayerMode(
+    env,
+    subscription.session.id,
+    subscription.session.multiplayerMode,
+  );
+  if (!enabled) {
+    return payload;
+  }
+
+  const label = terminalActorLabel(actor(user));
+  const attributed = `${label}:\n${submitted.text}${submitted.eol}`;
+  return encoder.encode(submitted.replaceCurrentLine ? `\x15${attributed}` : attributed);
+}
+
+async function readInteractiveSessionMultiplayerMode(
+  env: RuntimeEnv,
+  id: string,
+  fallback: boolean,
+): Promise<boolean> {
+  try {
+    const row = await database(env)
+      .selectFrom("interactive_sessions")
+      .select(["multiplayer_mode"])
+      .where("id", "=", id)
+      .executeTakeFirst();
+    return row ? row.multiplayer_mode === 1 : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function terminalSubmittedLine(
+  subscription: TerminalHubSubscription,
+  payload: Uint8Array,
+): { text: string; eol: string; replaceCurrentLine: boolean } | null {
+  const text = decoder.decode(payload);
+  if (text === "\r" || text === "\n") {
+    const line = subscription.inputLine;
+    subscription.inputLine = "";
+    return { text: line, eol: text, replaceCurrentLine: true };
+  }
+
+  if (!subscription.inputLine) {
+    const eol = text.endsWith("\r") ? "\r" : text.endsWith("\n") ? "\n" : "";
+    const line = eol ? text.slice(0, -1) : "";
+    if (eol && isPlainTerminalText(line)) {
+      return { text: line, eol, replaceCurrentLine: false };
+    }
+  }
+
+  updateTerminalInputLine(subscription, text);
+  return null;
+}
+
+function updateTerminalInputLine(subscription: TerminalHubSubscription, text: string): void {
+  for (const char of text) {
+    if (char === "\r" || char === "\n" || char === "\x03" || char === "\x15") {
+      subscription.inputLine = "";
+    } else if (char === "\x7f" || char === "\b") {
+      subscription.inputLine = subscription.inputLine.slice(0, -1);
+    } else if (isPlainTerminalText(char)) {
+      subscription.inputLine = `${subscription.inputLine}${char}`.slice(-4000);
+    }
+  }
+}
+
+function isPlainTerminalText(value: string): boolean {
+  for (const char of value) {
+    const code = char.charCodeAt(0);
+    if (code < 32 && char !== "\n" && char !== "\r" && char !== "\t") return false;
+    if (code === 127) return false;
+  }
+  return true;
+}
+
+function terminalActorLabel(value: string): string {
+  const label = [...value]
+    .map((char) => {
+      const code = char.charCodeAt(0);
+      return code < 32 || code === 127 || char === ":" ? " " : char;
+    })
+    .join("")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 80);
+  return label || "user";
 }
 
 function bridgeWebSockets(
@@ -4396,6 +4530,7 @@ async function readSharedInteractiveSession(
       controller: activeController,
       controlGrantedAt: activeController ? session.controlGrantedAt : null,
       controlExpiresAt: activeController ? session.controlExpiresAt : null,
+      multiplayerMode: session.multiplayerMode,
       canControl: false,
       canManage: false,
       canRequestControl: false,
@@ -5007,6 +5142,7 @@ function interactiveSession(row: InteractiveSessionTable, logs: string[]): Inter
     controller: row.controller,
     controlGrantedAt: row.control_granted_at,
     controlExpiresAt: row.control_expires_at,
+    multiplayerMode: row.multiplayer_mode === 1,
     logs,
   };
 }

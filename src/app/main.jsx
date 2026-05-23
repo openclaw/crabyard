@@ -1683,6 +1683,8 @@ function InteractiveSessionActions(props) {
   const canManage = session.canManage || canMaintain(props.state.user);
   const shareAction = session.shareMode === "link_read" ? "disable_share" : "share_link";
   const shareLabel = session.shareMode === "link_read" ? "Unshare" : "Share";
+  const multiplayerAction = session.multiplayerMode ? "disable_multiplayer" : "enable_multiplayer";
+  const multiplayerLabel = session.multiplayerMode ? "Solo input" : "Multiplayer";
   const handleShare = () => {
     if (shareAction === "disable_share")
       return props.interactiveSessionAction(session.id, shareAction);
@@ -1692,6 +1694,11 @@ function InteractiveSessionActions(props) {
     return (
       <>
         {canManage ? <button onClick={handleShare}>{shareLabel}</button> : null}
+        {canManage ? (
+          <button onClick={() => props.interactiveSessionAction(session.id, multiplayerAction)}>
+            {multiplayerLabel}
+          </button>
+        ) : null}
         {canManage ? (
           <button
             class="danger"
@@ -1710,6 +1717,11 @@ function InteractiveSessionActions(props) {
   return (
     <>
       {canManage ? <button onClick={handleShare}>{shareLabel}</button> : null}
+      {canManage ? (
+        <button onClick={() => props.interactiveSessionAction(session.id, multiplayerAction)}>
+          {multiplayerLabel}
+        </button>
+      ) : null}
       {session.canRequestControl && !session.sharedReadOnly && !stopped ? (
         <button onClick={() => props.interactiveSessionAction(session.id, "request_control")}>
           {session.controlRequestedBy ? "Control requested" : "Request control"}
@@ -1788,6 +1800,9 @@ function sessionStatus(session) {
     if (session.shareMode === "link_read" || session.sharedReadOnly) {
       return { label: "Shared", tone: "shared" };
     }
+    if (session.multiplayerMode) {
+      return { label: "Multiplayer", tone: "shared" };
+    }
     if (["ready", "attached", "detached"].includes(session.status)) {
       return { label: "Live", tone: "live" };
     }
@@ -1808,6 +1823,7 @@ function sessionFooterSummary(session) {
     if (seen) parts.push(`seen ${elapsed(seen)}`);
     if (session.status) parts.push(humanStatus(session.status));
     if (session.shareMode === "link_read" || session.sharedReadOnly) parts.push("shared");
+    if (session.multiplayerMode) parts.push("multiplayer");
     if (session.controller) parts.push(`control ${session.controller}`);
     if (session.controlRequestedBy) parts.push(`request ${session.controlRequestedBy}`);
     return parts.join(" · ");

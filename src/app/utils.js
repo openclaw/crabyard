@@ -169,6 +169,7 @@ export function terminalText(session) {
     if (session.shareMode === "link_read" && !session.sharedReadOnly) {
       header.push(`share read-only link ${session.shareTokenPreview || "enabled"}`);
     }
+    if (session.multiplayerMode) header.push("multiplayer mode");
     if (session.controlRequestedBy)
       header.push(`control requested by ${session.controlRequestedBy}`);
     if (session.controller) header.push(`controller ${session.controller}`);
@@ -248,6 +249,7 @@ export function optimisticInteractiveSession(data, owner) {
     controller: null,
     controlGrantedAt: null,
     controlExpiresAt: null,
+    multiplayerMode: false,
     canControl: true,
     canManage: true,
     canRequestControl: false,
@@ -293,6 +295,7 @@ export function linkedInteractiveSessionPlaceholder(id, options = {}) {
     controller: null,
     controlGrantedAt: null,
     controlExpiresAt: null,
+    multiplayerMode: false,
     canControl: false,
     canManage: false,
     canRequestControl: false,
