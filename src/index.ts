@@ -530,6 +530,7 @@ const deadInteractiveSessionStatuses: readonly InteractiveSessionStatus[] = [
   "expired",
   "failed",
 ];
+const roleOptions = new Set<Role>(["viewer", "maintainer", "owner"]);
 const runtimeOptions = ["auto", "container", "crabbox"] as const;
 const mergePolicyOptions = ["open_pr", "merge_when_green", "fix_until_green_and_merge"] as const;
 const defaultStallMs = 5 * 60 * 1000;
@@ -729,12 +730,16 @@ async function api(request: Request, env: RuntimeEnv): Promise<Response> {
     return tokenLogin(request, env);
   }
 
+  if (request.method === "POST" && url.pathname === "/api/login/dev") {
+    return devIdentityLogin(request, env);
+  }
+
   if (request.method === "POST" && url.pathname === "/api/logout") {
     return logout(request, env);
   }
 
   if (request.method === "GET" && url.pathname === "/api/auth") {
-    return json({ auth: authMethods(env) });
+    return json({ auth: authMethods(env, request) });
   }
 
   if (request.method === "POST" && url.pathname === "/api/provision/interactive") {
@@ -759,7 +764,7 @@ async function api(request: Request, env: RuntimeEnv): Promise<Response> {
   const user = await requireUser(request, env);
 
   if (request.method === "GET" && url.pathname === "/api/session") {
-    return json({ user, auth: authMethods(env) });
+    return json({ user, auth: authMethods(env, request) });
   }
 
   if (request.method === "GET" && url.pathname === "/api/state") {
@@ -928,7 +933,34 @@ async function tokenLogin(request: Request, env: RuntimeEnv): Promise<Response> 
   };
   await upsertUser(env, user, now);
   const cookieHeader = await createSession(env, request, user.subject, now);
-  return json({ user, auth: authMethods(env) }, { headers: { "set-cookie": cookieHeader } });
+  return json(
+    { user, auth: authMethods(env, request) },
+    { headers: { "set-cookie": cookieHeader } },
+  );
+}
+
+async function devIdentityLogin(request: Request, env: RuntimeEnv): Promise<Response> {
+  if (!isLocalDevRequest(request)) return json({ error: "not found" }, { status: 404 });
+
+  const body = await readJson<{ id?: string; name?: string; role?: string }>(request);
+  const id = devIdentityId(body.id);
+  const role = roleOptions.has(body.role as Role) ? (body.role as Role) : "owner";
+  const user: User = {
+    subject: `dev:${id}`,
+    login: id,
+    email: null,
+    name: clean(body.name, 120) || id,
+    role,
+    allowed: true,
+    teams: [],
+  };
+  const now = Date.now();
+  await upsertUser(env, user, now);
+  const cookieHeader = await createSession(env, request, user.subject, now);
+  return json(
+    { user, auth: authMethods(env, request) },
+    { headers: { "set-cookie": cookieHeader } },
+  );
 }
 
 async function githubLogin(request: Request, env: RuntimeEnv): Promise<Response> {
@@ -1065,6 +1097,14 @@ async function requireUser(request: Request, env: RuntimeEnv): Promise<User> {
     return user;
   }
 
+  if (user.subject.startsWith("dev:")) {
+    if (!isLocalDevRequest(request)) {
+      await db.deleteFrom("sessions").where("token_hash", "=", tokenHash).execute();
+      throw unauthorized();
+    }
+    return user;
+  }
+
   if (!user.subject.startsWith("github:")) return user;
 
   const authorized = await authorize(env, user);
@@ -1116,7 +1156,7 @@ async function readState(
 
   return {
     user,
-    auth: authMethods(env),
+    auth: authMethods(env, request),
     org: settings.org ?? "OpenClaw",
     cap: numberSetting(settings.cap, 20),
     retention: settings.retention ?? "30",
@@ -5100,15 +5140,38 @@ function strongerRole(left: Role | null, right: Role): Role {
   return rank[right] > rank[left] ? right : left;
 }
 
-function authMethods(env: RuntimeEnv): Record<string, boolean> {
+function authMethods(env: RuntimeEnv, request?: Request): Record<string, boolean> {
   return {
     github: Boolean(env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET),
     token: Boolean(env.CRABYARD_BOOTSTRAP_TOKEN),
+    devIdentity: request ? isLocalDevRequest(request) : false,
   };
 }
 
 function actor(user: User): string {
   return user.login ?? user.email ?? user.subject;
+}
+
+function isLocalDevRequest(request: Request): boolean {
+  const hostname = new URL(request.url).hostname.toLowerCase();
+  return (
+    hostname === "localhost" ||
+    hostname.endsWith(".localhost") ||
+    hostname === "127.0.0.1" ||
+    hostname === "::1" ||
+    hostname === "[::1]"
+  );
+}
+
+function devIdentityId(value: unknown): string {
+  const id = String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/^dev:/, "")
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+  return id || "dev";
 }
 
 async function readJson<T>(request: Request): Promise<T> {
