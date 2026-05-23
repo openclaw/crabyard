@@ -1451,6 +1451,7 @@ function SessionsDrawer(props) {
                   key={session.id}
                   session={session}
                   focused={Boolean(focused)}
+                  singleSession={singleSession}
                   drawerOpen={open}
                   {...props}
                 />
@@ -1623,6 +1624,7 @@ function SessionCell(props) {
           key={terminalMountKey(session)}
           session={session}
           focused={props.focused}
+          singleSession={props.singleSession}
           drawerOpen={props.drawerOpen}
         />
       </div>
@@ -1825,7 +1827,7 @@ function humanStatus(value) {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-function TerminalMount({ session, focused, drawerOpen }) {
+function TerminalMount({ session, focused, singleSession, drawerOpen }) {
   const ref = useRef(null);
   const hideTimer = useRef(null);
   const mountedSessionId = useRef(null);
@@ -1847,7 +1849,7 @@ function TerminalMount({ session, focused, drawerOpen }) {
       clearTimeout(hideTimer.current);
       hideTimer.current = null;
     };
-    if (focused) {
+    if (focused || singleSession) {
       clearHideTimer();
       setVisible(true);
       return;
@@ -1887,7 +1889,7 @@ function TerminalMount({ session, focused, drawerOpen }) {
       observer.disconnect();
       clearHideTimer();
     };
-  }, [session.id, focused, drawerOpen]);
+  }, [session.id, focused, singleSession, drawerOpen]);
 
   useLayoutEffect(() => {
     const mount = ref.current;
