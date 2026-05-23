@@ -26,6 +26,12 @@ import {
   encodeTerminalFrame,
 } from "./terminal-protocol";
 import {
+  attributedTerminalInputPayloads,
+  newTerminalInputState,
+  terminalSubmittedLine,
+  type TerminalInputState,
+} from "./terminal-multiplayer";
+import {
   APP_HTML,
   GHOSTTY_BROWSER_EXTERNAL_JS,
   GHOSTTY_WEB_JS,
@@ -291,8 +297,6 @@ type TerminalHubSubscription = {
   canInput: () => Promise<boolean>;
   markClosing: (reason: string) => void;
   viewCheck: ReturnType<typeof setInterval> | null;
-  inputLine: string;
-  inputControlSequence: "escape" | "csi" | "osc" | "oscEscape" | null;
   cols: number;
   rows: number;
 };
@@ -506,6 +510,7 @@ type CompilableQuery = {
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
+const terminalInputStates = new Map<string, TerminalInputState>();
 const sessionCookie = "crabyard_session";
 const oauthStateCookie = "crabyard_oauth_state";
 const bootstrapSessionSeconds = 60 * 60;
@@ -1951,8 +1956,6 @@ async function subscribeTerminalHubSession(
       canInput,
       markClosing,
       viewCheck,
-      inputLine: "",
-      inputControlSequence: null,
       cols,
       rows,
     });
@@ -2665,7 +2668,7 @@ async function multiplayerTerminalInputPayloads(
   user: User | null,
   payload: Uint8Array,
 ): Promise<Uint8Array[]> {
-  const submitted = terminalSubmittedLine(subscription, payload);
+  const submitted = terminalSubmittedLine(terminalInputState(subscription.session.id), payload);
   if (!user || !submitted || !submitted.text.trim()) {
     return [payload];
   }
@@ -2678,10 +2681,16 @@ async function multiplayerTerminalInputPayloads(
     return [payload];
   }
 
-  const sender = terminalSenderTag(user);
-  const attributed = `${sender} ${terminalSingleLineInput(submitted.text)}${submitted.eol}`;
-  const chunks = submitted.replaceCurrentLine ? ["\x15", ...attributed] : [...attributed];
-  return chunks.map((chunk) => encoder.encode(chunk));
+  return attributedTerminalInputPayloads(user, submitted);
+}
+
+function terminalInputState(sessionId: string): TerminalInputState {
+  let state = terminalInputStates.get(sessionId);
+  if (!state) {
+    state = newTerminalInputState();
+    terminalInputStates.set(sessionId, state);
+  }
+  return state;
 }
 
 async function readInteractiveSessionMultiplayerMode(
@@ -2699,109 +2708,6 @@ async function readInteractiveSessionMultiplayerMode(
   } catch {
     return fallback;
   }
-}
-
-function terminalSubmittedLine(
-  subscription: TerminalHubSubscription,
-  payload: Uint8Array,
-): { text: string; eol: string; replaceCurrentLine: boolean } | null {
-  const text = decoder.decode(payload);
-  if (text === "\r" || text === "\n") {
-    const line = subscription.inputLine;
-    subscription.inputLine = "";
-    return { text: line, eol: text, replaceCurrentLine: true };
-  }
-
-  if (!subscription.inputLine) {
-    const eol = text.endsWith("\r") ? "\r" : text.endsWith("\n") ? "\n" : "";
-    const line = eol ? text.slice(0, -1) : "";
-    if (eol && isPlainTerminalText(line)) {
-      return { text: line, eol, replaceCurrentLine: false };
-    }
-  }
-
-  updateTerminalInputLine(subscription, text);
-  return null;
-}
-
-function updateTerminalInputLine(subscription: TerminalHubSubscription, text: string): void {
-  for (const char of text) {
-    if (subscription.inputControlSequence) {
-      subscription.inputControlSequence = nextTerminalControlSequenceState(
-        subscription.inputControlSequence,
-        char,
-      );
-      continue;
-    }
-    if (char === "\x1b") {
-      subscription.inputControlSequence = "escape";
-      continue;
-    }
-    if (char === "\r" || char === "\n" || char === "\x03" || char === "\x15") {
-      subscription.inputLine = "";
-    } else if (char === "\x7f" || char === "\b") {
-      subscription.inputLine = subscription.inputLine.slice(0, -1);
-    } else if (isPlainTerminalText(char)) {
-      subscription.inputLine = `${subscription.inputLine}${char}`.slice(-4000);
-    }
-  }
-}
-
-function nextTerminalControlSequenceState(
-  state: "escape" | "csi" | "osc" | "oscEscape",
-  char: string,
-): "escape" | "csi" | "osc" | "oscEscape" | null {
-  if (state === "escape") {
-    if (char === "[") return "csi";
-    if (char === "]") return "osc";
-    return null;
-  }
-  if (state === "csi") {
-    const code = char.charCodeAt(0);
-    return code >= 0x40 && code <= 0x7e ? null : "csi";
-  }
-  if (state === "osc") {
-    if (char === "\x07") return null;
-    if (char === "\x1b") return "oscEscape";
-    return "osc";
-  }
-  if (char === "\\") return null;
-  return char === "\x1b" ? "oscEscape" : "osc";
-}
-
-function isPlainTerminalText(value: string): boolean {
-  for (const char of value) {
-    const code = char.charCodeAt(0);
-    if (code < 32 && char !== "\n" && char !== "\r" && char !== "\t") return false;
-    if (code === 127) return false;
-  }
-  return true;
-}
-
-function terminalSingleLineInput(value: string): string {
-  return value.replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(/\n/g, "\\n");
-}
-
-function terminalSenderTag(user: User): string {
-  const name = terminalXmlAttribute(user.name ?? actor(user));
-  return `<sender name="${name}"/>`;
-}
-
-function terminalXmlAttribute(value: string): string {
-  return [...value]
-    .map((char) => {
-      const code = char.charCodeAt(0);
-      return code < 32 || code === 127 ? " " : char;
-    })
-    .join("")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 120)
-    .replace(/&/g, "&amp;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
 }
 
 function bridgeWebSockets(
@@ -5150,7 +5056,7 @@ function authMethods(env: RuntimeEnv, request?: Request): Record<string, boolean
   };
 }
 
-function actor(user: User): string {
+function actor(user: Pick<User, "subject" | "login" | "email">): string {
   return user.login ?? user.email ?? user.subject;
 }
 
