@@ -5567,7 +5567,8 @@ function isSandboxSessionAlreadyGone(error: unknown, sessionId: string): boolean
   return (
     hasSandboxSessionErrorCode(error, "SESSION_DESTROYED", sessionId) ||
     hasSandboxSessionErrorCode(error, "SESSION_TERMINATED", sessionId) ||
-    hasSandboxSessionErrorCode(error, "FILE_NOT_FOUND", sessionId)
+    hasSandboxSessionErrorCode(error, "FILE_NOT_FOUND", sessionId) ||
+    sandboxSessionNotFoundMessage(error, sessionId)
   );
 }
 
@@ -5596,6 +5597,13 @@ function sandboxErrorSessionId(response: SandboxErrorDetails): string | null {
   if (!context || typeof context !== "object") return null;
   const sessionId = (context as { sessionId?: unknown }).sessionId;
   return typeof sessionId === "string" ? sessionId : null;
+}
+
+function sandboxSessionNotFoundMessage(error: unknown, sessionId: string): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return (
+    message === `Session '${sessionId}' not found` || message === `Session "${sessionId}" not found`
+  );
 }
 
 async function createNewSandboxSession(
