@@ -64,7 +64,11 @@ function App() {
   }, []);
   const [state, setState] = useState(() => initialState(initialSessionLink));
   const [signedIn, setSignedIn] = useState(false);
-  const [authMethods, setAuthMethods] = useState({ github: false, token: false });
+  const [authMethods, setAuthMethods] = useState({
+    github: false,
+    token: false,
+    devIdentity: false,
+  });
   const [loginMessage, setLoginMessage] = useState("");
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
@@ -279,7 +283,7 @@ function App() {
       setAuthMethods(methods);
       return methods;
     } catch {
-      const methods = { github: false, token: true };
+      const methods = { github: false, token: true, devIdentity: false };
       setAuthMethods(methods);
       return methods;
     }
@@ -469,6 +473,19 @@ function App() {
     }
   }
 
+  async function devIdentityLogin(identity) {
+    try {
+      await api("/api/login/dev", {
+        method: "POST",
+        body: identity,
+        authOptional: true,
+      });
+      await loadState();
+    } catch (error) {
+      setLoginMessage(String(error.message || error));
+    }
+  }
+
   async function logout() {
     try {
       sessionStorage.setItem(skipAutoGithubLoginKey, "1");
@@ -480,6 +497,7 @@ function App() {
 
   async function maybeAutoGithubLogin(methods = authMethodsRef.current) {
     if (signedInRef.current || autoLoginStarted.current || !methods?.github) return false;
+    if (methods.devIdentity) return false;
     if (methods.token && wantsTokenLoginBypass()) return false;
     const shared = sharedRef.current;
     if (shared.id && shared.token) return false;
@@ -777,6 +795,7 @@ function App() {
     openSessionGrid,
     beginLogin,
     tokenLogin,
+    devIdentityLogin,
     logout,
     setTheme,
     cardAction,
@@ -823,6 +842,7 @@ function CrabyardApp(props) {
         message={props.loginMessage}
         onGithub={props.beginLogin}
         onToken={props.tokenLogin}
+        onDevIdentity={props.devIdentityLogin}
       />
       <AppShell {...props} />
       <CardDrawer {...props} />
@@ -834,7 +854,14 @@ function CrabyardApp(props) {
   );
 }
 
-function LoginScreen({ hidden, authMethods, message, onGithub, onToken }) {
+const devIdentityPresets = [
+  { id: "admin-1", name: "Admin 1", role: "owner" },
+  { id: "admin-2", name: "Admin 2", role: "owner" },
+  { id: "user-1", name: "User 1", role: "maintainer" },
+  { id: "user-2", name: "User 2", role: "viewer" },
+];
+
+function LoginScreen({ hidden, authMethods, message, onGithub, onToken, onDevIdentity }) {
   const [token, setToken] = useState("");
   return (
     <section class="login-screen" hidden={hidden}>
@@ -875,6 +902,11 @@ function LoginScreen({ hidden, authMethods, message, onGithub, onToken }) {
             Use token
           </button>
         </div>
+        <DevIdentityPanel
+          hidden={!authMethods.devIdentity}
+          user={null}
+          onDevIdentity={onDevIdentity}
+        />
         <div class={`banner ${message ? "show" : ""}`}>{message}</div>
         <div class="login-footer">
           <a href="/docs/">Documentation</a>
@@ -992,8 +1024,78 @@ function AppShell(props) {
             {userLabel}
           </button>
         </section>
+        <DevIdentityPanel
+          hidden={!props.authMethods.devIdentity || !props.signedIn}
+          user={user}
+          onDevIdentity={props.devIdentityLogin}
+        />
         <Board {...props} />
       </main>
+    </div>
+  );
+}
+
+function DevIdentityPanel({ hidden, user, onDevIdentity }) {
+  const currentId = user?.subject?.startsWith("dev:")
+    ? user.subject.slice("dev:".length)
+    : user?.login || "admin-1";
+  const currentName = user?.name || user?.login || "Admin 1";
+  const currentRole = user?.role || "owner";
+  const [id, setId] = useState(currentId);
+  const [name, setName] = useState(currentName);
+  const [role, setRole] = useState(currentRole);
+
+  useEffect(() => {
+    if (hidden) return;
+    setId(currentId);
+    setName(currentName);
+    setRole(currentRole);
+  }, [hidden, currentId, currentName, currentRole]);
+
+  async function submit(identity) {
+    setId(identity.id);
+    setName(identity.name);
+    setRole(identity.role);
+    await onDevIdentity(identity);
+  }
+
+  return (
+    <div
+      class="dev-identity-panel"
+      hidden={hidden}
+      onKeyDown={(event) => {
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+        void submit({ id, name, role });
+      }}
+    >
+      <div class="dev-identity-title">Dev identity</div>
+      <div class="dev-identity-presets">
+        {devIdentityPresets.map((preset) => (
+          <button type="button" onClick={() => void submit(preset)}>
+            {preset.name}
+          </button>
+        ))}
+      </div>
+      <label>
+        ID
+        <input value={id} onInput={(event) => setId(event.currentTarget.value)} />
+      </label>
+      <label>
+        Name
+        <input value={name} onInput={(event) => setName(event.currentTarget.value)} />
+      </label>
+      <label>
+        Role
+        <select value={role} onInput={(event) => setRole(event.currentTarget.value)}>
+          <option value="owner">Owner</option>
+          <option value="maintainer">Maintainer</option>
+          <option value="viewer">Viewer</option>
+        </select>
+      </label>
+      <button class="primary" type="button" onClick={() => void submit({ id, name, role })}>
+        Apply
+      </button>
     </div>
   );
 }
@@ -1681,8 +1783,14 @@ function InteractiveSessionActions(props) {
   if (String(session.id).startsWith("LOCAL-")) return null;
   const stopped = isDeadInteractiveSession(session);
   const canManage = session.canManage || canMaintain(props.state.user);
+  const canChangeMultiplayer = Boolean(session.canChangeMultiplayer);
   const shareAction = session.shareMode === "link_read" ? "disable_share" : "share_link";
   const shareLabel = session.shareMode === "link_read" ? "Unshare" : "Share";
+  const multiplayerAction = session.multiplayerMode ? "disable_multiplayer" : "enable_multiplayer";
+  const multiplayerLabel = session.multiplayerMode ? "Solo input" : "Multiplayer";
+  const multiplayerTooltip = session.multiplayerMode
+    ? 'Multiplayer attribution is on. Submitted prompts are prepended with a <sender name=""/> tag for the model.'
+    : 'Turn on multiplayer attribution. Submitted prompts will be prepended with a <sender name=""/> tag for the model.';
   const handleShare = () => {
     if (shareAction === "disable_share")
       return props.interactiveSessionAction(session.id, shareAction);
@@ -1692,6 +1800,15 @@ function InteractiveSessionActions(props) {
     return (
       <>
         {canManage ? <button onClick={handleShare}>{shareLabel}</button> : null}
+        {canChangeMultiplayer ? (
+          <button
+            aria-pressed={session.multiplayerMode}
+            title={multiplayerTooltip}
+            onClick={() => props.interactiveSessionAction(session.id, multiplayerAction)}
+          >
+            {multiplayerLabel}
+          </button>
+        ) : null}
         {canManage ? (
           <button
             class="danger"
@@ -1710,6 +1827,15 @@ function InteractiveSessionActions(props) {
   return (
     <>
       {canManage ? <button onClick={handleShare}>{shareLabel}</button> : null}
+      {canChangeMultiplayer ? (
+        <button
+          aria-pressed={session.multiplayerMode}
+          title={multiplayerTooltip}
+          onClick={() => props.interactiveSessionAction(session.id, multiplayerAction)}
+        >
+          {multiplayerLabel}
+        </button>
+      ) : null}
       {session.canRequestControl && !session.sharedReadOnly && !stopped ? (
         <button onClick={() => props.interactiveSessionAction(session.id, "request_control")}>
           {session.controlRequestedBy ? "Control requested" : "Request control"}
@@ -1788,6 +1914,9 @@ function sessionStatus(session) {
     if (session.shareMode === "link_read" || session.sharedReadOnly) {
       return { label: "Shared", tone: "shared" };
     }
+    if (session.multiplayerMode) {
+      return { label: "Multiplayer", tone: "shared" };
+    }
     if (["ready", "attached", "detached"].includes(session.status)) {
       return { label: "Live", tone: "live" };
     }
@@ -1808,6 +1937,7 @@ function sessionFooterSummary(session) {
     if (seen) parts.push(`seen ${elapsed(seen)}`);
     if (session.status) parts.push(humanStatus(session.status));
     if (session.shareMode === "link_read" || session.sharedReadOnly) parts.push("shared");
+    if (session.multiplayerMode) parts.push("multiplayer");
     if (session.controller) parts.push(`control ${session.controller}`);
     if (session.controlRequestedBy) parts.push(`request ${session.controlRequestedBy}`);
     return parts.join(" · ");

@@ -26,6 +26,12 @@ import {
   encodeTerminalFrame,
 } from "./terminal-protocol";
 import {
+  attributedTerminalInputPayloads,
+  newTerminalInputState,
+  terminalSubmittedLine,
+  type TerminalInputState,
+} from "./terminal-multiplayer";
+import {
   APP_HTML,
   GHOSTTY_BROWSER_EXTERNAL_JS,
   GHOSTTY_WEB_JS,
@@ -247,8 +253,10 @@ type InteractiveSession = {
   controller: string | null;
   controlGrantedAt: number | null;
   controlExpiresAt: number | null;
+  multiplayerMode: boolean;
   canControl?: boolean;
   canManage?: boolean;
+  canChangeMultiplayer?: boolean;
   canRequestControl?: boolean;
   sharedReadOnly?: boolean;
   logs: string[];
@@ -443,6 +451,7 @@ type InteractiveSessionTable = {
   controller: string | null;
   control_granted_at: number | null;
   control_expires_at: number | null;
+  multiplayer_mode: number;
 };
 
 type RepoWorkflowTable = {
@@ -501,6 +510,7 @@ type CompilableQuery = {
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
+const terminalInputStates = new Map<string, TerminalInputState>();
 const sessionCookie = "crabyard_session";
 const oauthStateCookie = "crabyard_oauth_state";
 const bootstrapSessionSeconds = 60 * 60;
@@ -526,6 +536,7 @@ const deadInteractiveSessionStatuses: readonly InteractiveSessionStatus[] = [
   "expired",
   "failed",
 ];
+const roleOptions = new Set<Role>(["viewer", "maintainer", "owner"]);
 const runtimeOptions = ["auto", "container", "crabbox"] as const;
 const mergePolicyOptions = ["open_pr", "merge_when_green", "fix_until_green_and_merge"] as const;
 const defaultStallMs = 5 * 60 * 1000;
@@ -725,12 +736,16 @@ async function api(request: Request, env: RuntimeEnv): Promise<Response> {
     return tokenLogin(request, env);
   }
 
+  if (request.method === "POST" && url.pathname === "/api/login/dev") {
+    return devIdentityLogin(request, env);
+  }
+
   if (request.method === "POST" && url.pathname === "/api/logout") {
     return logout(request, env);
   }
 
   if (request.method === "GET" && url.pathname === "/api/auth") {
-    return json({ auth: authMethods(env) });
+    return json({ auth: authMethods(env, request) });
   }
 
   if (request.method === "POST" && url.pathname === "/api/provision/interactive") {
@@ -755,7 +770,7 @@ async function api(request: Request, env: RuntimeEnv): Promise<Response> {
   const user = await requireUser(request, env);
 
   if (request.method === "GET" && url.pathname === "/api/session") {
-    return json({ user, auth: authMethods(env) });
+    return json({ user, auth: authMethods(env, request) });
   }
 
   if (request.method === "GET" && url.pathname === "/api/state") {
@@ -924,7 +939,34 @@ async function tokenLogin(request: Request, env: RuntimeEnv): Promise<Response> 
   };
   await upsertUser(env, user, now);
   const cookieHeader = await createSession(env, request, user.subject, now);
-  return json({ user, auth: authMethods(env) }, { headers: { "set-cookie": cookieHeader } });
+  return json(
+    { user, auth: authMethods(env, request) },
+    { headers: { "set-cookie": cookieHeader } },
+  );
+}
+
+async function devIdentityLogin(request: Request, env: RuntimeEnv): Promise<Response> {
+  if (!isLocalDevRequest(request)) return json({ error: "not found" }, { status: 404 });
+
+  const body = await readJson<{ id?: string; name?: string; role?: string }>(request);
+  const id = devIdentityId(body.id);
+  const role = roleOptions.has(body.role as Role) ? (body.role as Role) : "owner";
+  const user: User = {
+    subject: `dev:${id}`,
+    login: id,
+    email: null,
+    name: clean(body.name, 120) || id,
+    role,
+    allowed: true,
+    teams: [],
+  };
+  const now = Date.now();
+  await upsertUser(env, user, now);
+  const cookieHeader = await createSession(env, request, user.subject, now);
+  return json(
+    { user, auth: authMethods(env, request) },
+    { headers: { "set-cookie": cookieHeader } },
+  );
 }
 
 async function githubLogin(request: Request, env: RuntimeEnv): Promise<Response> {
@@ -1061,6 +1103,14 @@ async function requireUser(request: Request, env: RuntimeEnv): Promise<User> {
     return user;
   }
 
+  if (user.subject.startsWith("dev:")) {
+    if (!isLocalDevRequest(request)) {
+      await db.deleteFrom("sessions").where("token_hash", "=", tokenHash).execute();
+      throw unauthorized();
+    }
+    return user;
+  }
+
   if (!user.subject.startsWith("github:")) return user;
 
   const authorized = await authorize(env, user);
@@ -1112,7 +1162,7 @@ async function readState(
 
   return {
     user,
-    auth: authMethods(env),
+    auth: authMethods(env, request),
     org: settings.org ?? "OpenClaw",
     cap: numberSetting(settings.cap, 20),
     retention: settings.retention ?? "30",
@@ -1183,6 +1233,7 @@ async function createInteractiveSession(
           controller: null,
           control_granted_at: null,
           control_expires_at: null,
+          multiplayer_mode: 0,
         })
         .execute();
       await appendInteractiveSessionEvent(env, id, user, "interactive workspace requested", now);
@@ -1373,6 +1424,37 @@ async function mutateInteractiveSession(
       .execute();
     await appendInteractiveSessionEvent(env, id, user, "session sharing disabled", now);
     await audit(env, user, `interactive session share disabled ${id}`, now);
+    return {
+      session: decorateInteractiveSession(
+        (await readInteractiveSession(env, id)) as InteractiveSession,
+        user,
+        env,
+      ),
+    };
+  }
+
+  if (action === "enable_multiplayer" || action === "disable_multiplayer") {
+    if (!canChangeInteractiveSessionMultiplayer(user, session)) {
+      throw forbidden("only the session creator can change multiplayer");
+    }
+    const enabled = action === "enable_multiplayer";
+    const message = enabled ? "multiplayer mode enabled" : "multiplayer mode disabled";
+    await database(env)
+      .updateTable("interactive_sessions")
+      .set({
+        multiplayer_mode: enabled ? 1 : 0,
+        updated_at: now,
+        last_event: message,
+      })
+      .where("id", "=", id)
+      .execute();
+    await appendInteractiveSessionEvent(env, id, user, message, now);
+    await audit(
+      env,
+      user,
+      `interactive session multiplayer ${enabled ? "enabled" : "disabled"} ${id}`,
+      now,
+    );
     return {
       session: decorateInteractiveSession(
         (await readInteractiveSession(env, id)) as InteractiveSession,
@@ -1670,7 +1752,16 @@ async function interactiveTerminalHub(
             return;
           }
           if (subscription.upstream.readyState === WebSocket.OPEN) {
-            subscription.upstream.send(frame.payload);
+            const inputs = await multiplayerTerminalInputPayloads(
+              env,
+              subscription,
+              user,
+              frame.payload,
+            );
+            for (const [index, input] of inputs.entries()) {
+              if (index > 0) await sleep(index === inputs.length - 1 ? 80 : 2);
+              subscription.upstream.send(input);
+            }
           }
           return;
         }
@@ -2569,6 +2660,54 @@ function interactiveTerminalHeaders(
   });
   if (authorization) headers.set("authorization", authorization);
   return headers;
+}
+
+async function multiplayerTerminalInputPayloads(
+  env: RuntimeEnv,
+  subscription: TerminalHubSubscription,
+  user: User | null,
+  payload: Uint8Array,
+): Promise<Uint8Array[]> {
+  const submitted = terminalSubmittedLine(terminalInputState(subscription.session.id), payload);
+  if (!user || !submitted || !submitted.text.trim()) {
+    return [payload];
+  }
+  const enabled = await readInteractiveSessionMultiplayerMode(
+    env,
+    subscription.session.id,
+    subscription.session.multiplayerMode,
+  );
+  if (!enabled) {
+    return [payload];
+  }
+
+  return attributedTerminalInputPayloads(user, submitted);
+}
+
+function terminalInputState(sessionId: string): TerminalInputState {
+  let state = terminalInputStates.get(sessionId);
+  if (!state) {
+    state = newTerminalInputState();
+    terminalInputStates.set(sessionId, state);
+  }
+  return state;
+}
+
+async function readInteractiveSessionMultiplayerMode(
+  env: RuntimeEnv,
+  id: string,
+  fallback: boolean,
+): Promise<boolean> {
+  try {
+    const row = await database(env)
+      .selectFrom("interactive_sessions")
+      .select(["multiplayer_mode"])
+      .where("id", "=", id)
+      .executeTakeFirst();
+    return row ? row.multiplayer_mode === 1 : fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 function bridgeWebSockets(
@@ -4396,6 +4535,7 @@ async function readSharedInteractiveSession(
       controller: activeController,
       controlGrantedAt: activeController ? session.controlGrantedAt : null,
       controlExpiresAt: activeController ? session.controlExpiresAt : null,
+      multiplayerMode: session.multiplayerMode,
       canControl: false,
       canManage: false,
       canRequestControl: false,
@@ -4908,15 +5048,38 @@ function strongerRole(left: Role | null, right: Role): Role {
   return rank[right] > rank[left] ? right : left;
 }
 
-function authMethods(env: RuntimeEnv): Record<string, boolean> {
+function authMethods(env: RuntimeEnv, request?: Request): Record<string, boolean> {
   return {
     github: Boolean(env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET),
     token: Boolean(env.CRABYARD_BOOTSTRAP_TOKEN),
+    devIdentity: request ? isLocalDevRequest(request) : false,
   };
 }
 
-function actor(user: User): string {
+function actor(user: Pick<User, "subject" | "login" | "email">): string {
   return user.login ?? user.email ?? user.subject;
+}
+
+function isLocalDevRequest(request: Request): boolean {
+  const hostname = new URL(request.url).hostname.toLowerCase();
+  return (
+    hostname === "localhost" ||
+    hostname.endsWith(".localhost") ||
+    hostname === "127.0.0.1" ||
+    hostname === "::1" ||
+    hostname === "[::1]"
+  );
+}
+
+function devIdentityId(value: unknown): string {
+  const id = String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/^dev:/, "")
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+  return id || "dev";
 }
 
 async function readJson<T>(request: Request): Promise<T> {
@@ -5007,6 +5170,7 @@ function interactiveSession(row: InteractiveSessionTable, logs: string[]): Inter
     controller: row.controller,
     controlGrantedAt: row.control_granted_at,
     controlExpiresAt: row.control_expires_at,
+    multiplayerMode: row.multiplayer_mode === 1,
     logs,
   };
 }
@@ -5020,6 +5184,7 @@ function decorateInteractiveSession(
   const now = Date.now();
   const delegatedControl = env ? canGrantDelegatedControl(env, session) : true;
   const canManage = canManageInteractiveSession(user, session);
+  const canChangeMultiplayer = canChangeInteractiveSessionMultiplayer(user, session);
   const canControl = canControlInteractiveSession(user, session, now, delegatedControl);
   const activeController = activeDelegatedController(session, now);
   return {
@@ -5031,14 +5196,30 @@ function decorateInteractiveSession(
     controlGrantedAt: activeController ? session.controlGrantedAt : null,
     controlExpiresAt: activeController ? session.controlExpiresAt : null,
     canManage,
+    canChangeMultiplayer,
     canControl,
     canRequestControl: delegatedControl && !canControl,
   };
 }
 
+function canChangeInteractiveSessionMultiplayer(user: User, session: InteractiveSession): boolean {
+  return userActorCandidates(user).has(session.owner);
+}
+
 function canManageInteractiveSession(user: User, session: InteractiveSession): boolean {
-  const userActor = actor(user);
-  return session.owner === userActor || user.role === "maintainer" || user.role === "owner";
+  return (
+    userActorCandidates(user).has(session.owner) ||
+    user.role === "maintainer" ||
+    user.role === "owner"
+  );
+}
+
+function userActorCandidates(user: User): Set<string> {
+  return new Set(
+    [actor(user), user.subject, user.login, user.email].filter((value): value is string =>
+      Boolean(value),
+    ),
+  );
 }
 
 function canControlInteractiveSession(
@@ -5770,6 +5951,10 @@ function securityHeaders(contentType: string, cache = true): HeadersInit {
     "referrer-policy": "no-referrer",
     "cache-control": cache ? "public, max-age=300" : "no-store",
   };
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function base64Bytes(value: string): Uint8Array {

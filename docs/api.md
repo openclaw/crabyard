@@ -328,6 +328,8 @@ Actions:
 - `approve_control`: owner/maintainer, grant pending requester 30 minutes of writable terminal control.
 - `deny_control`: owner/maintainer, clear a pending control request.
 - `revoke_control`: owner/maintainer, revoke active delegated control.
+- `enable_multiplayer`: session creator, prefix submitted terminal prompts with the actor.
+- `disable_multiplayer`: session creator, stop prefixing submitted terminal prompts with the actor.
 - `stop`: owner/maintainer, mark stopped.
 
 Response:

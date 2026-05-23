@@ -282,6 +282,45 @@
         min-height: 44px;
         font-size: 15px;
       }
+      .dev-identity-panel {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        box-shadow: var(--shadow);
+        display: grid;
+        grid-template-columns:
+          auto auto minmax(140px, 1fr) minmax(160px, 1fr) minmax(130px, auto)
+          auto;
+        gap: 10px;
+        align-items: end;
+        margin-bottom: 18px;
+        padding: 12px;
+      }
+      .dev-identity-panel[hidden] {
+        display: none;
+      }
+      .login-panel .dev-identity-panel {
+        grid-template-columns: 1fr;
+        margin-bottom: 0;
+      }
+      .dev-identity-title {
+        align-self: center;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+      }
+      .dev-identity-presets {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .dev-identity-presets button {
+        min-height: 30px;
+        padding: 0 10px;
+        font-size: 12px;
+      }
       .login-footer {
         text-align: center;
         padding-top: 8px;
@@ -1395,6 +1434,7 @@
         }
         .toolbar,
         .status-strip,
+        .dev-identity-panel,
         .board,
         .run-layout,
         .form-grid,
