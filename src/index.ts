@@ -2784,7 +2784,7 @@ function terminalSingleLineInput(value: string): string {
 
 function terminalSenderTag(user: User): string {
   const name = terminalXmlAttribute(user.name ?? actor(user));
-  return `<sender name="${name}"/>`;
+  return `<s n="${name}"/>`;
 }
 
 function terminalXmlAttribute(value: string): string {
@@ -5297,12 +5297,23 @@ function decorateInteractiveSession(
 }
 
 function canChangeInteractiveSessionMultiplayer(user: User, session: InteractiveSession): boolean {
-  return session.owner === actor(user);
+  return userActorCandidates(user).has(session.owner);
 }
 
 function canManageInteractiveSession(user: User, session: InteractiveSession): boolean {
-  const userActor = actor(user);
-  return session.owner === userActor || user.role === "maintainer" || user.role === "owner";
+  return (
+    userActorCandidates(user).has(session.owner) ||
+    user.role === "maintainer" ||
+    user.role === "owner"
+  );
+}
+
+function userActorCandidates(user: User): Set<string> {
+  return new Set(
+    [actor(user), user.subject, user.login, user.email].filter((value): value is string =>
+      Boolean(value),
+    ),
+  );
 }
 
 function canControlInteractiveSession(
