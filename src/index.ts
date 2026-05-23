@@ -250,6 +250,7 @@ type InteractiveSession = {
   multiplayerMode: boolean;
   canControl?: boolean;
   canManage?: boolean;
+  canChangeMultiplayer?: boolean;
   canRequestControl?: boolean;
   sharedReadOnly?: boolean;
   logs: string[];
@@ -1428,7 +1429,9 @@ async function mutateInteractiveSession(
   }
 
   if (action === "enable_multiplayer" || action === "disable_multiplayer") {
-    if (!canManage) throw forbidden("only the session owner or maintainer can change multiplayer");
+    if (!canChangeInteractiveSessionMultiplayer(user, session)) {
+      throw forbidden("only the session creator can change multiplayer");
+    }
     const enabled = action === "enable_multiplayer";
     const message = enabled ? "multiplayer mode enabled" : "multiplayer mode disabled";
     await database(env)
@@ -5276,6 +5279,7 @@ function decorateInteractiveSession(
   const now = Date.now();
   const delegatedControl = env ? canGrantDelegatedControl(env, session) : true;
   const canManage = canManageInteractiveSession(user, session);
+  const canChangeMultiplayer = canChangeInteractiveSessionMultiplayer(user, session);
   const canControl = canControlInteractiveSession(user, session, now, delegatedControl);
   const activeController = activeDelegatedController(session, now);
   return {
@@ -5287,9 +5291,14 @@ function decorateInteractiveSession(
     controlGrantedAt: activeController ? session.controlGrantedAt : null,
     controlExpiresAt: activeController ? session.controlExpiresAt : null,
     canManage,
+    canChangeMultiplayer,
     canControl,
     canRequestControl: delegatedControl && !canControl,
   };
+}
+
+function canChangeInteractiveSessionMultiplayer(user: User, session: InteractiveSession): boolean {
+  return session.owner === actor(user);
 }
 
 function canManageInteractiveSession(user: User, session: InteractiveSession): boolean {

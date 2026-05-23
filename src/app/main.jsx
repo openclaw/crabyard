@@ -1783,6 +1783,7 @@ function InteractiveSessionActions(props) {
   if (String(session.id).startsWith("LOCAL-")) return null;
   const stopped = isDeadInteractiveSession(session);
   const canManage = session.canManage || canMaintain(props.state.user);
+  const canChangeMultiplayer = Boolean(session.canChangeMultiplayer);
   const shareAction = session.shareMode === "link_read" ? "disable_share" : "share_link";
   const shareLabel = session.shareMode === "link_read" ? "Unshare" : "Share";
   const multiplayerAction = session.multiplayerMode ? "disable_multiplayer" : "enable_multiplayer";
@@ -1799,7 +1800,7 @@ function InteractiveSessionActions(props) {
     return (
       <>
         {canManage ? <button onClick={handleShare}>{shareLabel}</button> : null}
-        {canManage ? (
+        {canChangeMultiplayer ? (
           <button
             aria-pressed={session.multiplayerMode}
             title={multiplayerTooltip}
@@ -1826,7 +1827,7 @@ function InteractiveSessionActions(props) {
   return (
     <>
       {canManage ? <button onClick={handleShare}>{shareLabel}</button> : null}
-      {canManage ? (
+      {canChangeMultiplayer ? (
         <button
           aria-pressed={session.multiplayerMode}
           title={multiplayerTooltip}
