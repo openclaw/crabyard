@@ -32,6 +32,7 @@ import {
 const logo = "__CRABYARD_LOGO__";
 const loginReturnKey = "crabyard-login-return";
 const skipAutoGithubLoginKey = "crabyard-skip-auto-github-login";
+const githubAutoLoginReadyKey = "crabyard-github-auto-login-ready";
 const sessionLayoutStorageKey = "crabyard-session-layout-v1";
 const emptyState = {
   cards: [],
@@ -58,6 +59,7 @@ function initialState(initialSessionLink) {
 }
 
 function App() {
+  const githubLoginCallback = useRef(isGithubLoginCallback());
   const initialSessionLink = useMemo(() => {
     restoreSessionReturnUrl();
     return parseSessionLink();
@@ -204,6 +206,7 @@ function App() {
       setState(nextState);
       setSignedIn(true);
       setLoginMessage("");
+      finishGithubLoginCallback(true);
     } catch (error) {
       if (error.status === 401 || error.status === 403) {
         const shared = sharedRef.current;
@@ -216,6 +219,7 @@ function App() {
           return;
         }
         const methods = await loadAuthMethods();
+        finishGithubLoginCallback(false);
         if (error.status === 401 && (await maybeAutoGithubLogin(methods))) return;
         setSignedIn(false);
         setLoginMessage(error.message === "unauthorized" ? "" : error.message);
@@ -489,6 +493,7 @@ function App() {
   async function logout() {
     try {
       sessionStorage.setItem(skipAutoGithubLoginKey, "1");
+      localStorage.removeItem(githubAutoLoginReadyKey);
     } catch {}
     autoLoginStarted.current = false;
     await api("/api/logout", { method: "POST", authOptional: true });
@@ -503,7 +508,10 @@ function App() {
     if (shared.id && shared.token) return false;
     try {
       if (sessionStorage.getItem(skipAutoGithubLoginKey) === "1") return false;
-    } catch {}
+      if (localStorage.getItem(githubAutoLoginReadyKey) !== "1") return false;
+    } catch {
+      return false;
+    }
     autoLoginStarted.current = true;
     preserveLoginReturnUrl();
     location.href = "/login/github";
@@ -519,6 +527,21 @@ function App() {
   function wantsTokenLoginBypass() {
     const params = new URLSearchParams(location.search);
     return params.get("auth") === "token";
+  }
+
+  function finishGithubLoginCallback(remember) {
+    if (!githubLoginCallback.current) return;
+    githubLoginCallback.current = false;
+    if (remember) {
+      try {
+        localStorage.setItem(githubAutoLoginReadyKey, "1");
+      } catch {}
+    }
+    if (!history.replaceState) return;
+    const url = new URL(location.href);
+    if (url.searchParams.get("login") !== "github") return;
+    url.searchParams.delete("login");
+    history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
   }
 
   async function cardAction(id, action) {
@@ -2642,6 +2665,10 @@ function parseSessionLink() {
     id: match?.[1] ? decodeURIComponent(match[1]) : null,
     token: new URLSearchParams(location.search).get("token"),
   };
+}
+
+function isGithubLoginCallback() {
+  return new URLSearchParams(location.search).get("login") === "github";
 }
 
 function restoreSessionReturnUrl() {

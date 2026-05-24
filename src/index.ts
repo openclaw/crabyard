@@ -1115,9 +1115,12 @@ async function githubCallback(request: Request, env: RuntimeEnv): Promise<Respon
     tokenBody.access_token,
   );
   const pendingSshCode = cookies(request).get(sshLinkCookie);
-  return redirect(pendingSshCode ? `/ssh/link/${encodeURIComponent(pendingSshCode)}` : "/app", {
-    "set-cookie": session,
-  });
+  return redirect(
+    pendingSshCode ? `/ssh/link/${encodeURIComponent(pendingSshCode)}` : "/app?login=github",
+    {
+      "set-cookie": session,
+    },
+  );
 }
 
 async function sshLink(request: Request, env: RuntimeEnv, code: string): Promise<Response> {
@@ -1146,7 +1149,7 @@ async function sshLink(request: Request, env: RuntimeEnv, code: string): Promise
       throw forbidden("Sign in with GitHub again before linking an SSH key");
     }
     await consumeSshLink(env, user, code, Date.now(), githubToken);
-    return redirect("/app?ssh=linked", {
+    return redirect("/app?ssh=linked&login=github", {
       "set-cookie": cookie(request, sshLinkCookie, "", 0),
     });
   }
