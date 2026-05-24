@@ -2,6 +2,8 @@ import { execFile } from "node:child_process";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 
+import { css, js, preThemeScript, themeToggleHtml } from "./docs-site-assets.mjs";
+
 const run = promisify(execFile);
 const appBuildRoot = new URL("../dist/app-bundle/", import.meta.url);
 const appPath = new URL("../dist/app-bundle/app.html", import.meta.url);
@@ -137,57 +139,48 @@ function renderSpecPage(markdown) {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Crabyard.ai Spec</title>
-  <style>
-    :root {
-      color-scheme: light;
-      --bg: #f6f3ee;
-      --panel: #fffdf9;
-      --text: #201f1c;
-      --muted: #6d675f;
-      --line: #dfd5c8;
-      --accent: #a64834;
-      --accent-soft: #f2d8cf;
-      font-family: "Avenir Next", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
-    }
-    * { box-sizing: border-box; }
-    body { margin: 0; background: var(--bg); color: var(--text); line-height: 1.55; }
-    header {
-      position: sticky; top: 0; z-index: 1; border-bottom: 1px solid var(--line);
-      background: color-mix(in srgb, var(--panel) 92%, transparent); backdrop-filter: blur(12px);
-    }
-    .bar { max-width: 1120px; margin: 0 auto; padding: 14px 24px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-    .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; }
-    .mark { width: 24px; height: 24px; border-radius: 7px; display: grid; place-items: center; color: var(--accent); background: var(--accent-soft); font-size: 13px; }
-    nav { display: flex; gap: 14px; font-size: 14px; }
-    a { color: var(--accent); text-decoration: none; }
-    a:hover { text-decoration: underline; }
-    main { max-width: 1120px; margin: 0 auto; padding: 36px 24px 64px; display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 28px; }
-    article { min-width: 0; padding: 34px 40px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); box-shadow: 0 1px 2px rgb(0 0 0 / 4%); }
-    aside { align-self: start; position: sticky; top: 74px; padding: 18px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--muted); font-size: 14px; }
-    h1, h2, h3 { letter-spacing: 0; line-height: 1.2; margin: 1.5em 0 0.55em; }
-    h1 { margin-top: 0; font-size: 34px; }
-    h2 { padding-top: 10px; font-size: 23px; }
-    h3 { font-size: 18px; }
-    p, ul, ol, pre { margin: 0.7em 0; }
-    ul, ol { padding-left: 1.35rem; }
-    li + li { margin-top: 0.18rem; }
-    code { border: 1px solid var(--line); border-radius: 5px; padding: 0.08rem 0.28rem; background: #fbf7f0; font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; font-size: 0.92em; }
-    pre { overflow: auto; padding: 15px 16px; border: 1px solid var(--line); border-radius: 8px; background: #fbf7f0; }
-    pre code { border: 0; padding: 0; background: transparent; font-size: 13px; }
-    @media (max-width: 900px) { main { grid-template-columns: 1fr; } aside { position: static; } article { padding: 26px 22px; } }
-  </style>
+  <link rel="icon" type="image/png" href="/crabyard-logo.png">
+  <script>${preThemeScript()}</script>
+  <style>${css()}</style>
 </head>
 <body>
-  <header>
-    <div class="bar">
-      <div class="brand"><span class="mark">CY</span><span>Crabyard.ai</span></div>
-      <nav><a href="/">App</a><a href="/docs/spec.md">Markdown</a><a href="https://github.com/openclaw/crabyard">GitHub</a></nav>
-    </div>
-  </header>
-  <main>
-    <article>${markdownToHtml(markdown)}</article>
-    <aside><strong>Draft spec</strong><p>Cloud control plane for Codex sessions, cards, live attach, logs, and merge policy.</p></aside>
-  </main>
+  <button class="nav-toggle" type="button" aria-label="Toggle navigation" aria-expanded="false">
+    <span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span>
+  </button>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="sidebar-head">
+        <a class="brand" href="/docs/" aria-label="Crabyard docs home">
+          <span class="mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+          <span><strong>Crabyard</strong><small>Control plane docs</small></span>
+        </a>
+        ${themeToggleHtml()}
+      </div>
+      <label class="search"><span>Search</span><input id="doc-search" type="search" placeholder="cards, runs, admin"></label>
+      <nav>
+        <section><h2>Start</h2><a class="nav-link" href="https://docs.crabyard.ai/">Overview</a><a class="nav-link" href="https://docs.crabyard.ai/quickstart/">Quickstart</a><a class="nav-link" href="https://docs.crabyard.ai/architecture/">Architecture</a></section>
+        <section><h2>Features</h2><a class="nav-link" href="https://docs.crabyard.ai/cards/">Cards</a><a class="nav-link" href="https://docs.crabyard.ai/runs/">Runs</a><a class="nav-link" href="https://docs.crabyard.ai/admin/">Admin</a></section>
+        <section><h2>Reference</h2><a class="nav-link" href="/docs/spec.md">Markdown</a><a class="nav-link active" href="/docs/spec">Spec</a><a class="nav-link" href="https://github.com/openclaw/crabyard">GitHub</a><a class="nav-link" href="/app/">App</a></section>
+      </nav>
+    </aside>
+    <main>
+      <header class="hero">
+        <div class="hero-text">
+          <p class="eyebrow">Reference</p>
+          <h1>Crabyard.ai Spec</h1>
+        </div>
+        <div class="hero-meta">
+          <a class="repo" href="/">App</a>
+          <a class="edit" href="/docs/spec.md">Markdown</a>
+        </div>
+      </header>
+      <div class="doc-grid">
+        <article class="doc">${markdownToHtml(markdown)}</article>
+        <nav class="toc" aria-label="Docs links"><h2>Docs</h2><a href="https://docs.crabyard.ai/">Generated docs site</a><a href="https://docs.crabyard.ai/api/">API reference</a></nav>
+      </div>
+    </main>
+  </div>
+  <script>${js()}</script>
 </body>
 </html>`;
 }

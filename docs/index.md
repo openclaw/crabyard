@@ -5,9 +5,33 @@ permalink: /
 description: "Crabyard.ai is a Cloudflare Worker control plane for OpenClaw Codex cards and run attempts."
 ---
 
-# Crabyard.ai Documentation
+## Try it
 
-Crabyard is an OpenClaw control plane for Codex work: prompt cards, repo gates, durable run attempts, issue/PR previews, workflow policy, and attachable Ghostty WASM session views.
+Link your SSH key once, then use Crabyard from the terminal or the app.
+
+```bash
+# Link your current SSH key to GitHub-backed Crabyard access.
+ssh link@ssh.crabyard.ai
+
+# Inspect your identity and active Codex sessions.
+ssh ssh.crabyard.ai whoami
+ssh ssh.crabyard.ai list
+
+# Create or attach to an interactive Codex session.
+ssh ssh.crabyard.ai new "fix the failing check"
+ssh ssh.crabyard.ai attach <session-id>
+```
+
+The web app at [crabyard.ai/app](https://crabyard.ai/app/) exposes the same control plane: GitHub OAuth, repo-gated cards, runtime policy, live session tiles, and admin allowlists.
+
+## What Crabyard Does
+
+- **SSH-first onboarding.** Connect through `ssh link@ssh.crabyard.ai`, complete GitHub sign-in, then use linked-key auth.
+- **Codex session control.** Create, attach, share, and clean up interactive Codex sessions backed by Ghostty WASM tiles.
+- **Repo-gated cards.** Prompt cards and GitHub issue/PR previews stay scoped to enabled OpenClaw repos.
+- **Runtime policy.** Crabyard records runtime selection, capabilities, heartbeat, stall state, and operator intent.
+- **Admin guardrails.** User/team allowlists, repo allowlists, roles, caps, and `CRABYARD.md` workflow evaluation live in the dashboard.
+- **Generated docs.** The spec, API pages, and architecture notes are built into a searchable documentation shell.
 
 ## What Works Today
 
@@ -20,7 +44,7 @@ Crabyard is an OpenClaw control plane for Codex work: prompt cards, repo gates, 
 - Ghostty WASM fullscreen session grid with D1 event replay, live multiplex PTY attach, and text fallback.
 - Card diff metadata and compact patch view.
 - Owner workflow evaluation for repo `CRABYARD.md`.
-- Worker-served docs at `/docs/` and GitHub Pages docs at `docs.crabyard.ai`.
+- Worker-served docs at `/docs/` and generated docs at `docs.crabyard.ai`.
 
 ## Not Wired Yet
 
@@ -29,15 +53,14 @@ Crabyard is an OpenClaw control plane for Codex work: prompt cards, repo gates, 
 - Durable Object WebSocket fanout.
 - Direct merge execution and ClawSweeper handoff.
 
-## Quick Links
+## Pick Your Path
 
-- **[Quickstart](/quickstart/)** – Bootstrap admin, create a card, start a recorded run attempt
-- **[Architecture](/architecture/)** – Worker, D1/Kysely, runtime descriptors, workflow config
-- **[Cards](/cards/)** – Card lifecycle, policies, sources
-- **[Runs](/runs/)** – Run attempts, runtime selection, Ghostty grid
-- **[Admin](/admin/)** – Access control, allowlists, policies
-- **[API Reference](/api/)** – REST endpoints
-- **[Complete Spec](/spec/)** – Product specification and planned integrations
+- **Trying it.** [Quickstart](/quickstart/) covers login, access, repo setup, cards, and attach.
+- **Understanding the system.** [Architecture](/architecture/) explains the Worker, D1/Kysely, runtime descriptors, and workflow config.
+- **Operating cards.** [Cards](/cards/) and [Runs](/runs/) cover task state, attempts, terminal attach, and replay.
+- **Managing access.** [Admin](/admin/) covers users, teams, repos, roles, caps, and policy defaults.
+- **Building against it.** [API Reference](/api/) lists REST and internal SSH gateway endpoints.
+- **Reading the roadmap.** [Complete Spec](/spec/) tracks product decisions and planned integrations.
 
 ## Core Concepts
 

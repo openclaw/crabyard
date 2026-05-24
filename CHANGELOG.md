@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Restyle the generated docs site and Worker `/docs/` page with the new Crabyard dashboard look.
 - Keep unauthenticated app loads on the Crabyard login screen unless the browser has already completed GitHub sign-in before.
 - Redesign the Crabyard login and app shell with SSH-first onboarding, live dashboard metrics, session charts, and a Codex session list.
 - Add a Go SSH gateway with GitHub OAuth key onboarding, linked-key auth, session listing, Codex session creation, and PTY attach support.

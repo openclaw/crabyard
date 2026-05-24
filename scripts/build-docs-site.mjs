@@ -7,16 +7,16 @@ import { css, faviconSvg, js, preThemeScript, themeToggleHtml } from "./docs-sit
 const root = process.cwd();
 const docsDir = path.join(root, "docs");
 const outDir = path.join(root, "dist", "docs-site");
-const repoBase = "https://github.com/steipete/crabyard";
+const repoBase = "https://github.com/openclaw/crabyard";
 const repoEditBase = `${repoBase}/edit/main/docs`;
 const cname = readCname();
 const siteBase = cname ? `https://${cname}` : "";
 
 const productName = "Crabyard";
-const productTagline = "OpenClaw Codex run control plane";
+const productTagline = "SSH-first Codex run control";
 const productDescription =
   "Crabyard.ai is a Cloudflare Worker control plane for OpenClaw Codex cards and run attempts — prompt cards, repo gates, durable run attempts, issue/PR previews, workflow policy, and attachable Ghostty WASM session views.";
-const brewInstall = "brew install gogcli";
+const installCommand = "ssh link@ssh.crabyard.ai";
 const codePlaceholder = String.fromCharCode(0);
 const codePlaceholderPattern = new RegExp(`${codePlaceholder}(\\d+)${codePlaceholder}`, "g");
 
@@ -472,6 +472,8 @@ function homeHero(page) {
           <a class="btn btn-primary" href="${quickstartRel}">Quickstart</a>
           <a class="btn btn-ghost" href="${repoBase}" rel="noopener">GitHub</a>
         </div>
+        <div class="home-install"><span class="prompt">$</span><code>${escapeHtml(installCommand)}</code></div>
+        <div class="home-services"><span>Cloudflare Worker</span><span>GitHub OAuth</span><span>Ghostty WASM</span><span>SSH Gateway</span></div>
         <p class="muted"><a href="${archRel}">Architecture overview →</a></p>
       </header>`;
 }
