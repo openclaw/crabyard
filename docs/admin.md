@@ -2,7 +2,7 @@
 title: Admin
 layout: default
 permalink: /admin/
-description: "Access control, allowlists, policies, and administration for Crabyard."
+description: "Access control, allowlists, policies, and administration for Crabfleet."
 ---
 
 # Admin
@@ -319,7 +319,7 @@ Recommended for production.
 **Setup:**
 
 1. Create GitHub OAuth app in your org
-2. Callback URL: `https://crabyard.ai/auth/github/callback`
+2. Callback URL: `https://crabfleet.ai/auth/github/callback`
 3. Scopes: `read:user`, `read:org`
 4. Add secrets to Cloudflare Worker:
    - `GITHUB_CLIENT_ID`

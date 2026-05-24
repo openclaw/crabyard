@@ -2,12 +2,12 @@
 title: API Reference
 layout: default
 permalink: /api/
-description: "REST API reference for Crabyard."
+description: "REST API reference for Crabfleet."
 ---
 
 # API Reference
 
-Crabyard exposes same-origin REST APIs and terminal WebSocket APIs from the Worker. Browser clients keep app state in D1-backed REST calls and attach to live Codex terminals through the multiplex terminal hub.
+Crabfleet exposes same-origin REST APIs and terminal WebSocket APIs from the Worker. Browser clients keep app state in D1-backed REST calls and attach to live Codex terminals through the multiplex terminal hub.
 
 ## Auth
 
@@ -337,7 +337,7 @@ Response:
 ```json
 {
   "session": {},
-  "shareUrl": "https://crabyard.ai/app/sessions/IS-105?token=..."
+  "shareUrl": "https://crabfleet.ai/app/sessions/IS-105?token=..."
 }
 ```
 

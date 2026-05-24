@@ -4,19 +4,20 @@ title: Spec
 permalink: /spec/
 ---
 
-# Crabyard.ai Spec
+# Crabfleet Spec
 
 Status: draft. Deployed subset: Cloudflare Worker, D1/Kysely persistence, GitHub OAuth, admin allowlists, card/run state, repo workflow evaluation, issue/PR previews, diffs, Cloudflare container sandbox provisioning, Ghostty WASM grid, read-only session share links, and authenticated PTY WebSocket proxying for interactive sessions.
 
-Crabyard.ai is a Cloudflare-native control plane for running Codex sessions in cloud workspaces. It gives OpenClaw maintainers a Linear-like board where each card represents an intent, a live run, and its durable history.
+Crabfleet is a Cloudflare-native control plane for running Codex crabboxes in cloud workspaces. It gives OpenClaw maintainers a fleet dashboard where org Codex instances are grouped by person, ready to attach through terminal or WebVNC, and supervised by OpenClaw.
 
 ## Decisions
 
-- Product name: Crabyard.ai.
+- Product name: Crabfleet.
+- Domains: `crabfleet.ai` for app/docs/OAuth, `ssh.crabfleet.ai` for SSH, and `crabfleet.sh` for installer/bootstrap. `crabyard.ai` is legacy redirect.
 - Primary object: card.
 - UI direction: Linear-like, minimal, dense, subtle crustacean branding.
 - Access: OpenClaw GitHub org plus admin-managed allowlists for users/teams and repos.
-- Runtime default: Cloudflare Containers for jobs that fit; Crabbox for manual Codex, VNC, testing, heavier jobs, and performance.
+- Runtime default: Crabbox for repo-ready Codex, WebVNC, testing, heavier jobs, and performance; Cloudflare Containers remain an explicit lightweight runtime.
 - Interactive mode: full Codex CLI in browser through Ghostty WebAssembly.
 - Autonomous mode: Codex app-server where structured turns/events are better than terminal scraping.
 - Logs: 30-day retention by default.

@@ -2,22 +2,22 @@
 title: Quickstart
 layout: default
 permalink: /quickstart/
-description: "Bootstrap Crabyard, configure access, create a card, and inspect a run attempt."
+description: "Bootstrap Crabfleet, configure access, create a crabbox, and inspect a run attempt."
 ---
 
 # Quickstart
 
-This gets you from login to a real D1-backed card and run attempt. It does not start an external Codex executor yet.
+This gets you from login to a real D1-backed crabbox, card, and run attempt.
 
 ## Prerequisites
 
 - OpenClaw GitHub org membership.
 - Bootstrap token from deployment secrets, or GitHub OAuth already configured.
-- Access to `https://crabyard.ai/app/`.
+- Access to `https://crabfleet.ai/app/`.
 
 ## 1. Log In
 
-Open `https://crabyard.ai/app/`.
+Open `https://crabfleet.ai/app/`.
 
 - Use GitHub OAuth if configured.
 - Use the bootstrap token for setup/recovery.
@@ -71,7 +71,17 @@ Invalid configs are visible and ignored. `stall_ms`, `cap`, `prompt_prefix`, and
 
 For private repos, the Worker needs deployment `GITHUB_TOKEN` access to fetch `CRABYARD.md`; it does not use the logged-in user's OAuth token for this refresh.
 
-## 5. Create a Card
+## 5. Create a Crabbox
+
+Click New crabbox or use the CLI:
+
+```bash
+crabfleet new --repo openclaw/openclaw "fix the failing check"
+```
+
+Crabbox is the default runtime so terminal and WebVNC affordances appear as soon as the provision adapter returns links.
+
+## 6. Create a Card
 
 Click New card.
 
@@ -88,11 +98,11 @@ Optional:
 
 Blank title is generated from the prompt. Blank merge policy uses repo default, then `open_pr`.
 
-## 6. Create from Issue/PR Number
+## 7. Create from Issue/PR Number
 
-Type `#76552` in board search. Crabyard previews matches across enabled repos when `GITHUB_TOKEN` is configured; without it, preview falls back to the preferred repo or first enabled repo. Choose a match to create a card with the GitHub URL, title, body, repo, runtime `auto`, and repo-default policy.
+Type `#76552` in board search. Crabfleet previews matches across enabled repos when `GITHUB_TOKEN` is configured; without it, preview falls back to the preferred repo or first enabled repo. Choose a match to create a card with the GitHub URL, title, body, repo, runtime `auto`, and repo-default policy.
 
-## 7. Start and Attach
+## 8. Start and Attach
 
 Click Start on a Todo card.
 

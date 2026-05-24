@@ -289,7 +289,7 @@ export function themeToggleHtml() {
 }
 
 export function faviconSvg() {
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Crabyard">
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Crabfleet">
 <rect width="64" height="64" rx="12" fill="#0f1115"/>
 <rect x="14" y="14" width="14" height="14" rx="3" fill="#ff6b35"/>
 <rect x="36" y="14" width="14" height="14" rx="3" fill="#004e89"/>

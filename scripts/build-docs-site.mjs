@@ -12,11 +12,11 @@ const repoEditBase = `${repoBase}/edit/main/docs`;
 const cname = readCname();
 const siteBase = cname ? `https://${cname}` : "";
 
-const productName = "Crabyard";
-const productTagline = "SSH-first Codex run control";
+const productName = "Crabfleet";
+const productTagline = "SSH-first Codex crabbox fleet";
 const productDescription =
-  "Crabyard.ai is a Cloudflare Worker control plane for OpenClaw Codex cards and run attempts — prompt cards, repo gates, durable run attempts, issue/PR previews, workflow policy, and attachable Ghostty WASM session views.";
-const installCommand = "ssh link@ssh.crabyard.ai";
+  "Crabfleet is a Cloudflare Worker control plane for OpenClaw Codex crabboxes and run attempts — repo-ready workspaces, fleet visibility grouped by person, WebVNC, prompt cards, repo gates, workflow policy, and attachable Ghostty WASM session views.";
+const installCommand = "ssh link@ssh.crabfleet.ai";
 const codePlaceholder = String.fromCharCode(0);
 const codePlaceholderPattern = new RegExp(`${codePlaceholder}(\\d+)${codePlaceholder}`, "g");
 

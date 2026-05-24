@@ -60,7 +60,7 @@ if (process.argv.includes("--static")) {
   await Promise.all([mkdir(distApp, { recursive: true }), mkdir(distDocs, { recursive: true })]);
   await writeFile(
     new URL("../dist/_redirects", import.meta.url),
-    "/* https://crabyard.ai/:splat 302\n",
+    "/* https://crabfleet.ai/:splat 302\n",
   );
   await writeFile(new URL("../dist/index.html", import.meta.url), redirectHtml("/"));
   await writeFile(new URL("../dist/app/index.html", import.meta.url), redirectHtml("/app/"));
@@ -70,8 +70,8 @@ if (process.argv.includes("--static")) {
 }
 
 function redirectHtml(path) {
-  const target = `https://crabyard.ai${path}`;
-  return `<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0; url=${target}"><title>Crabyard.ai</title><a href="${target}">Crabyard.ai</a>`;
+  const target = `https://crabfleet.ai${path}`;
+  return `<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0; url=${target}"><title>Crabfleet</title><a href="${target}">Crabfleet</a>`;
 }
 
 async function readAppHtml() {
@@ -138,7 +138,7 @@ function renderSpecPage(markdown) {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Crabyard.ai Spec</title>
+  <title>Crabfleet Spec</title>
   <link rel="icon" type="image/png" href="/crabyard-logo.png">
   <script>${preThemeScript()}</script>
   <style>${css()}</style>
@@ -150,16 +150,16 @@ function renderSpecPage(markdown) {
   <div class="shell">
     <aside class="sidebar">
       <div class="sidebar-head">
-        <a class="brand" href="/docs/" aria-label="Crabyard docs home">
+        <a class="brand" href="/docs/" aria-label="Crabfleet docs home">
           <span class="mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
-          <span><strong>Crabyard</strong><small>Control plane docs</small></span>
+          <span><strong>Crabfleet</strong><small>Control plane docs</small></span>
         </a>
         ${themeToggleHtml()}
       </div>
       <label class="search"><span>Search</span><input id="doc-search" type="search" placeholder="cards, runs, admin"></label>
       <nav>
-        <section><h2>Start</h2><a class="nav-link" href="https://docs.crabyard.ai/">Overview</a><a class="nav-link" href="https://docs.crabyard.ai/quickstart/">Quickstart</a><a class="nav-link" href="https://docs.crabyard.ai/architecture/">Architecture</a></section>
-        <section><h2>Features</h2><a class="nav-link" href="https://docs.crabyard.ai/cards/">Cards</a><a class="nav-link" href="https://docs.crabyard.ai/runs/">Runs</a><a class="nav-link" href="https://docs.crabyard.ai/admin/">Admin</a></section>
+        <section><h2>Start</h2><a class="nav-link" href="https://docs.crabfleet.ai/">Overview</a><a class="nav-link" href="https://docs.crabfleet.ai/quickstart/">Quickstart</a><a class="nav-link" href="https://docs.crabfleet.ai/architecture/">Architecture</a></section>
+        <section><h2>Features</h2><a class="nav-link" href="https://docs.crabfleet.ai/cards/">Cards</a><a class="nav-link" href="https://docs.crabfleet.ai/runs/">Runs</a><a class="nav-link" href="https://docs.crabfleet.ai/admin/">Admin</a></section>
         <section><h2>Reference</h2><a class="nav-link" href="/docs/spec.md">Markdown</a><a class="nav-link active" href="/docs/spec">Spec</a><a class="nav-link" href="https://github.com/openclaw/crabyard">GitHub</a><a class="nav-link" href="/app/">App</a></section>
       </nav>
     </aside>
@@ -167,7 +167,7 @@ function renderSpecPage(markdown) {
       <header class="hero">
         <div class="hero-text">
           <p class="eyebrow">Reference</p>
-          <h1>Crabyard.ai Spec</h1>
+          <h1>Crabfleet Spec</h1>
         </div>
         <div class="hero-meta">
           <a class="repo" href="/">App</a>
@@ -176,7 +176,7 @@ function renderSpecPage(markdown) {
       </header>
       <div class="doc-grid">
         <article class="doc">${markdownToHtml(markdown)}</article>
-        <nav class="toc" aria-label="Docs links"><h2>Docs</h2><a href="https://docs.crabyard.ai/">Generated docs site</a><a href="https://docs.crabyard.ai/api/">API reference</a></nav>
+        <nav class="toc" aria-label="Docs links"><h2>Docs</h2><a href="https://docs.crabfleet.ai/">Generated docs site</a><a href="https://docs.crabfleet.ai/api/">API reference</a></nav>
       </div>
     </main>
   </div>

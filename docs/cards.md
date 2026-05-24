@@ -2,12 +2,12 @@
 title: Cards
 layout: default
 permalink: /cards/
-description: "Card lifecycle, policies, and source types in Crabyard."
+description: "Card lifecycle, policies, and source types in Crabfleet."
 ---
 
 # Cards
 
-Cards are the primary unit of work in Crabyard. Each card has a prompt, repo, source, policy, lane, event log, optional diff metadata, and optional active run.
+Cards are the autonomous work unit in Crabfleet. Interactive Crabboxes are the default manual work unit; cards keep prompt, repo, source, policy, lane, event log, optional diff metadata, and optional active run state.
 
 ## Card Shape
 
@@ -64,7 +64,7 @@ The repo must be enabled in Admin. `openclaw/openclaw` is sorted first as the de
 
 ## GitHub Issue/PR Preview
 
-Type an issue or PR number such as `#76552` in board search. With `GITHUB_TOKEN`, Crabyard looks across enabled repos and previews every matching issue/PR. Without it, preview falls back to `openclaw/openclaw` or the first enabled repo. If the same number exists in multiple repos, each match appears separately when token-backed lookup is available.
+Type an issue or PR number such as `#76552` in board search. With `GITHUB_TOKEN`, Crabfleet looks across enabled repos and previews every matching issue/PR. Without it, preview falls back to `openclaw/openclaw` or the first enabled repo. If the same number exists in multiple repos, each match appears separately when token-backed lookup is available.
 
 Creating a card from a match uses:
 

@@ -2,34 +2,39 @@
 title: Overview
 layout: default
 permalink: /
-description: "Crabyard.ai is a Cloudflare Worker control plane for OpenClaw Codex cards and run attempts."
+description: "Crabfleet is a Cloudflare Worker control plane for OpenClaw Codex crabboxes, cards, and run attempts."
 ---
 
 ## Try it
 
-Link your SSH key once, then use Crabyard from the terminal or the app.
+Link your SSH key once, then use Crabfleet from the terminal, app, or Go CLI.
 
 ```bash
-# Link your current SSH key to GitHub-backed Crabyard access.
-ssh link@ssh.crabyard.ai
+# Link your current SSH key to GitHub-backed Crabfleet access.
+ssh link@ssh.crabfleet.ai
 
 # Inspect your identity and active Codex sessions.
-ssh ssh.crabyard.ai whoami
-ssh ssh.crabyard.ai list
+ssh ssh.crabfleet.ai whoami
+ssh ssh.crabfleet.ai list
 
-# Create or attach to an interactive Codex session.
-ssh ssh.crabyard.ai new "fix the failing check"
-ssh ssh.crabyard.ai attach <session-id>
+# Create or attach to a repo-ready Crabbox.
+ssh ssh.crabfleet.ai new --repo openclaw/openclaw "fix the failing check"
+ssh ssh.crabfleet.ai attach <session-id>
+
+# Or use the Go CLI.
+crabfleet new --repo openclaw/openclaw "fix the failing check"
+crabfleet vnc <session-id>
 ```
 
-The web app at [crabyard.ai/app](https://crabyard.ai/app/) exposes the same control plane: GitHub OAuth, repo-gated cards, runtime policy, live session tiles, and admin allowlists.
+The web app at [crabfleet.ai/app](https://crabfleet.ai/app/) exposes the same control plane: GitHub OAuth, repo-gated cards, runtime policy, live session tiles, WebVNC links, and admin allowlists.
 
-## What Crabyard Does
+## What Crabfleet Does
 
-- **SSH-first onboarding.** Connect through `ssh link@ssh.crabyard.ai`, complete GitHub sign-in, then use linked-key auth.
-- **Codex session control.** Create, attach, share, and clean up interactive Codex sessions backed by Ghostty WASM tiles.
+- **SSH-first onboarding.** Connect through `ssh link@ssh.crabfleet.ai`, complete GitHub sign-in, then use linked-key auth.
+- **Crabbox control.** Create, attach, share, open WebVNC, and clean up interactive Codex sessions backed by Ghostty WASM tiles.
+- **Fleet visibility.** The app groups all org Codex instances by person so OpenClaw can supervise live work.
 - **Repo-gated cards.** Prompt cards and GitHub issue/PR previews stay scoped to enabled OpenClaw repos.
-- **Runtime policy.** Crabyard records runtime selection, capabilities, heartbeat, stall state, and operator intent.
+- **Runtime policy.** Crabfleet records runtime selection, capabilities, heartbeat, stall state, and operator intent.
 - **Admin guardrails.** User/team allowlists, repo allowlists, roles, caps, and `CRABYARD.md` workflow evaluation live in the dashboard.
 - **Generated docs.** The spec, API pages, and architecture notes are built into a searchable documentation shell.
 
@@ -41,14 +46,14 @@ The web app at [crabyard.ai/app](https://crabyard.ai/app/) exposes the same cont
 - Cards from prompts or `#number` issue/PR previews across enabled repos.
 - Optional title generation from prompt.
 - Durable run attempts with heartbeat, stall handling, operator, runtime reason, and capabilities.
-- Ghostty WASM fullscreen session grid with D1 event replay, live multiplex PTY attach, and text fallback.
+- Ghostty WASM fullscreen session grid with D1 event replay, live multiplex PTY attach, WebVNC links for Crabbox leases, and text fallback.
 - Card diff metadata and compact patch view.
 - Owner workflow evaluation for repo `CRABYARD.md`.
-- Worker-served docs at `/docs/` and generated docs at `docs.crabyard.ai`.
+- Worker-served docs at `/docs/` and generated docs at `docs.crabfleet.ai`.
 
 ## Not Wired Yet
 
-- Real Container/Crabbox lease creation.
+- Full OpenClaw supervisor orchestration over Discord-originated meetings and handoffs.
 - R2 artifact/terminal archival.
 - Durable Object WebSocket fanout.
 - Direct merge execution and ClawSweeper handoff.
@@ -77,7 +82,7 @@ Cards represent task intent and policy:
 
 ### Runs
 
-When a card enters Running, Crabyard creates a `run_attempts` row, selects a runtime descriptor, records the selection reason and capabilities, and starts heartbeat/stall tracking. Current output is event-log backed; live external execution is the next adapter binding.
+When a card enters Running, Crabfleet creates a `run_attempts` row, selects a runtime descriptor, records the selection reason and capabilities, and starts heartbeat/stall tracking. Current output is event-log backed; live external execution is the next adapter binding.
 
 ### Repo Workflows
 
@@ -101,4 +106,4 @@ Owners can evaluate `CRABYARD.md` for enabled repos. Valid workflow config can s
 
 ## Status
 
-MVP deployed. The control-plane data model is real; the external runtime execution path is intentionally still explicit adapter work.
+MVP deployed. The control-plane data model is real; the product rename is Crabfleet-first with Crabyard compatibility aliases kept for deployment continuity.

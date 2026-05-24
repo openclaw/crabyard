@@ -2,14 +2,14 @@
 title: Architecture
 layout: default
 permalink: /architecture/
-description: "System design, data model, and runtime architecture for Crabyard.ai."
+description: "System design, data model, and runtime architecture for Crabfleet."
 ---
 
 # Architecture
 
-Crabyard is a Cloudflare Worker backed by D1. The deployed Worker is the control plane: auth, repo gates, cards, run attempts, workflow evaluation, issue/PR lookup, docs, the Ghostty WASM attach grid, and the same-origin PTY WebSocket proxy all run there today.
+Crabfleet is a Cloudflare Worker backed by D1. The deployed Worker is the control plane: auth, repo gates, crabboxes, cards, run attempts, workflow evaluation, issue/PR lookup, docs, the Ghostty WASM attach grid, and the same-origin PTY WebSocket proxy all run there today.
 
-Container leases, Crabbox PTY/VNC, R2 archival, Durable Object fanout, and merge automation are represented by adapter metadata and product docs, but are not bound to external executors yet.
+Crabbox PTY/VNC links, R2 archival, Durable Object fanout, Discord/OpenClaw orchestration, and merge automation are represented by adapter metadata and product docs; backend bindings are explicit deployment work.
 
 ## System Overview
 
@@ -51,7 +51,7 @@ Structured persistence uses D1 through a small Kysely dialect.
 
 ## Runtime Adapter Contract
 
-When a card is claimed, Crabyard records a runtime descriptor:
+When a card is claimed, Crabfleet records a runtime descriptor:
 
 - `runtime`: `container` or `crabbox`
 - `reason`: card override, repo workflow default, prompt-required desktop/manual/perf capability, or product default
@@ -64,7 +64,7 @@ Current selection order:
 1. Explicit card runtime `container` or `crabbox`
 2. Hard prompt cues: `vnc`, `manual`, `takeover`, `gpu`, `perf`, `performance` route to Crabbox
 3. Valid repo `CRABYARD.md` runtime default
-4. Product default: Container
+4. Product default: Crabbox
 
 ## Repo Workflow Config
 

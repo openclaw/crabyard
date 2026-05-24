@@ -1,6 +1,6 @@
-title: Crabyard.ai Docs
-description: OpenClaw Codex run control plane documentation.
-url: https://docs.crabyard.ai
+title: Crabfleet Docs
+description: OpenClaw Codex crabbox fleet documentation.
+url: https://docs.crabfleet.ai
 baseurl: ""
 permalink: pretty
 markdown: kramdown

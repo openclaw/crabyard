@@ -1,15 +1,16 @@
-# 🕹️ [Crabyard](https://github.com/openclaw/crabyard)
+# Crabfleet
 
 **Mission control for Agent runs.**
 
-Crabyard gives OpenClaw maintainers a Linear-like board where each card represents a coding task, live Codex session, and durable execution history.
+Crabfleet gives OpenClaw maintainers a fleet dashboard where every Codex crabbox is visible by operator, repo, terminal, and WebVNC state. Crabyard is the legacy project name and remains in repo paths and compatibility env vars while the product moves to Crabfleet.
 
 ## What It Does
 
+- **Fleet-first workflow.** Create repo-ready Crabboxes from the app, SSH, or the Go CLI and see org Codex instances grouped by person.
 - **Board-based workflow.** Create cards from prompts, GitHub issues, or PRs. Track them through Todo, Running, Human Review, and Done lanes.
 - **Issue/PR lookup.** Type `#123` in search to preview matching GitHub issues or PRs across enabled OpenClaw repos and create a card from the match.
 - **Codex run control.** Start durable run attempts, track heartbeats, watch the Ghostty WASM session grid, and take over only when the selected runtime advertises that capability.
-- **Interactive CLI sessions.** Start a standalone Codex CLI workspace for manual cloud work and attach it in the same fullscreen Ghostty grid.
+- **Interactive Crabboxes.** Start a standalone Codex CLI workspace for manual cloud work and attach it in the same fullscreen Ghostty grid or WebVNC.
 - **Diff previews.** Card tiles show changed files and totals; the run drawer shows a compact Codiff-style patch view.
 - **Multi-runtime policy.** Auto-select between the Container and Crabbox adapter surfaces based on card overrides, repo workflow defaults, and task requirements.
 - **Allowlist controls.** Restrict access to OpenClaw org members and specific repos through admin-managed allowlists.
@@ -35,9 +36,9 @@ Autonomous card execution, Crabbox VNC transport, R2 archival, Durable Object fa
 Get the bootstrap token from your deployment secrets and use it to log in:
 
 ```bash
-# Visit https://crabyard.ai/app/
+# Visit https://crabfleet.ai/app/
 # Use bootstrap token for initial admin setup
-# If GitHub auto-login is active, use https://crabyard.ai/app?auth=token
+# Legacy crabyard.ai routes should redirect during migration.
 ```
 
 ### 2. Configure Access
@@ -62,11 +63,12 @@ Add users/teams to the allowlist and enable repos:
 - Click "Take over" only when the active run advertises takeover support
 - Click "Watch" for read-only stream
 
-### 5. Start Interactive CLI
+### 5. Start Crabboxes
 
-- Click "New session" to request a standalone Codex CLI workspace
+- Click "New crabbox" to request a standalone Codex CLI workspace
 - Default runtime is Crabbox so VNC can be attached when the provision adapter returns a URL
 - Without `CRABYARD_INTERACTIVE_PROVISION_URL`, sessions are stored as `pending_adapter` and still visible in the grid
+- Install or build the Go CLI, then run `crabfleet new --repo openclaw/openclaw "fix the failing check"`
 
 ## Features
 
@@ -117,7 +119,7 @@ merge:
 ### Prerequisites
 
 - Cloudflare account
-- `crabyard.ai` route in Cloudflare
+- `crabfleet.ai` route in Cloudflare, with `crabyard.ai` as a legacy redirect
 - GitHub OAuth app (optional but recommended)
 - Bootstrap token secret
 
@@ -142,7 +144,7 @@ wrangler deploy
 
 ### Environment Variables
 
-Configure these in Cloudflare Workers dashboard:
+Configure these in Cloudflare Workers dashboard. Existing `CRABYARD_*` names remain supported; new installs should prefer `CRABFLEET_*` where listed.
 
 - `CRABYARD_BOOTSTRAP_TOKEN` – Admin bootstrap token (required)
 - `GITHUB_CLIENT_ID` – GitHub OAuth app client ID (optional)
@@ -161,20 +163,20 @@ Configure these in Cloudflare Workers dashboard:
 - `CRABYARD_CLOUDFLARE_RUNNER_TTL_SECONDS` – Optional sandbox TTL, default `14400`
 - `CRABYARD_CLOUDFLARE_RUNNER_IDLE_SECONDS` – Optional idle timeout, default `1800`
 - `CRABYARD_PTY_BRIDGE_URL` – Optional WebSocket PTY bridge URL/template for live Ghostty attach; supports `{id}`, `{leaseId}`, `{repo}`, `{branch}`, and `{runtime}`
-- `CRABYARD_PTY_BRIDGE_TOKEN` – Optional bearer token sent from Crabyard to the PTY bridge
+- `CRABYARD_PTY_BRIDGE_TOKEN` – Optional bearer token sent from Crabfleet to the PTY bridge
 - `CRABYARD_CLAWFLEET_URL` – Optional ClawFleet dashboard/API URL used by `/api/provision/interactive` for `crabbox` sessions
 - `CRABYARD_CLAWFLEET_TOKEN` – Optional bearer token sent to ClawFleet
 - `CRABYARD_CLAWFLEET_PUBLIC_URL` – Optional public ClawFleet URL used when building attach/VNC links
-- `CRABYARD_SSH_GATEWAY_TOKEN` – Shared bearer token for the Go SSH gateway internal API
+- `CRABFLEET_SSH_GATEWAY_TOKEN` / `CRABYARD_SSH_GATEWAY_TOKEN` – Shared bearer token for the Go SSH gateway internal API
 - `OPENAI_API_KEY` – Required for built-in Cloudflare Sandbox Codex CLI sessions; passed only into the sandbox session environment
 
 ### Verify Deployment
 
 ```bash
-curl -I https://crabyard.ai/healthz
+curl -I https://crabfleet.ai/healthz
 # Should return: 200 OK
 
-curl https://crabyard.ai/docs/spec
+curl https://crabfleet.ai/docs/spec
 # Should return: HTML spec document
 ```
 
@@ -220,14 +222,14 @@ wrangler d1 migrations apply crabyard-ai --local
 
 ### SSH Gateway
 
-The Worker exposes an internal SSH onboarding API guarded by `CRABYARD_SSH_GATEWAY_TOKEN`.
+The Worker exposes an internal SSH onboarding API guarded by `CRABFLEET_SSH_GATEWAY_TOKEN` or the legacy `CRABYARD_SSH_GATEWAY_TOKEN`.
 Run the Go gateway next to a host that can accept raw SSH:
 
 ```bash
-CRABYARD_API_URL=https://crabyard.ai \
-CRABYARD_SSH_GATEWAY_TOKEN=... \
-CRABYARD_SSH_HOST_KEY=/var/lib/crabyard/ssh_host_ed25519_key \
-CRABYARD_SSH_ADDR=:2222 \
+CRABFLEET_API_URL=https://crabfleet.ai \
+CRABFLEET_SSH_GATEWAY_TOKEN=... \
+CRABFLEET_SSH_HOST_KEY=/var/lib/crabfleet/ssh_host_ed25519_key \
+CRABFLEET_SSH_ADDR=:2222 \
 go run ./cmd/crabyard-ssh-gateway
 ```
 
@@ -235,14 +237,26 @@ Unknown public keys get a short GitHub OAuth link through `ssh link@host`. Linke
 run `whoami`, `list`, `new`, and `attach SESSION_ID`; `new` creates an interactive Codex
 session and attaches.
 
-Production currently exposes the gateway at `ssh.crabyard.ai` as a DNS-only `A` record.
-Use `ssh link@ssh.crabyard.ai` once to connect a GitHub-backed SSH key, then run
-`ssh ssh.crabyard.ai whoami` or `ssh ssh.crabyard.ai list`.
+Production should expose the gateway at `ssh.crabfleet.ai` as a DNS-only `A` record.
+Use `ssh link@ssh.crabfleet.ai` once to connect a GitHub-backed SSH key, then run
+`ssh ssh.crabfleet.ai whoami` or `ssh ssh.crabfleet.ai list`.
+
+### Go CLI
+
+The `crabfleet` CLI is written in Go with Kong and delegates to SSH by default. API mode is available for service contexts with `CRABFLEET_SSH_GATEWAY_TOKEN` and `CRABFLEET_SSH_FINGERPRINT`.
+
+```bash
+go run ./cmd/crabfleet login
+go run ./cmd/crabfleet list
+go run ./cmd/crabfleet new --repo openclaw/openclaw "start on the release checklist"
+go run ./cmd/crabfleet attach <session-id>
+go run ./cmd/crabfleet vnc <session-id>
+```
 
 ### Project Structure
 
 ```
-crabyard/
+crabfleet/
 ├── src/
 │   ├── index.ts          # Worker entry point, API routes, auth handlers
 │   ├── app.html          # Single-page app shell and styles
@@ -253,22 +267,22 @@ crabyard/
 │   └── generate-assets.mjs
 ├── vite.config.mjs       # Preact/Vite app bundle config
 ├── docs/                 # Documentation (GitHub Pages)
-│   ├── CNAME             # docs.crabyard.ai custom domain
+│   ├── CNAME             # docs.crabfleet.ai custom domain
 │   └── spec.md           # Product spec
 └── wrangler.jsonc       # Cloudflare Worker config
 ```
 
 ## Documentation
 
-Full documentation available at [docs.crabyard.ai](https://docs.crabyard.ai):
+Full documentation available at [docs.crabfleet.ai](https://docs.crabfleet.ai):
 
-- [Quickstart](https://docs.crabyard.ai/quickstart) – Get started in 5 minutes
-- [Architecture](https://docs.crabyard.ai/architecture) – System design and data model
-- [Cards](https://docs.crabyard.ai/cards) – Card lifecycle and policies
-- [Runs](https://docs.crabyard.ai/runs) – Runtime selection and execution
-- [Admin](https://docs.crabyard.ai/admin) – Access control and policies
-- [API](https://docs.crabyard.ai/api) – REST and WebSocket APIs
-- [Spec](https://docs.crabyard.ai/spec) – Complete product specification
+- [Quickstart](https://docs.crabfleet.ai/quickstart) – Get started in 5 minutes
+- [Architecture](https://docs.crabfleet.ai/architecture) – System design and data model
+- [Cards](https://docs.crabfleet.ai/cards) – Card lifecycle and policies
+- [Runs](https://docs.crabfleet.ai/runs) – Runtime selection and execution
+- [Admin](https://docs.crabfleet.ai/admin) – Access control and policies
+- [API](https://docs.crabfleet.ai/api) – REST and WebSocket APIs
+- [Spec](https://docs.crabfleet.ai/spec) – Complete product specification
 
 ## Security
 
@@ -293,7 +307,7 @@ MIT License. See [LICENSE](LICENSE) for details.
 
 ## Not Affiliated
 
-Crabyard is an OpenClaw project, not affiliated with Cloudflare, GitHub, or Anthropic.
+Crabfleet is an OpenClaw project, not affiliated with Cloudflare, GitHub, or Anthropic.
 
 ## Contributing
 
@@ -301,4 +315,4 @@ This is currently an internal OpenClaw tool. External contributions are not acce
 
 ## Support
 
-For OpenClaw org members: use #crabyard in Discord or open an issue in the private repo.
+For OpenClaw org members: use #crabfleet in Discord or open an issue in the private repo.

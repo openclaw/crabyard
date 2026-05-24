@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Rename the product surface to Crabfleet, make Crabbox the app/CLI default, add fleet-by-person dashboard tiles with WebVNC actions, and introduce a Go/Kong `crabfleet` CLI.
 - Restyle the generated docs site and Worker `/docs/` page with the new Crabyard dashboard look.
 - Keep unauthenticated app loads on the Crabyard login screen unless the browser has already completed GitHub sign-in before.
 - Redesign the Crabyard login and app shell with SSH-first onboarding, live dashboard metrics, session charts, and a Codex session list.

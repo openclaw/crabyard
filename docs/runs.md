@@ -7,7 +7,7 @@ description: "Runtime execution, logs, attach/takeover, and debugging for Codex 
 
 # Runs
 
-A run is a durable attempt to execute a card. Today Crabyard records attempts, heartbeats, runtime selection evidence, operator intent, and event logs in D1. Interactive sessions can attach to live PTYs through the Worker terminal hub when a Cloudflare Sandbox or runner bridge is available.
+A run is a durable attempt to execute a card. Today Crabfleet records attempts, heartbeats, runtime selection evidence, operator intent, and event logs in D1. Interactive Crabboxes can attach to live PTYs through the Worker terminal hub and expose WebVNC when the Crabbox adapter returns a URL.
 
 ## Run Lifecycle
 
@@ -96,9 +96,9 @@ The Take over action records `controlIntent = "takeover"` and operator only for 
 
 Maintainers can create a standalone Codex CLI session without making a board card. The Worker stores the requested repo, branch, runtime, command, owner, attach/VNC URLs, status, and event log in D1. The default runtime is `crabbox` so a provision adapter can return both terminal and VNC attach URLs.
 
-If `CRABYARD_INTERACTIVE_PROVISION_URL` is not set, new sessions stay `pending_adapter` and remain visible in the Ghostty grid. If it is set, Crabyard posts the session request to that endpoint with optional bearer auth from `CRABYARD_INTERACTIVE_PROVISION_TOKEN`; the response can set `status`, `leaseId`, `attachUrl`, `vncUrl`, and `message`.
+If `CRABYARD_INTERACTIVE_PROVISION_URL` is not set, new sessions stay `pending_adapter` and remain visible in the Ghostty grid. If it is set, Crabfleet posts the session request to that endpoint with optional bearer auth from `CRABYARD_INTERACTIVE_PROVISION_TOKEN`; the response can set `status`, `leaseId`, `attachUrl`, `vncUrl`, and `message`.
 
-Crabyard also ships a built-in provision hook at `/api/provision/interactive`. Point `CRABYARD_INTERACTIVE_PROVISION_URL` at that route to use Worker-side backend selection. Set `CRABYARD_INTERACTIVE_PROVISION_TOKEN` for backend-enabled deployments; the route fails closed without it when a backend is configured. The route delegates to `CRABYARD_RUNTIME_PROVISION_URL` when set, creates a Cloudflare Container sandbox for `container` sessions through `CRABYARD_CLOUDFLARE_RUNNER_URL` when configured, or creates a ClawFleet OpenClaw instance for `crabbox` sessions through `CRABYARD_CLAWFLEET_URL`; without a matching backend it returns `pending_adapter` with a clear setup message.
+Crabfleet also ships a built-in provision hook at `/api/provision/interactive`. Point `CRABYARD_INTERACTIVE_PROVISION_URL` at that route to use Worker-side backend selection. Set `CRABYARD_INTERACTIVE_PROVISION_TOKEN` for backend-enabled deployments; the route fails closed without it when a backend is configured. The route delegates to `CRABYARD_RUNTIME_PROVISION_URL` when set, creates a Cloudflare Container sandbox for `container` sessions through `CRABYARD_CLOUDFLARE_RUNNER_URL` when configured, or creates a ClawFleet OpenClaw instance for `crabbox` sessions through `CRABYARD_CLAWFLEET_URL`; without a matching backend it returns `pending_adapter` with a clear setup message.
 
 Cloudflare runner configuration:
 
