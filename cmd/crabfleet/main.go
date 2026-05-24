@@ -21,6 +21,8 @@ import (
 const defaultAPIURL = "https://crabfleet.ai"
 const defaultSSHHost = "ssh.crabfleet.ai"
 
+var version = "dev"
+
 type cli struct {
 	API         string `help:"Crabfleet API URL." default:"https://crabfleet.ai" env:"CRABFLEET_API_URL"`
 	SSHHost     string `help:"Crabfleet SSH host." default:"ssh.crabfleet.ai" env:"CRABFLEET_SSH_HOST"`
@@ -29,6 +31,7 @@ type cli struct {
 	JSON        bool   `help:"Print JSON output."`
 	Plain       bool   `help:"Print plain output without adornment."`
 	NoInput     bool   `help:"Fail instead of prompting or delegating to SSH."`
+	Version     kong.VersionFlag
 
 	Login  loginCmd  `cmd:"" help:"Link this machine through SSH onboarding."`
 	Whoami whoamiCmd `cmd:"" help:"Show the linked Crabfleet user."`
@@ -108,7 +111,12 @@ type createSessionResponse struct {
 
 func main() {
 	var app cli
-	ctx := kong.Parse(&app, kong.Name("crabfleet"), kong.Description("Crabfleet crabbox CLI."))
+	ctx := kong.Parse(
+		&app,
+		kong.Name("crabfleet"),
+		kong.Description("Crabfleet crabbox CLI."),
+		kong.Vars{"version": version},
+	)
 	api := app.apiClient()
 	err := ctx.Run(&app, api)
 	ctx.FatalIfErrorf(err)

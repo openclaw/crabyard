@@ -2,6 +2,12 @@ package main
 
 import "testing"
 
+func TestVersionIsSet(t *testing.T) {
+	if version == "" {
+		t.Fatal("version is empty")
+	}
+}
+
 func TestJSONModeDoesNotDelegateToSSH(t *testing.T) {
 	app := &cli{JSON: true, API: defaultAPIURL, SSHHost: defaultSSHHost}
 	err := listCmd{}.Run(app, app.apiClient())

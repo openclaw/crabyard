@@ -253,6 +253,17 @@ go run ./cmd/crabfleet attach <session-id>
 go run ./cmd/crabfleet vnc <session-id>
 ```
 
+### CLI Release
+
+Tagged releases publish `crabfleet` with GoReleaser and dispatch the OpenClaw Homebrew tap updater:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The release workflow builds macOS, Linux, and Windows archives, then updates `openclaw/homebrew-tap` through `update-formula.yml`.
+
 ### Project Structure
 
 ```

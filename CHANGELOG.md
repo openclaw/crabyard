@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add GoReleaser release automation for the `crabfleet` CLI and dispatch Homebrew formula updates to `openclaw/homebrew-tap`.
 - Rename the product surface to Crabfleet, make Crabbox the app/CLI default, add fleet-by-person dashboard tiles with WebVNC actions, and introduce a Go/Kong `crabfleet` CLI.
 - Restyle the generated docs site and Worker `/docs/` page with the new Crabyard dashboard look.
 - Keep unauthenticated app loads on the Crabyard login screen unless the browser has already completed GitHub sign-in before.
