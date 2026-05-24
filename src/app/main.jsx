@@ -925,19 +925,30 @@ function LoginScreen({ hidden, authMethods, message, onGithub, onToken, onDevIde
             <span>Or connect via</span>
             <CopyCommand value={`ssh link@${sshHost}`} />
           </div>
-          <label>
-            Bootstrap token
-            <input
-              type="password"
-              autocomplete="current-password"
-              disabled={!authMethods.token}
-              value={token}
-              onInput={(event) => setToken(event.currentTarget.value)}
-            />
-          </label>
-          <button type="submit" disabled={!authMethods.token}>
-            Use token
-          </button>
+          <details
+            class="bootstrap-login"
+            hidden={!authMethods.token}
+            {...(authMethods.token && !authMethods.github && !authMethods.devIdentity
+              ? { open: true }
+              : {})}
+          >
+            <summary>Use bootstrap token</summary>
+            <div class="bootstrap-login-fields">
+              <label>
+                Bootstrap token
+                <input
+                  type="password"
+                  autocomplete="current-password"
+                  disabled={!authMethods.token}
+                  value={token}
+                  onInput={(event) => setToken(event.currentTarget.value)}
+                />
+              </label>
+              <button type="submit" disabled={!authMethods.token}>
+                Use token
+              </button>
+            </div>
+          </details>
         </div>
         <DevIdentityPanel
           hidden={!authMethods.devIdentity}

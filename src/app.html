@@ -389,7 +389,7 @@
       .login-actions {
         display: grid;
         gap: 14px;
-        width: min(380px, 100%);
+        width: min(360px, 100%);
         margin-top: 8px;
       }
       .login-actions button.primary {
@@ -426,7 +426,7 @@
         font-size: 13px;
       }
       .command-row .terminal-command {
-        flex: 1 1 310px;
+        flex: 0 1 240px;
       }
       .terminal-command {
         display: inline-flex;
@@ -453,6 +453,33 @@
         border-color: rgb(240 90 112 / 0.55);
         background: var(--command-bg-hover);
         box-shadow: none;
+      }
+      .bootstrap-login {
+        width: 100%;
+        color: var(--muted);
+      }
+      .bootstrap-login[hidden] {
+        display: none;
+      }
+      .bootstrap-login summary {
+        width: max-content;
+        margin: 0 auto;
+        cursor: pointer;
+        color: var(--faint);
+        font-size: 13px;
+        font-weight: 600;
+        list-style: none;
+      }
+      .bootstrap-login summary::-webkit-details-marker {
+        display: none;
+      }
+      .bootstrap-login summary:hover {
+        color: var(--muted);
+      }
+      .bootstrap-login-fields {
+        display: grid;
+        gap: 14px;
+        margin-top: 12px;
       }
       .dev-identity-panel {
         border: 1px solid var(--line);
