@@ -11,18 +11,18 @@ Link your SSH key once, then use Crabfleet from the terminal, app, or Go CLI.
 
 ```bash
 # Link your current SSH key to GitHub-backed Crabfleet access.
-ssh link@ssh.crabfleet.ai
+ssh link@crabd.sh
 
 # Inspect your identity and active Codex sessions.
-ssh ssh.crabfleet.ai whoami
-ssh ssh.crabfleet.ai list
+ssh crabd.sh whoami
+ssh crabd.sh list
 
 # Create or attach to a repo-ready Crabbox.
-ssh ssh.crabfleet.ai new --repo openclaw/openclaw "fix the failing check"
-ssh ssh.crabfleet.ai attach <session-id>
+ssh crabd.sh new --repo openclaw/crabfleet "fix the failing check"
+ssh crabd.sh attach <session-id>
 
 # Or use the Go CLI.
-crabfleet new --repo openclaw/openclaw "fix the failing check"
+crabfleet new --repo openclaw/crabfleet "fix the failing check"
 crabfleet vnc <session-id>
 ```
 
@@ -30,7 +30,7 @@ The web app at [crabfleet.ai/app](https://crabfleet.ai/app/) exposes the same co
 
 ## What Crabfleet Does
 
-- **SSH-first onboarding.** Connect through `ssh link@ssh.crabfleet.ai`, complete GitHub sign-in, then use linked-key auth.
+- **SSH-first onboarding.** Connect through `ssh link@crabd.sh`, complete GitHub sign-in, then use linked-key auth.
 - **Crabbox control.** Create, attach, share, open WebVNC, and clean up interactive Codex sessions backed by Ghostty WASM tiles.
 - **Fleet visibility.** The app groups all org Codex instances by person so OpenClaw can supervise live work.
 - **Repo-gated cards.** Prompt cards and GitHub issue/PR previews stay scoped to enabled OpenClaw repos.

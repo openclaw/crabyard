@@ -19,13 +19,13 @@ import (
 )
 
 const defaultAPIURL = "https://crabfleet.ai"
-const defaultSSHHost = "ssh.crabfleet.ai"
+const defaultSSHHost = "crabd.sh"
 
 var version = "dev"
 
 type cli struct {
 	API         string `help:"Crabfleet API URL." default:"https://crabfleet.ai" env:"CRABFLEET_API_URL"`
-	SSHHost     string `help:"Crabfleet SSH host." default:"ssh.crabfleet.ai" env:"CRABFLEET_SSH_HOST"`
+	SSHHost     string `help:"Crabfleet SSH host." default:"crabd.sh" env:"CRABFLEET_SSH_HOST"`
 	Token       string `help:"Internal API token." env:"CRABFLEET_SSH_GATEWAY_TOKEN"`
 	Fingerprint string `help:"Linked SSH key fingerprint." env:"CRABFLEET_SSH_FINGERPRINT"`
 	JSON        bool   `help:"Print JSON output."`

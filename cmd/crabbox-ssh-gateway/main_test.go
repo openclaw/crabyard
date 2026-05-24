@@ -6,14 +6,14 @@ import (
 )
 
 func TestSplitCommandKeepsQuotedValues(t *testing.T) {
-	args, err := splitCommand(`new --repo openclaw/openclaw --command 'codex --yolo' 'fix the failing check'`)
+	args, err := splitCommand(`new --repo openclaw/crabfleet --command 'codex --yolo' 'fix the failing check'`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := []string{
 		"new",
 		"--repo",
-		"openclaw/openclaw",
+		"openclaw/crabfleet",
 		"--command",
 		"codex --yolo",
 		"fix the failing check",

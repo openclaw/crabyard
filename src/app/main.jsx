@@ -31,8 +31,8 @@ import {
 
 const logo = "__CRABBOX_LOGO__";
 const productName = "Crabfleet";
-const productDomain = "crabfleet.openclaw.ai";
-const sshHost = "ssh.crabfleet.ai";
+const productDomain = "crabfleet.ai";
+const sshHost = "crabd.sh";
 const loginReturnKey = "crabbox-login-return";
 const skipAutoGithubLoginKey = "crabbox-skip-auto-github-login";
 const githubAutoLoginReadyKey = "crabbox-github-auto-login-ready";
@@ -1184,7 +1184,7 @@ function DashboardOverview(props) {
             <p>Crabboxes boot with the repo prepared and Codex ready for OpenClaw supervision.</p>
           </div>
           <CopyCommand
-            value={`ssh ${sshHost} new --repo openclaw/openclaw "fix the failing check"`}
+            value={`ssh ${sshHost} new --repo openclaw/crabfleet "fix the failing check"`}
           />
         </div>
       </div>
@@ -1230,7 +1230,7 @@ function DashboardOverview(props) {
           <div class="vm-row empty-row">
             <div>
               <strong>No crabboxes yet</strong>
-              <code>ssh {sshHost} new --repo openclaw/openclaw</code>
+              <code>ssh {sshHost} new --repo openclaw/crabfleet</code>
               <span>Create one from SSH, the Go CLI, or the app.</span>
             </div>
             <button

@@ -36,7 +36,7 @@ Autonomous card execution, Crabbox VNC transport, R2 archival, Durable Object fa
 Get the bootstrap token from your deployment secrets and use it to log in:
 
 ```bash
-# Visit https://crabfleet.openclaw.ai/app/
+# Visit https://crabfleet.ai/app/
 # Use bootstrap token for initial admin setup
 ```
 
@@ -67,7 +67,7 @@ Add users/teams to the allowlist and enable repos:
 - Click "New crabbox" to request a standalone Codex CLI workspace
 - Default runtime is Crabbox so VNC can be attached when the provision adapter returns a URL
 - Without `CRABBOX_INTERACTIVE_PROVISION_URL`, sessions are stored as `pending_adapter` and still visible in the grid
-- Install or build the Go CLI, then run `crabfleet new --repo openclaw/openclaw "fix the failing check"`
+- Install or build the Go CLI, then run `crabfleet new --repo openclaw/crabfleet "fix the failing check"`
 
 ## Features
 
@@ -118,7 +118,7 @@ merge:
 ### Prerequisites
 
 - Cloudflare account
-- `crabfleet.openclaw.ai` route in Cloudflare (`crabyard.openclaw.ai` redirects here)
+- `crabfleet.ai` route in Cloudflare (`crabfleet.ai` redirects here)
 - GitHub OAuth app (optional but recommended)
 - Bootstrap token secret
 
@@ -145,7 +145,7 @@ wrangler deploy
 
 Configure these in Cloudflare Workers dashboard. `CRABBOX_*` names are the runtime/crabbox adapter contract; `CRABFLEET_*` names are for the public CLI and SSH gateway.
 
-The Crabbox namespace cutover intentionally has no old-name compatibility. Existing browser sessions expire, linked SSH keys must be relinked with `ssh link@ssh.crabfleet.ai`, and in-flight interactive workspaces should be recreated.
+The Crabbox namespace cutover intentionally has no old-name compatibility. Existing browser sessions expire, linked SSH keys must be relinked with `ssh link@crabd.sh`, and in-flight interactive workspaces should be recreated.
 
 - `CRABBOX_BOOTSTRAP_TOKEN` – Admin bootstrap token (required)
 - `GITHUB_CLIENT_ID` – GitHub OAuth app client ID (optional)
@@ -175,10 +175,10 @@ The Crabbox namespace cutover intentionally has no old-name compatibility. Exist
 ### Verify Deployment
 
 ```bash
-curl -I https://crabfleet.openclaw.ai/healthz
+curl -I https://crabfleet.ai/healthz
 # Should return: 200 OK
 
-curl https://crabfleet.openclaw.ai/docs/spec
+curl https://crabfleet.ai/docs/spec
 # Should return: HTML spec document
 ```
 
@@ -228,7 +228,7 @@ The Worker exposes an internal SSH onboarding API guarded by `CRABFLEET_SSH_GATE
 Run the Go gateway next to a host that can accept raw SSH:
 
 ```bash
-CRABFLEET_API_URL=https://crabfleet.openclaw.ai \
+CRABFLEET_API_URL=https://crabfleet.ai \
 CRABFLEET_SSH_GATEWAY_TOKEN=... \
 CRABFLEET_SSH_HOST_KEY=/var/lib/crabfleet/ssh_host_ed25519_key \
 CRABFLEET_SSH_ADDR=:2222 \
@@ -239,9 +239,9 @@ Unknown public keys get a short GitHub OAuth link through `ssh link@host`. Linke
 run `whoami`, `list`, `new`, and `attach SESSION_ID`; `new` creates an interactive Codex
 session and attaches.
 
-Production should expose the gateway at `ssh.crabfleet.ai` as a DNS-only `A` record.
-Use `ssh link@ssh.crabfleet.ai` once to connect a GitHub-backed SSH key, then run
-`ssh ssh.crabfleet.ai whoami` or `ssh ssh.crabfleet.ai list`.
+Production should expose the gateway at `crabd.sh` as a DNS-only `A` record.
+Use `ssh link@crabd.sh` once to connect a GitHub-backed SSH key, then run
+`ssh crabd.sh whoami` or `ssh crabd.sh list`.
 
 ### Go CLI
 
@@ -253,7 +253,7 @@ brew install crabfleet
 
 go run ./cmd/crabfleet login
 go run ./cmd/crabfleet list
-go run ./cmd/crabfleet new --repo openclaw/openclaw "start on the release checklist"
+go run ./cmd/crabfleet new --repo openclaw/crabfleet "start on the release checklist"
 go run ./cmd/crabfleet attach <session-id>
 go run ./cmd/crabfleet vnc --open <session-id>
 ```
@@ -274,10 +274,10 @@ The release workflow builds macOS, Linux, and Windows archives, then updates `op
 OpenClaw can create repo-ready crabboxes for Discord-triggered work through the internal service endpoint:
 
 ```bash
-curl -fsS https://crabfleet.openclaw.ai/api/openclaw/crabboxes \
+curl -fsS https://crabfleet.ai/api/openclaw/crabboxes \
   -H "authorization: Bearer $CRABBOX_OPENCLAW_TOKEN" \
   -H "content-type: application/json" \
-  -d '{"owner":"@steipete","repo":"openclaw/openclaw","prompt":"prep the meeting follow-up"}'
+  -d '{"owner":"@steipete","repo":"openclaw/crabfleet","prompt":"prep the meeting follow-up"}'
 ```
 
 The created crabbox appears in the fleet grid under the requested owner. Provisioning still flows through the configured Crabbox/ClawFleet adapter, so VNC and terminal URLs come from the runtime backend.

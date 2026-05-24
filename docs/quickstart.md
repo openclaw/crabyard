@@ -13,11 +13,11 @@ This gets you from login to a real D1-backed crabbox, card, and run attempt.
 
 - OpenClaw GitHub org membership.
 - Bootstrap token from deployment secrets, or GitHub OAuth already configured.
-- Access to `https://crabfleet.openclaw.ai/app/`.
+- Access to `https://crabfleet.ai/app/`.
 
 ## 1. Log In
 
-Open `https://crabfleet.openclaw.ai/app/`.
+Open `https://crabfleet.ai/app/`.
 
 - Use GitHub OAuth if configured.
 - Use the bootstrap token for setup/recovery.
@@ -43,7 +43,7 @@ Roles:
 
 ## 3. Enable Repos
 
-Add repos in `owner/repo` format. `openclaw/openclaw` is sorted first and is the default repo in the card form.
+Add repos in `owner/repo` format. `openclaw/crabfleet` is sorted first and is the default repo in the card form.
 
 Enabled repos drive:
 
@@ -76,7 +76,7 @@ For private repos, the Worker needs deployment `GITHUB_TOKEN` access to fetch `C
 Click New crabbox or use the CLI:
 
 ```bash
-crabfleet new --repo openclaw/openclaw "fix the failing check"
+crabfleet new --repo openclaw/crabfleet "fix the failing check"
 ```
 
 Crabbox is the default runtime so terminal and WebVNC affordances appear as soon as the provision adapter returns links.

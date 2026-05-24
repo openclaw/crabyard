@@ -1,5 +1,5 @@
 export const lanes = ["Todo", "Running", "Human Review", "Done"];
-export const preferredRepo = "openclaw/openclaw";
+export const preferredRepo = "openclaw/crabfleet";
 
 export function roleRank(role) {
   return { viewer: 1, maintainer: 2, owner: 3 }[role] || 0;

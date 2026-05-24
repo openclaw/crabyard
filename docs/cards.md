@@ -60,11 +60,11 @@ Optional:
 - `runtime`: `auto`, `container`, or `crabbox`
 - `policy`: repo default, `open_pr`, `merge_when_green`, or `fix_until_green_and_merge`
 
-The repo must be enabled in Admin. `openclaw/openclaw` is sorted first as the default OpenClaw repo.
+The repo must be enabled in Admin. `openclaw/crabfleet` is sorted first as the default Crabfleet repo.
 
 ## GitHub Issue/PR Preview
 
-Type an issue or PR number such as `#76552` in board search. With `GITHUB_TOKEN`, Crabfleet looks across enabled repos and previews every matching issue/PR. Without it, preview falls back to `openclaw/openclaw` or the first enabled repo. If the same number exists in multiple repos, each match appears separately when token-backed lookup is available.
+Type an issue or PR number such as `#76552` in board search. With `GITHUB_TOKEN`, Crabfleet looks across enabled repos and previews every matching issue/PR. Without it, preview falls back to `openclaw/crabfleet` or the first enabled repo. If the same number exists in multiple repos, each match appears separately when token-backed lookup is available.
 
 Creating a card from a match uses:
 

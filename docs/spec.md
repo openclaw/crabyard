@@ -13,7 +13,7 @@ Crabfleet is a Cloudflare-native control plane for running Codex crabboxes in cl
 ## Decisions
 
 - Product name: Crabfleet.
-- Domains: `crabfleet.openclaw.ai` for the app/API/OAuth, `docs.crabfleet.ai` for docs, `ssh.crabfleet.ai` for SSH, and `crabfleet.sh` for installer/bootstrap.
+- Domains: `crabfleet.ai` for app/docs/OAuth and `crabd.sh` for SSH/install/bootstrap.
 - Primary object: card.
 - UI direction: Linear-like, minimal, dense, subtle crustacean branding.
 - Access: OpenClaw GitHub org plus admin-managed allowlists for users/teams and repos.
@@ -723,7 +723,7 @@ Picker behavior:
 
 Target domain:
 
-- `https://crabfleet.openclaw.ai`
+- `https://crabfleet.ai`
 
 Current DNS expectation:
 
@@ -748,8 +748,8 @@ Initial deployable artifact:
 Required deploy checks:
 
 - `npx wrangler whoami` shows expected Cloudflare account.
-- `crabfleet.openclaw.ai` is routed to deployed Worker.
-- `curl -I https://crabfleet.openclaw.ai/healthz` returns 200.
+- `crabfleet.ai` is routed to deployed Worker.
+- `curl -I https://crabfleet.ai/healthz` returns 200.
 - `/docs/spec` renders this spec.
 
 ## Security

@@ -546,7 +546,7 @@ const githubSessionSeconds = 60 * 15;
 const sshLinkSeconds = 5 * 60;
 const terminalClipboardMaxBytes = 10 * 1024 * 1024;
 const lanes = ["Todo", "Running", "Human Review", "Done"];
-const preferredRepo = "openclaw/openclaw";
+const preferredRepo = "openclaw/crabfleet";
 const sandboxLeasePrefix = "sandbox:";
 const sandboxLeaseProfile = "autostart-v4";
 const activeRunStatuses: readonly RunStatus[] = ["queued", "leasing", "running"];
@@ -683,11 +683,6 @@ export default {
     const url = new URL(request.url);
 
     try {
-      if (url.hostname === "crabyard.openclaw.ai") {
-        url.hostname = "crabfleet.openclaw.ai";
-        return Response.redirect(url.toString(), 301);
-      }
-
       if (url.pathname === "/healthz") {
         return text("ok\n", "text/plain; charset=utf-8");
       }
@@ -1143,7 +1138,7 @@ async function sshLink(request: Request, env: RuntimeEnv, code: string): Promise
     .executeTakeFirst();
   if (!row || row.consumed_at || row.expires_at <= Date.now()) {
     return text(
-      "SSH link expired. Re-run ssh link@ssh.crabfleet.ai to get a fresh link.\n",
+      "SSH link expired. Re-run ssh link@crabd.sh to get a fresh link.\n",
       "text/plain",
       {},
       410,

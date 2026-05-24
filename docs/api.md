@@ -83,7 +83,7 @@ Returns app state:
   "retention": "30",
   "merge": "guarded",
   "allow": [],
-  "repos": ["openclaw/openclaw", "openclaw/crabbox"],
+  "repos": ["openclaw/crabfleet", "openclaw/crabbox"],
   "workflows": [],
   "cards": []
 }
@@ -110,12 +110,12 @@ Maintainer+. Searches enabled repos for issue/PR number matches.
 {
   "matches": [
     {
-      "repo": "openclaw/openclaw",
+      "repo": "openclaw/crabfleet",
       "number": 76552,
       "title": "Fix runtime policy",
       "source": "Issue",
       "state": "open",
-      "url": "https://github.com/openclaw/openclaw/issues/76552",
+      "url": "https://github.com/openclaw/crabfleet/issues/76552",
       "author": "octocat",
       "updatedAt": "2026-05-17T10:00:00Z",
       "body": "..."
@@ -135,7 +135,7 @@ Maintainer+. Creates a card.
 ```json
 {
   "prompt": "Implement allowlisted admin workflow",
-  "repo": "openclaw/openclaw",
+  "repo": "openclaw/crabfleet",
   "source": "Prompt",
   "runtime": "auto",
   "policy": ""
@@ -299,7 +299,7 @@ Maintainer+. Creates a standalone Codex CLI workspace request.
 
 ```json
 {
-  "repo": "openclaw/openclaw",
+  "repo": "openclaw/crabfleet",
   "branch": "main",
   "runtime": "crabbox",
   "command": "codex",
@@ -337,7 +337,7 @@ Response:
 ```json
 {
   "session": {},
-  "shareUrl": "https://crabfleet.openclaw.ai/app/sessions/IS-105?token=..."
+  "shareUrl": "https://crabfleet.ai/app/sessions/IS-105?token=..."
 }
 ```
 
@@ -362,7 +362,7 @@ Creates a repo-ready crabbox for an operator, e.g. from a Discord meeting handof
 ```json
 {
   "owner": "@steipete",
-  "repo": "openclaw/openclaw",
+  "repo": "openclaw/crabfleet",
   "branch": "main",
   "runtime": "crabbox",
   "command": "codex --yolo",
@@ -406,7 +406,7 @@ Removes an allowlist entry. `:value` is URL encoded.
 
 ```json
 {
-  "repo": "openclaw/openclaw"
+  "repo": "openclaw/crabfleet"
 }
 ```
 
@@ -438,7 +438,7 @@ Fetches and evaluates `CRABBOX.md` for an enabled repo. Private repos require de
 
 ```json
 {
-  "repo": "openclaw/openclaw"
+  "repo": "openclaw/crabfleet"
 }
 ```
 

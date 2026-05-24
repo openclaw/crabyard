@@ -2,7 +2,8 @@
 
 ## Unreleased
 
-- Serve the app/API on `crabfleet.openclaw.ai` and redirect the old `crabyard.openclaw.ai` host.
+- Serve the app/API on `crabfleet.ai` and redirect the old `crabfleet.ai` host.
+- Route `crabfleet.ai` to the Crabbox Worker and move SSH onboarding defaults to `crabd.sh`, with deploy-time domain enforcement.
 
 ## 0.1.0 - 2026-05-24
 

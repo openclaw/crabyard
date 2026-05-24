@@ -48,10 +48,7 @@
     },
   ],
   "workers_dev": true,
-  "routes": [
-    { "pattern": "crabfleet.openclaw.ai", "custom_domain": true },
-    { "pattern": "crabyard.openclaw.ai", "custom_domain": true },
-  ],
+  "routes": [{ "pattern": "crabfleet.ai/*", "zone_name": "crabfleet.ai" }],
   "observability": {
     "enabled": true,
   },

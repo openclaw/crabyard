@@ -15,7 +15,7 @@ test("interactive session ordering ignores passive terminal last-seen refreshes"
     interactiveSessions: [
       {
         id: "IS-1",
-        repo: "openclaw/openclaw",
+        repo: "openclaw/crabfleet",
         branch: "main",
         status: "attached",
         updatedAt: 2000,
@@ -24,7 +24,7 @@ test("interactive session ordering ignores passive terminal last-seen refreshes"
       },
       {
         id: "IS-2",
-        repo: "openclaw/openclaw",
+        repo: "openclaw/crabfleet",
         branch: "main",
         status: "attached",
         updatedAt: 3000,
@@ -72,7 +72,7 @@ test("card ordering keeps updated cards ahead of older start times", () => {
 
 test("optimistic interactive sessions use runtime-specific pending copy", () => {
   const data = new FormData();
-  data.set("repo", "openclaw/openclaw");
+  data.set("repo", "openclaw/crabfleet");
   data.set("runtime", "crabbox");
 
   const session = optimisticInteractiveSession(data, "steipete");
@@ -84,7 +84,7 @@ test("optimistic interactive sessions use runtime-specific pending copy", () => 
 
 test("interactive command defaults to yolo without sandbox suffix", () => {
   const data = new FormData();
-  data.set("repo", "openclaw/openclaw");
+  data.set("repo", "openclaw/crabfleet");
 
   const session = optimisticInteractiveSession(data, "steipete");
 

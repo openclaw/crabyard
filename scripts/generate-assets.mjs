@@ -60,7 +60,7 @@ if (process.argv.includes("--static")) {
   await Promise.all([mkdir(distApp, { recursive: true }), mkdir(distDocs, { recursive: true })]);
   await writeFile(
     new URL("../dist/_redirects", import.meta.url),
-    "/* https://crabfleet.openclaw.ai/:splat 302\n",
+    "/* https://crabfleet.ai/:splat 302\n",
   );
   await writeFile(new URL("../dist/index.html", import.meta.url), redirectHtml("/"));
   await writeFile(new URL("../dist/app/index.html", import.meta.url), redirectHtml("/app/"));
@@ -70,7 +70,7 @@ if (process.argv.includes("--static")) {
 }
 
 function redirectHtml(path) {
-  const target = `https://crabfleet.openclaw.ai${path}`;
+  const target = `https://crabfleet.ai${path}`;
   return `<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0; url=${target}"><title>Crabfleet</title><a href="${target}">Crabfleet</a>`;
 }
 
