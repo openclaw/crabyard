@@ -1,0 +1,66 @@
+name: cli
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "cmd/**"
+      - "go.mod"
+      - "go.sum"
+      - "Dockerfile.ssh-gateway"
+      - ".github/workflows/cli.yml"
+  pull_request:
+    paths:
+      - "cmd/**"
+      - "go.mod"
+      - "go.sum"
+      - "Dockerfile.ssh-gateway"
+      - ".github/workflows/cli.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cli-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    name: Go CLI
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up Go
+        uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download modules
+        run: go mod download
+
+      - name: Test
+        run: go test ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build crabfleet
+        run: go build -trimpath -o /tmp/crabfleet ./cmd/crabfleet
+
+      - name: Build SSH gateway
+        run: go build -trimpath -o /tmp/crabyard-ssh-gateway ./cmd/crabyard-ssh-gateway
+
+      - name: Smoke CLI help
+        run: |
+          /tmp/crabfleet --help
+          /tmp/crabfleet new --help
+          /tmp/crabfleet login
+
+      - name: Build SSH gateway image
+        run: docker build -f Dockerfile.ssh-gateway .
