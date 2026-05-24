@@ -25,6 +25,12 @@
       "database_id": "0866ed65-a568-4d9f-a78a-aec41fe75e06",
     },
   ],
+  "r2_buckets": [
+    {
+      "binding": "SESSION_LOGS",
+      "bucket_name": "crabfleet-session-logs",
+    },
+  ],
   "containers": [
     {
       "class_name": "Sandbox",

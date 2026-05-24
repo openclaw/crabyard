@@ -47,6 +47,7 @@ const defaultInteractiveCommand = "codex --yolo";
 
 type RuntimeEnv = Env & {
   DB: D1Database;
+  SESSION_LOGS?: R2Bucket;
   SANDBOX?: DurableObjectNamespace<CloudflareSandbox>;
   CRABBOX_BOOTSTRAP_TOKEN?: string;
   GITHUB_CLIENT_ID?: string;
@@ -264,6 +265,31 @@ type InteractiveSession = {
   canRequestControl?: boolean;
   sharedReadOnly?: boolean;
   logs: string[];
+  logArchive: InteractiveSessionLogArchive | null;
+};
+
+type InteractiveSessionLogArchive = {
+  sessionId: string;
+  eventCount: number;
+  eventsKey: string | null;
+  transcriptKey: string | null;
+  summaryKey: string | null;
+  archivedAt: number;
+  updatedAt: number;
+};
+
+type InteractiveSessionEvent = {
+  actor: string;
+  message: string;
+  createdAt: number;
+};
+
+type InteractiveSessionEventRow = {
+  id: number;
+  session_id: string;
+  actor: string;
+  message: string;
+  created_at: number;
 };
 
 type SandboxRuntimeSession = (InteractiveProvisionRequest | InteractiveSession) & {
@@ -486,6 +512,16 @@ type InteractiveSessionEventTable = {
   created_at: number;
 };
 
+type InteractiveSessionLogArchiveTable = {
+  session_id: string;
+  event_count: number;
+  events_key: string | null;
+  transcript_key: string | null;
+  summary_key: string | null;
+  archived_at: number;
+  updated_at: number;
+};
+
 type AuditEventTable = {
   id: Generated<number>;
   actor: string;
@@ -525,6 +561,7 @@ type Database = {
   run_attempts: RunAttemptTable;
   interactive_sessions: InteractiveSessionTable;
   interactive_session_events: InteractiveSessionEventTable;
+  interactive_session_log_archives: InteractiveSessionLogArchiveTable;
   repo_workflows: RepoWorkflowTable;
   events: EventTable;
   audit_events: AuditEventTable;
@@ -812,6 +849,21 @@ async function api(request: Request, env: RuntimeEnv): Promise<Response> {
     return json(await sshCreateInteractiveSession(request, env), { status: 201 });
   }
 
+  const sshInteractiveLogsMatch = url.pathname.match(
+    /^\/api\/ssh\/interactive-sessions\/([^/]+)\/logs$/,
+  );
+  if (request.method === "GET" && sshInteractiveLogsMatch) {
+    const user = await requireSshGatewayUser(request, env);
+    requireRole(user, "viewer");
+    return json(
+      await readInteractiveSessionLogBundle(
+        env,
+        user,
+        decodeURIComponent(sshInteractiveLogsMatch[1] ?? ""),
+      ),
+    );
+  }
+
   if (request.method === "POST" && url.pathname === "/api/openclaw/crabboxes") {
     return json(await openClawCreateCrabbox(request, env), { status: 201 });
   }
@@ -878,6 +930,20 @@ async function api(request: Request, env: RuntimeEnv): Promise<Response> {
     );
     if (!session) throw notFound("interactive session not found");
     return json({ session: decorateInteractiveSession(session, user, env) });
+  }
+
+  const interactiveSessionLogsMatch = url.pathname.match(
+    /^\/api\/interactive-sessions\/([^/]+)\/logs$/,
+  );
+  if (request.method === "GET" && interactiveSessionLogsMatch) {
+    requireRole(user, "viewer");
+    return json(
+      await readInteractiveSessionLogBundle(
+        env,
+        user,
+        decodeURIComponent(interactiveSessionLogsMatch[1] ?? ""),
+      ),
+    );
   }
 
   const interactiveSessionDiagnosticsMatch = url.pathname.match(
@@ -1832,6 +1898,16 @@ async function cleanupInteractiveSessions(
     .filter((row) => canManageInteractiveSession(user, interactiveSession(row, [])))
     .map((row) => row.id);
   if (removedIds.length) {
+    const archives = await db
+      .selectFrom("interactive_session_log_archives")
+      .selectAll()
+      .where("session_id", "in", removedIds)
+      .execute();
+    await Promise.all(archives.map((archive) => cleanupSessionLogArchiveObjects(env, archive)));
+    await db
+      .deleteFrom("interactive_session_log_archives")
+      .where("session_id", "in", removedIds)
+      .execute();
     await db
       .deleteFrom("interactive_session_events")
       .where("session_id", "in", removedIds)
@@ -2128,6 +2204,7 @@ async function mutateInteractiveSession(
       .where("status", "!=", "stopped")
       .execute();
     await appendInteractiveSessionEvent(env, id, user, "interactive workspace stopped", now);
+    await archiveInteractiveSessionLogs(env, id, now, { force: true }).catch(() => undefined);
     await audit(env, user, `interactive session stopped ${id}`, now);
     return {
       session: decorateInteractiveSession(
@@ -5005,8 +5082,16 @@ async function readInteractiveSessions(
     env,
     rows.map((row) => row.id),
   );
+  const archives = await readInteractiveSessionLogArchives(
+    env,
+    rows.map((row) => row.id),
+  );
   return rows.map((row) =>
-    decorateInteractiveSession(interactiveSession(row, logs.get(row.id) ?? []), user, env),
+    decorateInteractiveSession(
+      interactiveSession(row, logs.get(row.id) ?? [], archives.get(row.id) ?? null),
+      user,
+      env,
+    ),
   );
 }
 
@@ -5021,7 +5106,8 @@ async function readInteractiveSession(
     .executeTakeFirst();
   if (!row) return null;
   const logs = await readInteractiveSessionLogs(env, [id]);
-  return interactiveSession(row, logs.get(id) ?? []);
+  const archives = await readInteractiveSessionLogArchives(env, [id]);
+  return interactiveSession(row, logs.get(id) ?? [], archives.get(id) ?? null);
 }
 
 async function readSharedInteractiveSession(
@@ -5038,7 +5124,8 @@ async function readSharedInteractiveSession(
   if (!row || !row.share_token_hash || !token) throw notFound("shared session not found");
   if ((await sha256(token)) !== row.share_token_hash) throw notFound("shared session not found");
   const logs = await readInteractiveSessionLogs(env, [id]);
-  const session = interactiveSession(row, logs.get(id) ?? []);
+  const archives = await readInteractiveSessionLogArchives(env, [id]);
+  const session = interactiveSession(row, logs.get(id) ?? [], archives.get(id) ?? null);
   const activeController = activeDelegatedController(session, Date.now());
   return {
     session: {
@@ -5055,6 +5142,33 @@ async function readSharedInteractiveSession(
       canRequestControl: false,
       sharedReadOnly: true,
     },
+  };
+}
+
+async function readInteractiveSessionLogBundle(
+  env: RuntimeEnv,
+  user: User,
+  id: string,
+): Promise<{
+  session: InteractiveSession;
+  events: InteractiveSessionEvent[];
+  archive: InteractiveSessionLogArchive | null;
+  eventCount: number;
+  truncated: boolean;
+}> {
+  const session = await readInteractiveSession(env, id);
+  if (!session) throw notFound("interactive session not found");
+  const [events, eventCount, archives] = await Promise.all([
+    readInteractiveSessionEventRows(env, id, { limit: 5000, newest: true }),
+    countInteractiveSessionEvents(env, id),
+    readInteractiveSessionLogArchives(env, [id]),
+  ]);
+  return {
+    session: decorateInteractiveSession(session, user, env),
+    events: events.map(interactiveSessionEvent),
+    archive: archives.get(id) ?? null,
+    eventCount,
+    truncated: eventCount > events.length,
   };
 }
 
@@ -5085,6 +5199,51 @@ async function readInteractiveSessionLogs(
   return logs;
 }
 
+async function readInteractiveSessionLogArchives(
+  env: RuntimeEnv,
+  ids: string[],
+): Promise<Map<string, InteractiveSessionLogArchive>> {
+  const uniqueIds = [...new Set(ids)].filter(Boolean);
+  if (!uniqueIds.length) return new Map();
+  const rows = await database(env)
+    .selectFrom("interactive_session_log_archives")
+    .selectAll()
+    .where("session_id", "in", uniqueIds)
+    .execute();
+  return new Map(rows.map((row) => [row.session_id, interactiveSessionLogArchive(row)]));
+}
+
+async function readInteractiveSessionEventRows(
+  env: RuntimeEnv,
+  id: string,
+  options: { limit?: number; newest?: boolean } = {},
+): Promise<InteractiveSessionEventRow[]> {
+  const limit = options.limit ? Math.max(1, Math.min(10000, Math.floor(options.limit))) : 0;
+  const base = database(env)
+    .selectFrom("interactive_session_events")
+    .selectAll()
+    .where("session_id", "=", id);
+  if (limit && options.newest) {
+    const rows = await base
+      .orderBy("created_at", "desc")
+      .orderBy("id", "desc")
+      .limit(limit)
+      .execute();
+    return rows.reverse();
+  }
+  const ordered = base.orderBy("created_at", "asc").orderBy("id", "asc");
+  return (limit ? ordered.limit(limit) : ordered).execute();
+}
+
+async function countInteractiveSessionEvents(env: RuntimeEnv, id: string): Promise<number> {
+  const row = await database(env)
+    .selectFrom("interactive_session_events")
+    .select(({ fn }) => fn.countAll<number>().as("count"))
+    .where("session_id", "=", id)
+    .executeTakeFirst();
+  return Number(row?.count ?? 0);
+}
+
 async function appendInteractiveSessionEvent(
   env: RuntimeEnv,
   id: string,
@@ -5101,6 +5260,7 @@ async function appendInteractiveSessionEvent(
       created_at: now,
     })
     .execute();
+  await archiveInteractiveSessionLogs(env, id, now).catch(() => undefined);
 }
 
 async function appendInteractiveSessionLog(
@@ -5123,6 +5283,125 @@ async function appendInteractiveSessionLog(
       created_at: now,
     })
     .execute();
+  await archiveInteractiveSessionLogs(env, id, now).catch(() => undefined);
+}
+
+async function archiveInteractiveSessionLogs(
+  env: RuntimeEnv,
+  id: string,
+  now = Date.now(),
+  options: { force?: boolean } = {},
+): Promise<void> {
+  const db = database(env);
+  const [sessionRow, currentArchive, eventCount] = await Promise.all([
+    db.selectFrom("interactive_sessions").selectAll().where("id", "=", id).executeTakeFirst(),
+    db
+      .selectFrom("interactive_session_log_archives")
+      .selectAll()
+      .where("session_id", "=", id)
+      .executeTakeFirst(),
+    countInteractiveSessionEvents(env, id),
+  ]);
+  if (!sessionRow) return;
+  if (!shouldArchiveInteractiveSessionLogs(currentArchive, eventCount, now, options.force)) {
+    return;
+  }
+  const events = await readInteractiveSessionEventRows(env, id);
+  const latestEventAt = events.at(-1)?.created_at ?? now;
+  const archiveVersion = `${String(events.length).padStart(8, "0")}-${String(latestEventAt).padStart(13, "0")}-${now}`;
+  const base = `${sessionLogArchiveBase(id)}/${archiveVersion}`;
+  const eventsKey = `${base}/events.ndjson`;
+  const transcriptKey = `${base}/transcript.md`;
+  const summaryKey = `${base}/summary.json`;
+  if (env.SESSION_LOGS) {
+    await Promise.all([
+      env.SESSION_LOGS.put(
+        eventsKey,
+        events.map((row) => JSON.stringify(interactiveSessionEvent(row))).join("\n") + "\n",
+        { httpMetadata: { contentType: "application/x-ndjson; charset=utf-8" } },
+      ),
+      env.SESSION_LOGS.put(transcriptKey, sessionLogTranscript(sessionRow, events), {
+        httpMetadata: { contentType: "text/markdown; charset=utf-8" },
+      }),
+      env.SESSION_LOGS.put(
+        summaryKey,
+        JSON.stringify(sessionLogSummary(sessionRow, events), null, 2),
+        { httpMetadata: { contentType: "application/json; charset=utf-8" } },
+      ),
+    ]);
+  }
+  await sql`
+    INSERT INTO interactive_session_log_archives (
+      session_id,
+      event_count,
+      events_key,
+      transcript_key,
+      summary_key,
+      archived_at,
+      updated_at
+    )
+    VALUES (
+      ${id},
+      ${events.length},
+      ${env.SESSION_LOGS ? eventsKey : null},
+      ${env.SESSION_LOGS ? transcriptKey : null},
+      ${env.SESSION_LOGS ? summaryKey : null},
+      ${now},
+      ${now}
+    )
+    ON CONFLICT(session_id) DO UPDATE SET
+      event_count = excluded.event_count,
+      events_key = excluded.events_key,
+      transcript_key = excluded.transcript_key,
+      summary_key = excluded.summary_key,
+      updated_at = excluded.updated_at
+    WHERE excluded.event_count > interactive_session_log_archives.event_count
+      OR (
+        excluded.event_count = interactive_session_log_archives.event_count
+        AND excluded.updated_at >= interactive_session_log_archives.updated_at
+      )
+  `.execute(db);
+  if (!env.SESSION_LOGS) return;
+  const latestArchive = await db
+    .selectFrom("interactive_session_log_archives")
+    .selectAll()
+    .where("session_id", "=", id)
+    .executeTakeFirst();
+  const archiveWon = latestArchive?.events_key === eventsKey;
+  await cleanupSessionLogArchiveObjects(
+    env,
+    archiveWon
+      ? currentArchive
+      : { events_key: eventsKey, transcript_key: transcriptKey, summary_key: summaryKey },
+  );
+}
+
+function shouldArchiveInteractiveSessionLogs(
+  current: InteractiveSessionLogArchiveTable | undefined,
+  eventCount: number,
+  now: number,
+  force = false,
+): boolean {
+  if (force) return true;
+  if (!current) return true;
+  if (eventCount < current.event_count) return false;
+  if (eventCount <= 2 && eventCount > current.event_count) return true;
+  if (eventCount >= current.event_count + 20) return true;
+  return now >= current.updated_at + 60_000;
+}
+
+async function cleanupSessionLogArchiveObjects(
+  env: RuntimeEnv,
+  archive:
+    | Pick<InteractiveSessionLogArchiveTable, "events_key" | "transcript_key" | "summary_key">
+    | undefined,
+): Promise<void> {
+  if (!env.SESSION_LOGS || !archive) return;
+  const keys = [archive.events_key, archive.transcript_key, archive.summary_key].filter(
+    (key): key is string => Boolean(key),
+  );
+  if (!keys.length) return;
+  await Promise.all(keys.map((key) => env.SESSION_LOGS?.delete(key)));
 }
 
 async function readSettings(env: RuntimeEnv): Promise<Record<string, string>> {
@@ -5661,7 +5940,11 @@ function runAttempt(row: RunAttemptTable): RunAttempt {
   };
 }
 
-function interactiveSession(row: InteractiveSessionTable, logs: string[]): InteractiveSession {
+function interactiveSession(
+  row: InteractiveSessionTable,
+  logs: string[],
+  logArchive: InteractiveSessionLogArchive | null = null,
+): InteractiveSession {
   return {
     id: row.id,
     repo: row.repo,
@@ -5688,6 +5971,74 @@ function interactiveSession(row: InteractiveSessionTable, logs: string[]): Inter
     controlExpiresAt: row.control_expires_at,
     multiplayerMode: row.multiplayer_mode === 1,
     logs,
+    logArchive,
+  };
+}
+
+function interactiveSessionEvent(row: InteractiveSessionEventRow): InteractiveSessionEvent {
+  return {
+    actor: row.actor,
+    message: row.message,
+    createdAt: row.created_at,
+  };
+}
+
+function interactiveSessionLogArchive(
+  row: InteractiveSessionLogArchiveTable,
+): InteractiveSessionLogArchive {
+  return {
+    sessionId: row.session_id,
+    eventCount: row.event_count,
+    eventsKey: row.events_key,
+    transcriptKey: row.transcript_key,
+    summaryKey: row.summary_key,
+    archivedAt: row.archived_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function sessionLogArchiveBase(id: string): string {
+  return `orgs/openclaw/interactive-sessions/${id.replace(/[^A-Za-z0-9_.-]/g, "_")}`;
+}
+
+function sessionLogTranscript(
+  session: InteractiveSessionTable,
+  events: InteractiveSessionEventRow[],
+): string {
+  const lines = [
+    `# ${session.id}`,
+    "",
+    `repo: ${session.repo}`,
+    `branch: ${session.branch}`,
+    `runtime: ${session.runtime}`,
+    `owner: ${session.owner}`,
+    `status: ${session.status}`,
+    "",
+    "## Events",
+    "",
+  ];
+  for (const event of events) {
+    lines.push(`- ${new Date(event.created_at).toISOString()} ${event.actor}: ${event.message}`);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function sessionLogSummary(
+  session: InteractiveSessionTable,
+  events: InteractiveSessionEventRow[],
+): Record<string, unknown> {
+  return {
+    id: session.id,
+    repo: session.repo,
+    branch: session.branch,
+    runtime: session.runtime,
+    owner: session.owner,
+    status: session.status,
+    eventCount: events.length,
+    firstEventAt: events[0]?.created_at ?? null,
+    lastEventAt: events.at(-1)?.created_at ?? null,
+    lastEvent: events.at(-1)?.message ?? session.last_event,
+    updatedAt: session.updated_at,
   };
 }
 

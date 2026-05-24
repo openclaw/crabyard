@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"runtime"
@@ -39,6 +40,7 @@ type cli struct {
 	New    newCmd    `cmd:"" help:"Create a repo-ready crabbox and attach."`
 	Attach attachCmd `cmd:"" help:"Attach to a crabbox terminal."`
 	VNC    vncCmd    `cmd:"" help:"Print or open a crabbox WebVNC URL."`
+	Logs   logsCmd   `cmd:"" help:"Print archived crabbox session events."`
 	Open   openCmd   `cmd:"" help:"Open the Crabfleet dashboard."`
 }
 
@@ -52,6 +54,7 @@ type newCmd struct {
 	Runtime string   `help:"Runtime backend." enum:"crabbox,container" default:"crabbox"`
 	Command string   `help:"Command to run after checkout." default:"codex --yolo"`
 	Detach  bool     `help:"Create the crabbox without attaching to it."`
+	VNC     bool     `help:"Open WebVNC after creation when available."`
 	Prompt  []string `arg:"" optional:"" help:"Initial prompt for Codex."`
 }
 
@@ -62,6 +65,10 @@ type attachCmd struct {
 type vncCmd struct {
 	ID   string `arg:"" help:"Crabbox session id."`
 	Open bool   `help:"Open the VNC URL in a browser."`
+}
+
+type logsCmd struct {
+	ID string `arg:"" help:"Crabbox session id."`
 }
 
 type openCmd struct{}
@@ -87,16 +94,17 @@ type user struct {
 }
 
 type interactiveSession struct {
-	ID        string `json:"id"`
-	Repo      string `json:"repo"`
-	Branch    string `json:"branch"`
-	Runtime   string `json:"runtime"`
-	Status    string `json:"status"`
-	Owner     string `json:"owner"`
-	LeaseID   string `json:"leaseId"`
-	AttachURL string `json:"attachUrl"`
-	VNCURL    string `json:"vncUrl"`
-	LastEvent string `json:"lastEvent"`
+	ID         string     `json:"id"`
+	Repo       string     `json:"repo"`
+	Branch     string     `json:"branch"`
+	Runtime    string     `json:"runtime"`
+	Status     string     `json:"status"`
+	Owner      string     `json:"owner"`
+	LeaseID    string     `json:"leaseId"`
+	AttachURL  string     `json:"attachUrl"`
+	VNCURL     string     `json:"vncUrl"`
+	LastEvent  string     `json:"lastEvent"`
+	LogArchive logArchive `json:"logArchive"`
 }
 
 type createSessionRequest struct {
@@ -109,6 +117,28 @@ type createSessionRequest struct {
 
 type createSessionResponse struct {
 	Session interactiveSession `json:"session"`
+}
+
+type sessionLogResponse struct {
+	Session interactiveSession `json:"session"`
+	Events  []sessionLogEvent  `json:"events"`
+	Archive logArchive         `json:"archive"`
+}
+
+type sessionLogEvent struct {
+	Actor     string `json:"actor"`
+	Message   string `json:"message"`
+	CreatedAt int64  `json:"createdAt"`
+}
+
+type logArchive struct {
+	SessionID     string `json:"sessionId"`
+	EventCount    int    `json:"eventCount"`
+	EventsKey     string `json:"eventsKey"`
+	TranscriptKey string `json:"transcriptKey"`
+	SummaryKey    string `json:"summaryKey"`
+	ArchivedAt    int64  `json:"archivedAt"`
+	UpdatedAt     int64  `json:"updatedAt"`
 }
 
 func main() {
@@ -198,8 +228,24 @@ func (cmd newCmd) Run(app *cli, api *apiClient) error {
 		if cmd.Detach {
 			args = append(args, "--detach")
 		}
+		if cmd.VNC {
+			args = append(args, "--vnc")
+		}
 		if prompt != "" {
 			args = append(args, prompt)
+		}
+		if cmd.VNC {
+			output, captureErr := runSSHCommandOutput(app, args...)
+			if output != "" {
+				fmt.Fprint(os.Stdout, output)
+			}
+			if captureErr != nil {
+				return captureErr
+			}
+			if url := vncURLFromOutput(output); url != "" {
+				return openURL(url)
+			}
+			return nil
 		}
 		return runSSHCommand(app, args...)
 	}
@@ -210,6 +256,9 @@ func (cmd newCmd) Run(app *cli, api *apiClient) error {
 	fmt.Fprintf(os.Stdout, "attach: crabfleet attach %s\n", session.ID)
 	if session.VNCURL != "" {
 		fmt.Fprintf(os.Stdout, "vnc: %s\n", session.VNCURL)
+	}
+	if cmd.VNC && session.VNCURL != "" {
+		return openURL(session.VNCURL)
 	}
 	if !cmd.Detach && !app.NoInput && isTerminal(os.Stdin) && isTerminal(os.Stdout) && attachable(session) {
 		return runSSH(app, "attach", session.ID)
@@ -256,6 +305,21 @@ func (cmd vncCmd) Run(app *cli, api *apiClient) error {
 	return fmt.Errorf("session %s not found", cmd.ID)
 }
 
+func (cmd logsCmd) Run(app *cli, api *apiClient) error {
+	logs, err := api.logs(context.Background(), cmd.ID)
+	if err != nil {
+		if app.NoInput || app.JSON {
+			return err
+		}
+		return runSSH(app, "logs", cmd.ID)
+	}
+	if app.JSON {
+		return json.NewEncoder(os.Stdout).Encode(logs)
+	}
+	printSessionLogs(os.Stdout, logs)
+	return nil
+}
+
 func (openCmd) Run(app *cli, _ *apiClient) error {
 	return openURL(app.API + "/app/")
 }
@@ -270,6 +334,12 @@ func (c *apiClient) createSession(ctx context.Context, req createSessionRequest)
 	var out createSessionResponse
 	err := c.do(ctx, http.MethodPost, "/api/ssh/interactive-sessions", req, &out)
 	return out.Session, err
+}
+
+func (c *apiClient) logs(ctx context.Context, id string) (sessionLogResponse, error) {
+	var out sessionLogResponse
+	err := c.do(ctx, http.MethodGet, "/api/ssh/interactive-sessions/"+url.PathEscape(id)+"/logs", nil, &out)
+	return out, err
 }
 
 func (c *apiClient) do(ctx context.Context, method string, path string, body any, out any) error {
@@ -335,6 +405,29 @@ func printFleet(out io.Writer, sessions []interactiveSession) {
 	}
 }
 
+func printSessionLogs(out io.Writer, logs sessionLogResponse) {
+	fmt.Fprintf(
+		out,
+		"session: %s\nrepo: %s\nstatus: %s\n",
+		terminalSafe(logs.Session.ID),
+		terminalSafe(logs.Session.Repo),
+		terminalSafe(logs.Session.Status),
+	)
+	if logs.Archive.EventCount > 0 {
+		fmt.Fprintf(out, "archive: %d events\n", logs.Archive.EventCount)
+	}
+	for _, event := range logs.Events {
+		timestamp := time.UnixMilli(event.CreatedAt).Format("15:04:05")
+		fmt.Fprintf(
+			out,
+			"%s %s %s\n",
+			timestamp,
+			terminalSafe(event.Actor),
+			terminalSafe(event.Message),
+		)
+	}
+}
+
 func runSSH(app *cli, args ...string) error {
 	sshArgs := append([]string{app.SSHHost}, args...)
 	cmd := exec.Command("ssh", sshArgs...)
@@ -350,6 +443,14 @@ func runSSHCommand(app *cli, args ...string) error {
 		parts[i] = shellQuote(arg)
 	}
 	return runSSH(app, strings.Join(parts, " "))
+}
+
+func runSSHCommandOutput(app *cli, args ...string) (string, error) {
+	parts := make([]string, len(args))
+	for i, arg := range args {
+		parts[i] = shellQuote(arg)
+	}
+	return runSSHOutput(app, strings.Join(parts, " "))
 }
 
 func runSSHOutput(app *cli, args ...string) (string, error) {
@@ -392,6 +493,31 @@ func firstLine(value string) string {
 		}
 	}
 	return ""
+}
+
+func vncURLFromOutput(output string) string {
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if after, ok := strings.CutPrefix(line, "vnc:"); ok {
+			line = strings.TrimSpace(after)
+		}
+		if strings.HasPrefix(line, "http://") || strings.HasPrefix(line, "https://") {
+			return line
+		}
+	}
+	return ""
+}
+
+func terminalSafe(value string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' || r == '\t' {
+			return ' '
+		}
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
+			return -1
+		}
+		return r
+	}, value)
 }
 
 func attachable(session interactiveSession) bool {

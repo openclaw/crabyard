@@ -49,14 +49,15 @@ type stateResponse struct {
 }
 
 type interactiveSession struct {
-	ID        string `json:"id"`
-	Repo      string `json:"repo"`
-	Branch    string `json:"branch"`
-	Runtime   string `json:"runtime"`
-	Status    string `json:"status"`
-	AttachURL string `json:"attachUrl"`
-	VNCURL    string `json:"vncUrl"`
-	LastEvent string `json:"lastEvent"`
+	ID         string     `json:"id"`
+	Repo       string     `json:"repo"`
+	Branch     string     `json:"branch"`
+	Runtime    string     `json:"runtime"`
+	Status     string     `json:"status"`
+	AttachURL  string     `json:"attachUrl"`
+	VNCURL     string     `json:"vncUrl"`
+	LastEvent  string     `json:"lastEvent"`
+	LogArchive logArchive `json:"logArchive"`
 }
 
 type card struct {
@@ -78,10 +79,33 @@ type createSessionRequest struct {
 type createArgs struct {
 	request createSessionRequest
 	detach  bool
+	vnc     bool
 }
 
 type createSessionResponse struct {
 	Session interactiveSession `json:"session"`
+}
+
+type sessionLogResponse struct {
+	Session interactiveSession `json:"session"`
+	Events  []sessionLogEvent  `json:"events"`
+	Archive logArchive         `json:"archive"`
+}
+
+type sessionLogEvent struct {
+	Actor     string `json:"actor"`
+	Message   string `json:"message"`
+	CreatedAt int64  `json:"createdAt"`
+}
+
+type logArchive struct {
+	SessionID     string `json:"sessionId"`
+	EventCount    int    `json:"eventCount"`
+	EventsKey     string `json:"eventsKey"`
+	TranscriptKey string `json:"transcriptKey"`
+	SummaryKey    string `json:"summaryKey"`
+	ArchivedAt    int64  `json:"archivedAt"`
+	UpdatedAt     int64  `json:"updatedAt"`
 }
 
 type keyAuth struct {
@@ -309,6 +333,15 @@ func runCommand(ctx context.Context, out io.ReadWriter, perms *ssh.Permissions, 
 			return 1
 		}
 		fmt.Fprintf(out, "session: %s\nrepo: %s\nstatus: %s\nattach: ssh crabfleet attach %s\n", session.ID, session.Repo, session.Status, session.ID)
+		if session.VNCURL != "" {
+			fmt.Fprintf(out, "vnc: %s\n", terminalSafe(session.VNCURL))
+		}
+		if create.vnc {
+			if session.VNCURL == "" {
+				fmt.Fprintln(out, "vnc: pending")
+			}
+			return 0
+		}
 		if create.detach {
 			return 0
 		}
@@ -342,6 +375,18 @@ func runCommand(ctx context.Context, out io.ReadWriter, perms *ssh.Permissions, 
 		}
 		fmt.Fprintf(out, "session %s not found\n", terminalSafe(args[1]))
 		return 1
+	case "logs":
+		if len(args) < 2 {
+			fmt.Fprintln(out, "usage: logs SESSION_ID")
+			return 2
+		}
+		logs, err := client.logs(ctx, auth.fingerprint, args[1])
+		if err != nil {
+			fmt.Fprintf(out, "error: %v\n", err)
+			return 1
+		}
+		printSessionLogs(out, logs)
+		return 0
 	case "open":
 		fmt.Fprintf(out, "%s/app/\n", client.baseURL)
 		return 0
@@ -357,9 +402,10 @@ func printHelp(out io.Writer, user user) {
 	fmt.Fprintln(out, "commands:")
 	fmt.Fprintln(out, "  whoami")
 	fmt.Fprintln(out, "  list")
-	fmt.Fprintln(out, "  new [--repo owner/repo] [--branch main] [--runtime crabbox|container] [--command codex] [prompt]")
+	fmt.Fprintln(out, "  new [--repo owner/repo] [--branch main] [--runtime crabbox|container] [--command codex] [--vnc] [prompt]")
 	fmt.Fprintln(out, "  attach SESSION_ID")
 	fmt.Fprintln(out, "  vnc SESSION_ID")
+	fmt.Fprintln(out, "  logs SESSION_ID")
 	fmt.Fprintln(out, "  open")
 }
 
@@ -395,6 +441,29 @@ func printList(out io.Writer, state stateResponse) {
 			terminalSafe(c.Lane),
 			terminalSafe(c.Repo),
 			terminalSafe(c.Title),
+		)
+	}
+}
+
+func printSessionLogs(out io.Writer, logs sessionLogResponse) {
+	fmt.Fprintf(
+		out,
+		"session: %s\nrepo: %s\nstatus: %s\n",
+		terminalSafe(logs.Session.ID),
+		terminalSafe(logs.Session.Repo),
+		terminalSafe(logs.Session.Status),
+	)
+	if logs.Archive.EventCount > 0 {
+		fmt.Fprintf(out, "archive: %d events\n", logs.Archive.EventCount)
+	}
+	for _, event := range logs.Events {
+		timestamp := time.UnixMilli(event.CreatedAt).Format("15:04:05")
+		fmt.Fprintf(
+			out,
+			"%s %s %s\n",
+			timestamp,
+			terminalSafe(event.Actor),
+			terminalSafe(event.Message),
 		)
 	}
 }
@@ -499,11 +568,13 @@ func parseCreate(args []string, client *apiClient, fingerprint string) createArg
 	fs.SetOutput(io.Discard)
 	var req createSessionRequest
 	var detach bool
+	var vnc bool
 	fs.StringVar(&req.Repo, "repo", "", "repo")
 	fs.StringVar(&req.Branch, "branch", "main", "branch")
 	fs.StringVar(&req.Runtime, "runtime", "crabbox", "runtime")
 	fs.StringVar(&req.Command, "command", "", "command")
 	fs.BoolVar(&detach, "detach", false, "do not attach after creating")
+	fs.BoolVar(&vnc, "vnc", false, "print vnc URL without attaching")
 	_ = fs.Parse(args)
 	req.Prompt = strings.Join(fs.Args(), " ")
 	if req.Repo == "" {
@@ -511,7 +582,7 @@ func parseCreate(args []string, client *apiClient, fingerprint string) createArg
 			req.Repo = state.Repos[0]
 		}
 	}
-	return createArgs{request: req, detach: detach}
+	return createArgs{request: req, detach: detach, vnc: vnc}
 }
 
 func (c *apiClient) auth(ctx context.Context, key ssh.PublicKey, sshUser string, remote string, createLink bool) (keyAuth, error) {
@@ -544,6 +615,12 @@ func (c *apiClient) createSession(ctx context.Context, fingerprint string, reque
 	var response createSessionResponse
 	err := c.do(ctx, http.MethodPost, "/api/ssh/interactive-sessions", fingerprint, request, &response)
 	return response.Session, err
+}
+
+func (c *apiClient) logs(ctx context.Context, fingerprint string, id string) (sessionLogResponse, error) {
+	var response sessionLogResponse
+	err := c.do(ctx, http.MethodGet, "/api/ssh/interactive-sessions/"+url.PathEscape(id)+"/logs", fingerprint, nil, &response)
+	return response, err
 }
 
 func (c *apiClient) attach(ctx context.Context, fingerprint string, id string, terminal io.ReadWriter, pty sessionPTY) uint32 {

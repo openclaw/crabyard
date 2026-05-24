@@ -96,6 +96,8 @@ The Take over action records `controlIntent = "takeover"` and operator only for 
 
 Maintainers can create a standalone Codex CLI session without making a board card. The Worker stores the requested repo, branch, runtime, command, owner, attach/VNC URLs, status, and event log in D1. The default runtime is `crabbox` so a provision adapter can return both terminal and VNC attach URLs.
 
+Session events are mirrored into the `SESSION_LOGS` R2 binding when configured. Crabfleet writes NDJSON, Markdown transcript, and summary objects under `orgs/openclaw/interactive-sessions/<id>/`, while D1 keeps the compact event list and archive keys for the app, CLI, and SSH gateway.
+
 If `CRABBOX_INTERACTIVE_PROVISION_URL` is not set, new sessions stay `pending_adapter` and remain visible in the Ghostty grid. If it is set, Crabfleet posts the session request to that endpoint with optional bearer auth from `CRABBOX_INTERACTIVE_PROVISION_TOKEN`; the response can set `status`, `leaseId`, `attachUrl`, `vncUrl`, and `message`.
 
 Crabfleet also ships a built-in provision hook at `/api/provision/interactive`. Point `CRABBOX_INTERACTIVE_PROVISION_URL` at that route to use Worker-side backend selection. Set `CRABBOX_INTERACTIVE_PROVISION_TOKEN` for backend-enabled deployments; the route fails closed without it when a backend is configured. The route delegates to `CRABBOX_RUNTIME_PROVISION_URL` when set, creates a Cloudflare Container sandbox for `container` sessions through `CRABBOX_CLOUDFLARE_RUNNER_URL` when configured, or creates a ClawFleet OpenClaw instance for `crabbox` sessions through `CRABBOX_CLAWFLEET_URL`; without a matching backend it returns `pending_adapter` with a clear setup message.

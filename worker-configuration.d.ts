@@ -1,5 +1,6 @@
 interface Env {
   DB: D1Database;
+  SESSION_LOGS?: R2Bucket;
   SANDBOX: DurableObjectNamespace<import("@cloudflare/sandbox").Sandbox>;
   CRABBOX_BOOTSTRAP_TOKEN?: string;
   GITHUB_CLIENT_ID?: string;

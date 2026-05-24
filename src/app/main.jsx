@@ -1311,6 +1311,7 @@ function FleetPage(props) {
 
 function FleetBox({ session, openSessionGrid }) {
   const capabilities = runCapabilities(session);
+  const archiveCount = session.logArchive?.eventCount || session.logs?.length || 0;
   return (
     <article class="fleet-box">
       <header class="fleet-box-head">
@@ -1323,7 +1324,9 @@ function FleetBox({ session, openSessionGrid }) {
         <span>{session.branch || "main"}</span>
         <span>{session.runtime || "crabbox"}</span>
         {capabilities.vnc ? <span>webvnc</span> : null}
+        {archiveCount ? <span>{archiveCount} logs</span> : null}
       </div>
+      <p class="fleet-box-event">{session.lastEvent || "Waiting for crabbox"}</p>
       <code>
         ssh {sshHost} attach {session.id}
       </code>
@@ -1331,10 +1334,27 @@ function FleetBox({ session, openSessionGrid }) {
         <button onClick={() => openSessionGrid(session.id)}>Terminal</button>
         {session.vncUrl ? (
           <button onClick={() => window.open(session.vncUrl, "_blank", "noopener")}>VNC</button>
+        ) : capabilities.vnc ? (
+          <button
+            class="pending-vnc"
+            disabled
+            title="WebVNC URL appears after crabbox provisioning"
+          >
+            VNC pending
+          </button>
+        ) : null}
+        {!session.sharedReadOnly ? (
+          <button onClick={() => window.open(sessionLogsUrl(session.id), "_blank", "noopener")}>
+            Logs
+          </button>
         ) : null}
       </div>
     </article>
   );
+}
+
+function sessionLogsUrl(id) {
+  return `/api/interactive-sessions/${encodeURIComponent(id)}/logs`;
 }
 
 function DashboardAction({ icon, title, text, action, disabled, onClick }) {
@@ -2156,6 +2176,9 @@ function InteractiveSessionActions(props) {
         {session.vncUrl ? (
           <button onClick={() => window.open(session.vncUrl, "_blank", "noopener")}>VNC</button>
         ) : null}
+        <button onClick={() => window.open(sessionLogsUrl(session.id), "_blank", "noopener")}>
+          Logs
+        </button>
         {canManage ? <button onClick={handleShare}>{shareLabel}</button> : null}
         {canChangeMultiplayer ? (
           <button
@@ -2185,6 +2208,11 @@ function InteractiveSessionActions(props) {
     <>
       {session.vncUrl ? (
         <button onClick={() => window.open(session.vncUrl, "_blank", "noopener")}>VNC</button>
+      ) : null}
+      {!session.sharedReadOnly ? (
+        <button onClick={() => window.open(sessionLogsUrl(session.id), "_blank", "noopener")}>
+          Logs
+        </button>
       ) : null}
       {canManage ? <button onClick={handleShare}>{shareLabel}</button> : null}
       {canChangeMultiplayer ? (

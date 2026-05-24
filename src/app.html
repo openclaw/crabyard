@@ -898,11 +898,26 @@
         text-overflow: ellipsis;
         white-space: nowrap;
       }
+      .fleet-box-event {
+        min-height: 36px;
+        margin: 0;
+        overflow: hidden;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.45;
+        display: -webkit-box;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 2;
+      }
       .fleet-box-actions {
         display: flex;
+        flex-wrap: wrap;
         gap: 8px;
         align-items: end;
         margin-top: auto;
+      }
+      .fleet-box-actions .pending-vnc {
+        box-shadow: none;
       }
       .state-pill {
         min-width: 78px;

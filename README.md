@@ -25,9 +25,10 @@ Crabfleet gives OpenClaw maintainers a fleet dashboard where every Codex crabbox
 - **Cloudflare Sandbox containers** for standalone interactive Codex CLI workspaces with live PTY attach.
 - **Runtime adapter descriptors** for Container and Crabbox selection, capability display, interactive provision handoff, and guarded takeover.
 - **Provision endpoint** at `/api/provision/interactive` that can use the built-in Sandbox backend or delegate to a generic runtime adapter or ClawFleet.
+- **R2 session archives** for crabbox event NDJSON, transcripts, and summaries.
 - **GitHub API** for OAuth, org/team membership, and issue/PR previews across enabled repos.
 
-Autonomous card execution, Crabbox VNC transport, R2 archival, Durable Object fanout, and merge automation are adapter targets, not faked in the current Worker.
+Autonomous card execution, Crabbox VNC transport, Durable Object fanout, and merge automation are adapter targets, not faked in the current Worker.
 
 ## Quick Start
 
@@ -147,7 +148,7 @@ wrangler deploy
 
 ### Environment Variables
 
-Configure these in Cloudflare Workers dashboard. `CRABBOX_*` names are the runtime/crabbox adapter contract; `CRABFLEET_*` names are for the public CLI and SSH gateway.
+Configure these in Cloudflare Workers dashboard. `CRABBOX_*` names are the runtime/crabbox adapter contract; `CRABFLEET_*` names are for the public CLI and SSH gateway. The `SESSION_LOGS` R2 binding points at the `crabfleet-session-logs` bucket and stores crabbox event archives.
 
 The Crabbox namespace cutover intentionally has no old-name compatibility. Existing browser sessions expire, linked SSH keys must be relinked with `ssh link@crabd.sh`, and in-flight interactive workspaces should be recreated.
 

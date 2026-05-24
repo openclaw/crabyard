@@ -60,7 +60,7 @@ Not wired yet:
 
 - Crabbox/ClawFleet lease creation.
 - External Crabbox/runner-side app-server transport.
-- R2 terminal/artifact archival.
+- Raw terminal replay/artifact archival.
 - Durable Object WebSocket fanout.
 - Direct merge execution or ClawSweeper handoff.
 

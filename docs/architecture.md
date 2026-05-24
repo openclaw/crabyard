@@ -9,7 +9,7 @@ description: "System design, data model, and runtime architecture for Crabfleet.
 
 Crabfleet is a Cloudflare Worker backed by D1. The deployed Worker is the control plane: auth, repo gates, crabboxes, cards, run attempts, workflow evaluation, issue/PR lookup, docs, the Ghostty WASM attach grid, and the same-origin PTY WebSocket proxy all run there today.
 
-Crabbox PTY/VNC links, R2 archival, Durable Object fanout, Discord/OpenClaw orchestration, and merge automation are represented by adapter metadata and product docs; backend bindings are explicit deployment work.
+Crabbox PTY/VNC links, Durable Object fanout, Discord/OpenClaw orchestration, and merge automation are represented by adapter metadata and product docs; backend bindings are explicit deployment work. Crabbox session events are archived to R2 when the `SESSION_LOGS` binding is configured.
 
 ## System Overview
 

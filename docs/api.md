@@ -349,6 +349,7 @@ CRABBOX_SSH_GATEWAY_TOKEN`. These endpoints are not browser APIs.
 - `POST /api/ssh/auth`: checks a public-key fingerprint. Unknown keys receive a short `/ssh/link/:code` GitHub OAuth URL only when the gateway is in explicit link mode, e.g. `ssh link@host`.
 - `GET /api/ssh/state`: returns the same board/session state for the linked SSH user.
 - `POST /api/ssh/interactive-sessions`: creates an interactive Codex session for the linked SSH user.
+- `GET /api/ssh/interactive-sessions/:id/logs`: returns the D1 event stream plus R2 archive metadata for a visible crabbox session.
 - `GET /api/ssh/interactive-sessions/:id/pty`: WebSocket PTY attach for the gateway, scoped by linked key fingerprint.
 
 ## OpenClaw Service
