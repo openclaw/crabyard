@@ -36,7 +36,7 @@ Autonomous card execution, Crabbox VNC transport, R2 archival, Durable Object fa
 Get the bootstrap token from your deployment secrets and use it to log in:
 
 ```bash
-# Visit https://crabfleet.ai/app/
+# Visit https://crabfleet.openclaw.ai/app/
 # Use bootstrap token for initial admin setup
 ```
 
@@ -118,7 +118,7 @@ merge:
 ### Prerequisites
 
 - Cloudflare account
-- `crabfleet.ai` route in Cloudflare
+- `crabfleet.openclaw.ai` route in Cloudflare (`crabyard.openclaw.ai` redirects here)
 - GitHub OAuth app (optional but recommended)
 - Bootstrap token secret
 
@@ -175,10 +175,10 @@ The Crabbox namespace cutover intentionally has no old-name compatibility. Exist
 ### Verify Deployment
 
 ```bash
-curl -I https://crabfleet.ai/healthz
+curl -I https://crabfleet.openclaw.ai/healthz
 # Should return: 200 OK
 
-curl https://crabfleet.ai/docs/spec
+curl https://crabfleet.openclaw.ai/docs/spec
 # Should return: HTML spec document
 ```
 
@@ -228,7 +228,7 @@ The Worker exposes an internal SSH onboarding API guarded by `CRABFLEET_SSH_GATE
 Run the Go gateway next to a host that can accept raw SSH:
 
 ```bash
-CRABFLEET_API_URL=https://crabfleet.ai \
+CRABFLEET_API_URL=https://crabfleet.openclaw.ai \
 CRABFLEET_SSH_GATEWAY_TOKEN=... \
 CRABFLEET_SSH_HOST_KEY=/var/lib/crabfleet/ssh_host_ed25519_key \
 CRABFLEET_SSH_ADDR=:2222 \
@@ -274,7 +274,7 @@ The release workflow builds macOS, Linux, and Windows archives, then updates `op
 OpenClaw can create repo-ready crabboxes for Discord-triggered work through the internal service endpoint:
 
 ```bash
-curl -fsS https://crabfleet.ai/api/openclaw/crabboxes \
+curl -fsS https://crabfleet.openclaw.ai/api/openclaw/crabboxes \
   -H "authorization: Bearer $CRABBOX_OPENCLAW_TOKEN" \
   -H "content-type: application/json" \
   -d '{"owner":"@steipete","repo":"openclaw/openclaw","prompt":"prep the meeting follow-up"}'

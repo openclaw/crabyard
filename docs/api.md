@@ -337,7 +337,7 @@ Response:
 ```json
 {
   "session": {},
-  "shareUrl": "https://crabfleet.ai/app/sessions/IS-105?token=..."
+  "shareUrl": "https://crabfleet.openclaw.ai/app/sessions/IS-105?token=..."
 }
 ```
 

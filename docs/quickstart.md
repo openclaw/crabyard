@@ -13,11 +13,11 @@ This gets you from login to a real D1-backed crabbox, card, and run attempt.
 
 - OpenClaw GitHub org membership.
 - Bootstrap token from deployment secrets, or GitHub OAuth already configured.
-- Access to `https://crabfleet.ai/app/`.
+- Access to `https://crabfleet.openclaw.ai/app/`.
 
 ## 1. Log In
 
-Open `https://crabfleet.ai/app/`.
+Open `https://crabfleet.openclaw.ai/app/`.
 
 - Use GitHub OAuth if configured.
 - Use the bootstrap token for setup/recovery.

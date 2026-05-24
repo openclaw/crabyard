@@ -31,7 +31,7 @@ import {
 
 const logo = "__CRABBOX_LOGO__";
 const productName = "Crabfleet";
-const productDomain = "crabfleet.ai";
+const productDomain = "crabfleet.openclaw.ai";
 const sshHost = "ssh.crabfleet.ai";
 const loginReturnKey = "crabbox-login-return";
 const skipAutoGithubLoginKey = "crabbox-skip-auto-github-login";

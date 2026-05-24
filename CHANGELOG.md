@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Serve the app/API on `crabfleet.openclaw.ai` and redirect the old `crabyard.openclaw.ai` host.
+
 ## 0.1.0 - 2026-05-24
 
 - Rename the remaining old runtime, cookie, docs, asset, migration, and SSH gateway surfaces to Crabbox names, expiring old sessions and requiring SSH keys to be relinked.

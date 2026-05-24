@@ -683,6 +683,11 @@ export default {
     const url = new URL(request.url);
 
     try {
+      if (url.hostname === "crabyard.openclaw.ai") {
+        url.hostname = "crabfleet.openclaw.ai";
+        return Response.redirect(url.toString(), 301);
+      }
+
       if (url.pathname === "/healthz") {
         return text("ok\n", "text/plain; charset=utf-8");
       }

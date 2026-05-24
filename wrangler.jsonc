@@ -48,8 +48,10 @@
     },
   ],
   "workers_dev": true,
-  // Enable after crabfleet.ai exists as a Cloudflare zone in this account:
-  // "routes": [{ "pattern": "crabfleet.ai", "custom_domain": true }],
+  "routes": [
+    { "pattern": "crabfleet.openclaw.ai", "custom_domain": true },
+    { "pattern": "crabyard.openclaw.ai", "custom_domain": true },
+  ],
   "observability": {
     "enabled": true,
   },
