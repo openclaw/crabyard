@@ -15,14 +15,16 @@
     />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://crabfleet.ai/" />
-    <meta property="og:image" content="https://crabfleet.ai/crabbox-logo.png" />
+    <meta property="og:image" content="https://crabfleet.ai/crabfleet-og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="Crabfleet" />
     <meta
       name="twitter:description"
       content="OpenClaw Codex crabboxes, grouped fleet visibility, WebVNC, SSH, and repo-ready workspaces."
     />
-    <meta name="twitter:image" content="https://crabfleet.ai/crabbox-logo.png" />
+    <meta name="twitter:image" content="https://crabfleet.ai/crabfleet-og.png" />
     <link rel="icon" type="image/png" href="/crabbox-logo.png" />
     <script>
       try {
@@ -365,12 +367,12 @@
         height: 32px;
         margin: 0;
         border-radius: 8px;
-        background: #f3f1f4;
+        overflow: hidden;
         box-shadow: 0 10px 28px rgb(0 0 0 / 0.35);
       }
       .login-panel .mark img {
-        width: 26px;
-        height: 26px;
+        width: 32px;
+        height: 32px;
       }
       .login-panel h1 {
         margin: 0;
@@ -561,7 +563,6 @@
         border-radius: 7px;
         display: grid;
         place-items: center;
-        background: #f3f1f4;
         box-shadow: none;
         overflow: hidden;
         transition: all 0.2s ease;
@@ -571,8 +572,8 @@
         box-shadow: var(--shadow-lg);
       }
       .mark img {
-        width: 24px;
-        height: 24px;
+        width: 28px;
+        height: 28px;
         object-fit: contain;
       }
       .brand-lockup {

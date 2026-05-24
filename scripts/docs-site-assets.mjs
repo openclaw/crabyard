@@ -77,12 +77,7 @@ a:hover{text-decoration:underline;text-underline-offset:.2em}
 .sidebar-head{display:flex;align-items:center;gap:10px;margin-bottom:24px}
 .brand{display:flex;align-items:center;gap:11px;color:var(--ink);text-decoration:none;flex:1;min-width:0}
 .brand:hover{text-decoration:none}
-.brand .mark{display:grid;grid-template-columns:repeat(2,12px);grid-template-rows:repeat(2,12px);gap:3px;flex:0 0 27px}
-.brand .mark i{display:block;border-radius:3px}
-.brand .mark i:nth-child(1){background:var(--accent)}
-.brand .mark i:nth-child(2){background:var(--blue)}
-.brand .mark i:nth-child(3){background:var(--green)}
-.brand .mark i:nth-child(4){background:var(--amber)}
+.brand .mark{flex:0 0 28px;width:28px;height:28px;border-radius:8px;display:block}
 .brand strong{display:block;font-size:1.05rem;line-height:1.1;font-weight:600;letter-spacing:0;color:var(--ink)}
 .brand small{display:block;color:var(--muted);font-size:.74rem;margin-top:3px;font-weight:400}
 .theme-toggle{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:34px;height:34px;border-radius:8px;border:1px solid var(--line);background:var(--paper-soft);color:var(--muted);cursor:pointer;padding:0;transition:border-color .15s,color .15s,background-color .15s,transform .12s}
@@ -288,12 +283,32 @@ export function themeToggleHtml() {
   </button>`;
 }
 
-export function faviconSvg() {
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Crabfleet">
-<rect width="64" height="64" rx="12" fill="#0f1115"/>
-<rect x="14" y="14" width="14" height="14" rx="3" fill="#ff6b35"/>
-<rect x="36" y="14" width="14" height="14" rx="3" fill="#004e89"/>
-<rect x="14" y="36" width="14" height="14" rx="3" fill="#1a936f"/>
-<rect x="36" y="36" width="14" height="14" rx="3" fill="#4a5859"/>
+// Canonical Crabfleet mark: a fleet of run-nodes on a dark app-icon tile, the
+// center node lit coral to mark the live run. Shared by the SVG favicon and the
+// PNG renderer (scripts/render-brand.mjs) so every surface uses one artwork.
+export function brandMarkSvg({ glow = false } = {}) {
+  const coords = [46, 105, 164];
+  const nodes = [];
+  for (const y of coords)
+    for (const x of coords) {
+      const live = x === 105 && y === 105;
+      nodes.push(
+        `<rect x="${x}" y="${y}" width="46" height="46" rx="13" fill="url(#${live ? "cf-live" : "cf-node"})"/>`,
+      );
+    }
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Crabfleet">
+  <defs>
+    <linearGradient id="cf-tile" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#15171d"/><stop offset="1" stop-color="#0c0e12"/></linearGradient>
+    <linearGradient id="cf-node" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#525b6e"/><stop offset="1" stop-color="#3a4150"/></linearGradient>
+    <linearGradient id="cf-live" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff7184"/><stop offset="1" stop-color="#ef4f67"/></linearGradient>
+    ${glow ? `<filter id="cf-glow" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="14"/></filter>` : ""}
+  </defs>
+  <rect x="2" y="2" width="252" height="252" rx="58" fill="url(#cf-tile)" stroke="#262a34" stroke-width="2"/>
+  ${glow ? `<rect x="105" y="105" width="46" height="46" rx="13" fill="#f05a70" filter="url(#cf-glow)" opacity="0.55"/>` : ""}
+  ${nodes.join("\n  ")}
 </svg>`;
+}
+
+export function faviconSvg() {
+  return brandMarkSvg();
 }

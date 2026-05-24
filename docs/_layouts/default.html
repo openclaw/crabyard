@@ -9,11 +9,13 @@
     <meta property="og:description" content="{{ page.description | default: site.description }}" />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://docs.crabfleet.ai{{ page.url }}" />
-    <meta property="og:image" content="https://crabfleet.ai/crabbox-logo.png" />
+    <meta property="og:image" content="https://crabfleet.ai/crabfleet-og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="{{ page.title }} | {{ site.title }}" />
     <meta name="twitter:description" content="{{ page.description | default: site.description }}" />
-    <meta name="twitter:image" content="https://crabfleet.ai/crabbox-logo.png" />
+    <meta name="twitter:image" content="https://crabfleet.ai/crabfleet-og.png" />
     <link rel="icon" type="image/png" href="/crabbox-logo.png" />
     <style>
       :root {
@@ -83,26 +85,9 @@
         margin-bottom: 24px;
       }
       .mark {
-        display: grid;
-        grid-template-columns: repeat(2, 12px);
-        gap: 3px;
-      }
-      .mark i {
-        width: 12px;
-        height: 12px;
-        border-radius: 3px;
-      }
-      .mark i:nth-child(1) {
-        background: var(--primary);
-      }
-      .mark i:nth-child(2) {
-        background: var(--blue);
-      }
-      .mark i:nth-child(3) {
-        background: var(--green);
-      }
-      .mark i:nth-child(4) {
-        background: var(--amber);
+        width: 28px;
+        height: 28px;
+        border-radius: 8px;
       }
       nav h2 {
         margin: 18px 0 6px;
@@ -226,7 +211,7 @@
     <div class="shell">
       <aside>
         <a class="brand" href="{{ '/' | relative_url }}">
-          <span class="mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+          <img class="mark" src="/crabbox-logo.png" alt="" width="28" height="28" />
           <span>Crabfleet</span>
         </a>
         <nav aria-label="Docs">

@@ -79,6 +79,7 @@ for (const page of pages) {
 fs.writeFileSync(path.join(outDir, "favicon.svg"), faviconSvg(), "utf8");
 
 copyStaticAsset("crabbox-logo.png");
+copyStaticAsset("crabfleet-og.png");
 fs.writeFileSync(path.join(outDir, ".nojekyll"), "", "utf8");
 if (cname) fs.writeFileSync(path.join(outDir, "CNAME"), cname, "utf8");
 validateLinks(outDir);
@@ -507,7 +508,7 @@ function layout({ page, html, toc, prev, next, sectionName }) {
     page.frontmatter.description ||
     (home ? productDescription : `${page.title} — ${productName} CLI documentation.`);
   const canonicalUrl = pageCanonicalUrl(page);
-  const socialImage = siteBase ? `${siteBase}/crabbox-logo.png` : `${rootPrefix}crabbox-logo.png`;
+  const socialImage = siteBase ? `${siteBase}/crabfleet-og.png` : `${rootPrefix}crabfleet-og.png`;
   const socialMeta = [
     ["link", "rel", "canonical", "href", canonicalUrl],
     ["meta", "property", "og:type", "content", "website"],
@@ -548,7 +549,7 @@ function layout({ page, html, toc, prev, next, sectionName }) {
     <aside class="sidebar">
       <div class="sidebar-head">
         <a class="brand" href="${hrefToOutRel("index.html", page.outRel)}" aria-label="${productName} docs home">
-          <span class="mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+          <img class="mark" src="${rootPrefix}crabbox-logo.png" alt="" width="28" height="28">
           <span><strong>${escapeHtml(productName)}</strong><small>Control plane docs</small></span>
         </a>
         ${themeToggleHtml()}

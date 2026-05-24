@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Tighten the login SSH command width for `crabd.sh` and tuck bootstrap-token login behind a recovery disclosure.
+- Redesign the Crabfleet logo and favicon around a single fleet node-grid mark, and serve a real 1200×630 social card instead of stretching the 96px logo.
 - Serve the app/API on `crabfleet.ai` and redirect the old `crabfleet.ai` host.
 - Route `crabfleet.ai` to the Crabbox Worker and move SSH onboarding defaults to `crabd.sh`, with deploy-time domain enforcement.
 

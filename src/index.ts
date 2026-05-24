@@ -36,6 +36,7 @@ import {
   GHOSTTY_BROWSER_EXTERNAL_JS,
   GHOSTTY_WEB_JS,
   LOGO_PNG_BASE64,
+  OG_IMAGE_PNG_BASE64,
   SPEC_HTML,
   SPEC_MARKDOWN,
 } from "./generated";
@@ -689,6 +690,15 @@ export default {
 
       if (url.pathname === "/crabbox-logo.png") {
         return new Response(base64Bytes(LOGO_PNG_BASE64), {
+          headers: {
+            ...securityHeaders("image/png"),
+            "cache-control": "public, max-age=86400",
+          },
+        });
+      }
+
+      if (url.pathname === "/crabfleet-og.png") {
+        return new Response(base64Bytes(OG_IMAGE_PNG_BASE64), {
           headers: {
             ...securityHeaders("image/png"),
             "cache-control": "public, max-age=86400",
