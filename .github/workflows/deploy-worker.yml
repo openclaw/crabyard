@@ -55,8 +55,13 @@ jobs:
 
       - name: Ensure domains
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: node scripts/ensure-cloudflare-domains.mjs
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_DNS_API_TOKEN }}
+        run: |
+          if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
+            echo "CLOUDFLARE_DNS_API_TOKEN is not set; skipping DNS/domain convergence."
+            exit 0
+          fi
+          node scripts/ensure-cloudflare-domains.mjs
 
       - name: Apply D1 migrations
         env:
