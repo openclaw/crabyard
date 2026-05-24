@@ -77,6 +77,7 @@ function App() {
   const [loginMessage, setLoginMessage] = useState("");
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
+  const [appView, setAppViewState] = useState(initialAppView);
   const [drawers, setDrawers] = useState(initialSessionLink.route ? { sessions: true } : {});
   const [activeRunId, setActiveRunId] = useState(null);
   const [focusedSessionId, setFocusedSessionId] = useState(initialSessionLink.id);
@@ -151,6 +152,12 @@ function App() {
     document.documentElement.dataset.appRuntime = "preact";
     document.body.classList.toggle("locked", !signedIn && !(sharedSessionId && sharedToken));
   }, [signedIn, sharedSessionId, sharedToken]);
+
+  useEffect(() => {
+    const onPopState = () => setAppViewState(initialAppView());
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
 
   useEffect(() => {
     if (!signedIn && !loginMessage) void maybeAutoGithubLogin(authMethods);
@@ -408,6 +415,17 @@ function App() {
     disposeAllTerminals();
   }
 
+  function setAppView(value) {
+    const next = value === "board" ? "board" : "fleet";
+    setAppViewState(next);
+    closeAllDrawers();
+    if (!history.pushState) return;
+    const url = new URL(location.href);
+    url.pathname = next === "board" ? "/app/board" : "/app/fleet";
+    url.search = "";
+    history.pushState(null, "", url);
+  }
+
   function closeTopDrawer() {
     const order = ["card", "interactive", "run", "sessions", "admin"];
     const id = order.findLast((key) => drawers[key]);
@@ -448,7 +466,7 @@ function App() {
       return;
     }
     const url = new URL(location.href);
-    url.pathname = options.grid ? "/sessions" : "/app";
+    url.pathname = options.grid ? "/sessions" : appView === "board" ? "/app/board" : "/app/fleet";
     url.search = "";
     history.replaceState(null, "", url);
   }
@@ -789,6 +807,8 @@ function App() {
 
   const props = {
     state,
+    appView,
+    setAppView,
     signedIn,
     authMethods,
     loginMessage,
@@ -1025,8 +1045,23 @@ function AppShell(props) {
           <span>crabfleet</span>
         </div>
         <div class="nav-actions">
-          <button class="active" title="Board" aria-label="Board" onClick={props.closeAllDrawers}>
+          <button
+            class={props.appView === "fleet" ? "active" : ""}
+            title="Fleet"
+            aria-label="Fleet"
+            onClick={() => props.setAppView("fleet")}
+          >
             <Icon name="layout-grid" />
+            <span>Fleet</span>
+          </button>
+          <button
+            class={props.appView === "board" ? "active" : ""}
+            title="Board"
+            aria-label="Board"
+            onClick={() => props.setAppView("board")}
+          >
+            <Icon name="square-terminal" />
+            <span>Board</span>
           </button>
           <button
             title="Admin"
@@ -1035,6 +1070,7 @@ function AppShell(props) {
             onClick={() => props.openDrawer("admin")}
           >
             <Icon name="settings" />
+            <span>Admin</span>
           </button>
           <button
             title="Sessions"
@@ -1042,6 +1078,7 @@ function AppShell(props) {
             onClick={() => props.openSessionGrid(null)}
           >
             <Icon name="terminal" />
+            <span>Sessions</span>
           </button>
         </div>
         <div class="spacer" />
@@ -1060,8 +1097,12 @@ function AppShell(props) {
       <main class="shell">
         <section class="top">
           <div class="title">
-            <h1>{productName}</h1>
-            <p>Codex crabboxes grouped by operator, with SSH, WebVNC, and OpenClaw supervision.</p>
+            <h1>{props.appView === "board" ? "Board" : productName}</h1>
+            <p>
+              {props.appView === "board"
+                ? "Prompt cards and run attempts, separated from the live crabbox fleet."
+                : "All visible Codex crabboxes grouped by person, with SSH, WebVNC, and OpenClaw supervision."}
+            </p>
           </div>
           <button
             class="ghost user-chip"
@@ -1070,58 +1111,23 @@ function AppShell(props) {
             {userLabel}
           </button>
         </section>
-        <DashboardOverview
-          active={active}
-          queue={queue}
-          review={review}
-          cli={cli}
-          userLabel={userLabel}
-          {...props}
-        />
-        <section class="toolbar">
-          <div class="search-wrap">
-            <input
-              type="search"
-              placeholder="Search cards, repos, runs, #76552"
-              value={props.search}
-              onInput={(event) => props.setSearch(event.currentTarget.value)}
-            />
-            <RefPreview
-              preview={props.refPreview}
-              canCreate={canMaintain(user)}
-              onCreate={props.createRefCard}
-            />
-          </div>
-          <div class="segmented" aria-label="Board filter">
-            {["all", "mine", "hot"].map((key) => (
-              <button
-                class={props.filter === key ? "active" : ""}
-                onClick={() => props.setFilter(key)}
-              >
-                {key === "all" ? "All" : key === "mine" ? "Mine" : "Live"}
-              </button>
-            ))}
-          </div>
-          <button
-            class="primary"
-            disabled={!canMaintain(user)}
-            onClick={() => props.openDrawer("card")}
-          >
-            New card
-          </button>
-          <button disabled={!canMaintain(user)} onClick={() => props.openDrawer("interactive")}>
-            New crabbox
-          </button>
-          <button disabled={!canOwn(user)} onClick={() => props.openDrawer("admin")}>
-            Admin
-          </button>
-        </section>
         <DevIdentityPanel
           hidden={!props.authMethods.devIdentity || !props.signedIn}
           user={user}
           onDevIdentity={props.devIdentityLogin}
         />
-        <Board {...props} />
+        {props.appView === "board" ? (
+          <BoardPage user={user} {...props} />
+        ) : (
+          <FleetPage
+            active={active}
+            queue={queue}
+            review={review}
+            cli={cli}
+            userLabel={userLabel}
+            {...props}
+          />
+        )}
       </main>
     </div>
   );
@@ -1159,7 +1165,53 @@ function activeFleetCount(sessions) {
   return sessions.filter((session) => !isDeadInteractiveSession(session)).length;
 }
 
-function DashboardOverview(props) {
+function BoardPage(props) {
+  return (
+    <section class="board-page" aria-label="Crabfleet board page">
+      <section class="toolbar">
+        <div class="search-wrap">
+          <input
+            type="search"
+            placeholder="Search cards, repos, runs, #76552"
+            value={props.search}
+            onInput={(event) => props.setSearch(event.currentTarget.value)}
+          />
+          <RefPreview
+            preview={props.refPreview}
+            canCreate={canMaintain(props.user)}
+            onCreate={props.createRefCard}
+          />
+        </div>
+        <div class="segmented" aria-label="Board filter">
+          {["all", "mine", "hot"].map((key) => (
+            <button
+              class={props.filter === key ? "active" : ""}
+              onClick={() => props.setFilter(key)}
+            >
+              {key === "all" ? "All" : key === "mine" ? "Mine" : "Live"}
+            </button>
+          ))}
+        </div>
+        <button
+          class="primary"
+          disabled={!canMaintain(props.user)}
+          onClick={() => props.openDrawer("card")}
+        >
+          New card
+        </button>
+        <button disabled={!canMaintain(props.user)} onClick={() => props.openDrawer("interactive")}>
+          New crabbox
+        </button>
+        <button disabled={!canOwn(props.user)} onClick={() => props.openDrawer("admin")}>
+          Admin
+        </button>
+      </section>
+      <Board {...props} />
+    </section>
+  );
+}
+
+function FleetPage(props) {
   const sessions = props.state.interactiveSessions || [];
   const groups = groupedFleetSessions(sessions);
   const ownerCount = groups.length;
@@ -1218,7 +1270,7 @@ function DashboardOverview(props) {
         />
       </div>
       <section class="vm-list">
-        <div class="section-kicker">FLEET BY PERSON</div>
+        <div class="section-kicker">ALL CRABBOXES BY PERSON</div>
         {groups.length ? (
           groups.map(([owner, items]) => (
             <section class="fleet-owner" key={owner}>
@@ -1253,7 +1305,6 @@ function DashboardOverview(props) {
           </div>
         )}
       </section>
-      <div class="section-kicker">OPERATIONS BOARD</div>
     </section>
   );
 }
@@ -2747,6 +2798,12 @@ function parseSessionLink() {
     id: match?.[1] ? decodeURIComponent(match[1]) : null,
     token: new URLSearchParams(location.search).get("token"),
   };
+}
+
+function initialAppView() {
+  return location.pathname === "/app/board" || location.pathname === "/app/board/"
+    ? "board"
+    : "fleet";
 }
 
 function isGithubLoginCallback() {

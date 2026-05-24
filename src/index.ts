@@ -752,6 +752,10 @@ export default {
         url.pathname === "/" ||
         url.pathname === "/app" ||
         url.pathname === "/app/" ||
+        url.pathname === "/app/fleet" ||
+        url.pathname === "/app/fleet/" ||
+        url.pathname === "/app/board" ||
+        url.pathname === "/app/board/" ||
         url.pathname === "/sessions" ||
         url.pathname === "/sessions/" ||
         url.pathname.startsWith("/sessions/") ||
