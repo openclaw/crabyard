@@ -13,11 +13,11 @@ This gets you from login to a real D1-backed card and run attempt. It does not s
 
 - OpenClaw GitHub org membership.
 - Bootstrap token from deployment secrets, or GitHub OAuth already configured.
-- Access to `https://crabyard.openclaw.ai/app/`.
+- Access to `https://crabyard.ai/app/`.
 
 ## 1. Log In
 
-Open `https://crabyard.openclaw.ai/app/`.
+Open `https://crabyard.ai/app/`.
 
 - Use GitHub OAuth if configured.
 - Use the bootstrap token for setup/recovery.

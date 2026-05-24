@@ -58,7 +58,7 @@ if (process.argv.includes("--static")) {
   await Promise.all([mkdir(distApp, { recursive: true }), mkdir(distDocs, { recursive: true })]);
   await writeFile(
     new URL("../dist/_redirects", import.meta.url),
-    "/* https://crabyard.openclaw.ai/:splat 302\n",
+    "/* https://crabyard.ai/:splat 302\n",
   );
   await writeFile(new URL("../dist/index.html", import.meta.url), redirectHtml("/"));
   await writeFile(new URL("../dist/app/index.html", import.meta.url), redirectHtml("/app/"));
@@ -68,7 +68,7 @@ if (process.argv.includes("--static")) {
 }
 
 function redirectHtml(path) {
-  const target = `https://crabyard.openclaw.ai${path}`;
+  const target = `https://crabyard.ai${path}`;
   return `<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0; url=${target}"><title>Crabyard.ai</title><a href="${target}">Crabyard.ai</a>`;
 }
 
@@ -108,7 +108,18 @@ function viteAssetUrl(path) {
 }
 
 function buildLucideIconScript(iconNodes) {
-  const names = ["book-open", "layout-grid", "moon", "settings", "sun", "terminal", "x"];
+  const names = [
+    "book-open",
+    "copy",
+    "git-pull-request",
+    "layout-grid",
+    "moon",
+    "settings",
+    "square-terminal",
+    "sun",
+    "terminal",
+    "x",
+  ];
   const selected = Object.fromEntries(names.map((name) => [name, iconNodes[name]]));
   return `(() => {
   globalThis.lucideIconNodes = ${JSON.stringify(selected)};

@@ -865,6 +865,10 @@ function LoginScreen({ hidden, authMethods, message, onGithub, onToken, onDevIde
   const [token, setToken] = useState("");
   return (
     <section class="login-screen" hidden={hidden}>
+      <a class="login-back" href="/docs/">
+        &larr; documentation
+      </a>
+      <InfrastructureField />
       <form
         class="login-panel"
         onSubmit={(event) => {
@@ -873,21 +877,28 @@ function LoginScreen({ hidden, authMethods, message, onGithub, onToken, onDevIde
           setToken("");
         }}
       >
-        <div class="mark">
-          <img src={logo} alt="" />
+        <div class="login-brand">
+          <div class="mark">
+            <img src={logo} alt="" />
+          </div>
+          <h1>Crabyard.ai</h1>
         </div>
-        <h1>Crabyard.ai</h1>
-        <p>Sign in to manage OpenClaw Codex runs, repo allowlists, and runtime policy.</p>
+        <p>OpenClaw infrastructure, SSH-first.</p>
         <div class="login-actions">
           <button
-            class="primary"
+            class="primary github-login"
             type="button"
             hidden={!authMethods.github}
             disabled={!authMethods.github}
             onClick={onGithub}
           >
-            Continue with GitHub
+            <Icon name="git-pull-request" />
+            Sign in with GitHub
           </button>
+          <div class="command-row">
+            <span>Or connect via</span>
+            <CopyCommand value="ssh link@ssh.crabyard.ai" />
+          </div>
           <label>
             Bootstrap token
             <input
@@ -916,6 +927,43 @@ function LoginScreen({ hidden, authMethods, message, onGithub, onToken, onDevIde
   );
 }
 
+const infraBlocks = [
+  { x: "50%", y: "31%", w: "86px", h: "48px", o: "0.95", d: "0s" },
+  { x: "41%", y: "39%", w: "92px", h: "44px", o: "0.56", d: "-1.1s" },
+  { x: "59%", y: "39%", w: "86px", h: "38px", o: "0.5", d: "-2.4s" },
+  { x: "34%", y: "49%", w: "104px", h: "42px", o: "0.34", d: "-3.1s" },
+  { x: "66%", y: "49%", w: "106px", h: "46px", o: "0.33", d: "-0.8s" },
+  { x: "27%", y: "61%", w: "96px", h: "36px", o: "0.24", d: "-2.2s" },
+  { x: "73%", y: "61%", w: "96px", h: "36px", o: "0.24", d: "-1.8s" },
+  { x: "43%", y: "64%", w: "106px", h: "42px", o: "0.3", d: "-3.7s" },
+  { x: "57%", y: "65%", w: "100px", h: "40px", o: "0.28", d: "-0.5s" },
+  { x: "18%", y: "73%", w: "112px", h: "38px", o: "0.19", d: "-2.9s" },
+  { x: "82%", y: "73%", w: "108px", h: "38px", o: "0.18", d: "-4.1s" },
+  { x: "34%", y: "80%", w: "98px", h: "36px", o: "0.18", d: "-0.3s" },
+  { x: "67%", y: "81%", w: "96px", h: "36px", o: "0.16", d: "-2.7s" },
+  { x: "50%", y: "87%", w: "104px", h: "34px", o: "0.12", d: "-3.5s" },
+];
+
+function InfrastructureField() {
+  return (
+    <div class="infra-field" aria-hidden="true">
+      {infraBlocks.map((block, index) => (
+        <span
+          class={index === 0 ? "infra-block focus" : "infra-block"}
+          style={{
+            "--x": block.x,
+            "--y": block.y,
+            "--w": block.w,
+            "--h": block.h,
+            "--o": block.o,
+            "--d": block.d,
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
 function AppShell(props) {
   const active = props.state.cards.filter((card) => card.lane === "Running").length;
   const queue = props.state.cards.filter((card) => card.lane === "Todo").length;
@@ -933,23 +981,32 @@ function AppShell(props) {
   return (
     <div class="app">
       <aside class="rail" aria-label="Primary">
-        <div class="mark" title="Crabyard.ai">
-          <img src={logo} alt="" />
+        <div class="brand-lockup" title="Crabyard.ai">
+          <div class="mark">
+            <img src={logo} alt="" />
+          </div>
+          <span>crabyard</span>
         </div>
-        <button class="active" title="Board" aria-label="Board" onClick={props.closeAllDrawers}>
-          <Icon name="layout-grid" />
-        </button>
-        <button
-          title="Admin"
-          aria-label="Admin"
-          disabled={!canOwn(user)}
-          onClick={() => props.openDrawer("admin")}
-        >
-          <Icon name="settings" />
-        </button>
-        <button title="Logs" aria-label="Logs" onClick={() => props.openSessionGrid(null)}>
-          <Icon name="terminal" />
-        </button>
+        <div class="nav-actions">
+          <button class="active" title="Board" aria-label="Board" onClick={props.closeAllDrawers}>
+            <Icon name="layout-grid" />
+          </button>
+          <button
+            title="Admin"
+            aria-label="Admin"
+            disabled={!canOwn(user)}
+            onClick={() => props.openDrawer("admin")}
+          >
+            <Icon name="settings" />
+          </button>
+          <button
+            title="Sessions"
+            aria-label="Sessions"
+            onClick={() => props.openSessionGrid(null)}
+          >
+            <Icon name="terminal" />
+          </button>
+        </div>
         <div class="spacer" />
         <button
           class="theme-toggle"
@@ -967,19 +1024,23 @@ function AppShell(props) {
         <section class="top">
           <div class="title">
             <h1>Crabyard.ai</h1>
-            <p>
-              OpenClaw Codex runs, repo-gated cards, attachable sessions, and merge policy in one
-              operations board.
-            </p>
+            <p>Cloud Codex sessions, repo-gated cards, and SSH-native control for OpenClaw.</p>
           </div>
-          <div class="status-strip">
-            <Metric label="Active" value={`${active} / ${props.state.cap}`} />
-            <Metric label="Queue" value={queue} />
-            <Metric label="Review" value={review} />
-            <Metric label="CLI" value={cli} />
-            <Metric label="Logs" value={`${props.state.retention}d`} />
-          </div>
+          <button
+            class="ghost user-chip"
+            onClick={props.signedIn ? props.logout : props.beginLogin}
+          >
+            {userLabel}
+          </button>
         </section>
+        <DashboardOverview
+          active={active}
+          queue={queue}
+          review={review}
+          cli={cli}
+          userLabel={userLabel}
+          {...props}
+        />
         <section class="toolbar">
           <div class="search-wrap">
             <input
@@ -1017,12 +1078,6 @@ function AppShell(props) {
           <button disabled={!canOwn(user)} onClick={() => props.openDrawer("admin")}>
             Admin
           </button>
-          <button
-            class="ghost user-chip"
-            onClick={props.signedIn ? props.logout : props.beginLogin}
-          >
-            {userLabel}
-          </button>
         </section>
         <DevIdentityPanel
           hidden={!props.authMethods.devIdentity || !props.signedIn}
@@ -1032,6 +1087,142 @@ function AppShell(props) {
         <Board {...props} />
       </main>
     </div>
+  );
+}
+
+function DashboardOverview(props) {
+  const cards = props.state.cards || [];
+  const sessions = props.state.interactiveSessions || [];
+  const visibleSessions = sessions.slice(0, 4);
+  const repos = props.state.repos?.length || 0;
+  const sessionLabel = props.cli ? `${props.cli} attachable` : "none attached";
+  return (
+    <section class="dashboard" aria-label="Crabyard dashboard">
+      <div class="setup-stack">
+        <DashboardAction
+          icon="git-pull-request"
+          title="GitHub access"
+          text={`Repos, pull requests, and gh credentials are scoped to ${props.userLabel}.`}
+          action={props.signedIn ? "Connected" : "Connect"}
+          disabled={props.signedIn}
+          onClick={props.beginLogin}
+        />
+        <div class="setup-card">
+          <div>
+            <h2>
+              <Icon name="terminal" />
+              Connect over SSH
+            </h2>
+            <p>
+              Link a public key once, then create, list, and attach Codex sessions from a shell.
+            </p>
+          </div>
+          <CopyCommand value="ssh link@ssh.crabyard.ai" />
+        </div>
+        <div class="setup-card">
+          <div>
+            <h2>
+              <Icon name="square-terminal" />
+              Start a Codex session
+            </h2>
+            <p>SSH lands directly in a managed workspace with repo policy and runtime routing.</p>
+          </div>
+          <CopyCommand value='ssh ssh.crabyard.ai new "fix the failing check"' />
+        </div>
+      </div>
+      <div class="status-strip">
+        <Metric label="Running" value={props.active} />
+        <Metric label="Cards" value={cards.length} />
+        <Metric label="Sessions" value={sessions.length} />
+      </div>
+      <div class="dashboard-grid">
+        <DashboardChart
+          title="CARD FLOW"
+          value={`${props.active}/${props.state.cap}`}
+          meta={`${props.queue} queued`}
+        />
+        <DashboardChart
+          title="SESSION FLEET"
+          value={sessionLabel}
+          meta={`${repos} repos`}
+          secondary
+        />
+      </div>
+      <section class="vm-list">
+        <div class="section-kicker">CODEX SESSIONS</div>
+        {visibleSessions.length ? (
+          visibleSessions.map((session) => (
+            <article class="vm-row" key={session.id}>
+              <div>
+                <strong>{session.title || session.id}</strong>
+                <code>ssh ssh.crabyard.ai attach {session.id}</code>
+                <span>{session.repo || "repo pending"}</span>
+              </div>
+              <div class="vm-badges">
+                <span class={`state-pill ${session.status || "pending"}`}>
+                  {session.status || "pending"}
+                </span>
+                <button onClick={() => props.openSessionGrid(session.id)}>Open</button>
+              </div>
+            </article>
+          ))
+        ) : (
+          <div class="vm-row empty-row">
+            <div>
+              <strong>No interactive sessions</strong>
+              <code>ssh ssh.crabyard.ai new</code>
+              <span>Create one from SSH or the app.</span>
+            </div>
+            <button
+              onClick={() => props.openDrawer("interactive")}
+              disabled={!canMaintain(props.state.user)}
+            >
+              New session
+            </button>
+          </div>
+        )}
+      </section>
+      <div class="section-kicker">OPERATIONS BOARD</div>
+    </section>
+  );
+}
+
+function DashboardAction({ icon, title, text, action, disabled, onClick }) {
+  return (
+    <div class="setup-card">
+      <div>
+        <h2>
+          <Icon name={icon} />
+          {title}
+        </h2>
+        <p>{text}</p>
+      </div>
+      <button onClick={onClick} disabled={disabled}>
+        {action}
+      </button>
+    </div>
+  );
+}
+
+function DashboardChart({ title, value, meta, secondary }) {
+  const path = secondary
+    ? "M8 82 C 40 74, 52 76, 78 58 S 130 50, 158 42 S 214 32, 250 34"
+    : "M8 84 C 28 72, 42 78, 58 64 S 92 62, 112 50 S 140 72, 158 46 S 210 38, 250 28";
+  return (
+    <article class="chart-card">
+      <div class="chart-head">
+        <span>{title}</span>
+        <strong>{value}</strong>
+      </div>
+      <svg viewBox="0 0 260 96" role="img" aria-label={`${title} ${value}`}>
+        <path class="chart-grid" d="M8 24 H252 M8 54 H252 M8 84 H252" />
+        <path class="chart-line" d={path} />
+      </svg>
+      <div class="chart-foot">
+        <span class="dot" />
+        {meta}
+      </div>
+    </article>
   );
 }
 
@@ -1106,6 +1297,19 @@ function Metric({ label, value }) {
       <span>{label}</span>
       <strong>{value}</strong>
     </div>
+  );
+}
+
+function CopyCommand({ value }) {
+  async function copy() {
+    if (!navigator.clipboard) return;
+    await navigator.clipboard.writeText(value);
+  }
+  return (
+    <button class="terminal-command" type="button" onClick={() => void copy()} title="Copy command">
+      <code>{value}</code>
+      <Icon name="copy" />
+    </button>
   );
 }
 

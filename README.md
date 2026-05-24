@@ -35,9 +35,9 @@ Autonomous card execution, Crabbox VNC transport, R2 archival, Durable Object fa
 Get the bootstrap token from your deployment secrets and use it to log in:
 
 ```bash
-# Visit https://crabyard.openclaw.ai/app/
+# Visit https://crabyard.ai/app/
 # Use bootstrap token for initial admin setup
-# If GitHub auto-login is active, use https://crabyard.openclaw.ai/app?auth=token
+# If GitHub auto-login is active, use https://crabyard.ai/app?auth=token
 ```
 
 ### 2. Configure Access
@@ -117,7 +117,7 @@ merge:
 ### Prerequisites
 
 - Cloudflare account
-- `crabyard.openclaw.ai` route in Cloudflare
+- `crabyard.ai` route in Cloudflare
 - GitHub OAuth app (optional but recommended)
 - Bootstrap token secret
 
@@ -171,10 +171,10 @@ Configure these in Cloudflare Workers dashboard:
 ### Verify Deployment
 
 ```bash
-curl -I https://crabyard.openclaw.ai/healthz
+curl -I https://crabyard.ai/healthz
 # Should return: 200 OK
 
-curl https://crabyard.openclaw.ai/docs/spec
+curl https://crabyard.ai/docs/spec
 # Should return: HTML spec document
 ```
 
@@ -224,7 +224,7 @@ The Worker exposes an internal SSH onboarding API guarded by `CRABYARD_SSH_GATEW
 Run the Go gateway next to a host that can accept raw SSH:
 
 ```bash
-CRABYARD_API_URL=https://crabyard.openclaw.ai \
+CRABYARD_API_URL=https://crabyard.ai \
 CRABYARD_SSH_GATEWAY_TOKEN=... \
 CRABYARD_SSH_HOST_KEY=/var/lib/crabyard/ssh_host_ed25519_key \
 CRABYARD_SSH_ADDR=:2222 \

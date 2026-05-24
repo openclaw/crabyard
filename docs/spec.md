@@ -722,7 +722,7 @@ Picker behavior:
 
 Target domain:
 
-- `https://crabyard.openclaw.ai`
+- `https://crabyard.ai`
 
 Current DNS expectation:
 
@@ -747,8 +747,8 @@ Initial deployable artifact:
 Required deploy checks:
 
 - `npx wrangler whoami` shows expected Cloudflare account.
-- `crabyard.openclaw.ai` is routed to deployed Worker.
-- `curl -I https://crabyard.openclaw.ai/healthz` returns 200.
+- `crabyard.ai` is routed to deployed Worker.
+- `curl -I https://crabyard.ai/healthz` returns 200.
 - `/docs/spec` renders this spec.
 
 ## Security
