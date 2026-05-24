@@ -48,7 +48,8 @@
     },
   ],
   "workers_dev": true,
-  "routes": [{ "pattern": "crabfleet.ai/*", "zone_name": "crabfleet.ai" }],
+  // crabfleet.ai/* is managed by scripts/ensure-cloudflare-domains.mjs so
+  // normal Worker deploys do not require zone/route permissions.
   "observability": {
     "enabled": true,
   },
