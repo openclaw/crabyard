@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.0 - 2026-05-24
+
 - Rename the remaining old runtime, cookie, docs, asset, migration, and SSH gateway surfaces to Crabbox names, expiring old sessions and requiring SSH keys to be relinked.
 - Add an OpenClaw service crabbox creation endpoint and make the Go CLI attach by default after API-created crabboxes.
 - Add GoReleaser release automation for the `crabfleet` CLI and dispatch Homebrew formula updates to `openclaw/homebrew-tap`.
