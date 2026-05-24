@@ -58,10 +58,10 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           for attempt in 1 2 3; do
-            pnpm exec wrangler d1 migrations apply crabyard-ai --remote && exit 0
+            pnpm exec wrangler d1 migrations apply DB --remote && exit 0
             sleep $((attempt * 5))
           done
-          pnpm exec wrangler d1 migrations apply crabyard-ai --remote
+          pnpm exec wrangler d1 migrations apply DB --remote
 
       - name: Deploy Worker
         env:

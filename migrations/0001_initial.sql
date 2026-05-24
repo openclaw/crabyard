@@ -82,7 +82,7 @@ INSERT OR IGNORE INTO allow_entries (value, role, created_at, updated_at) VALUES
   ('@openclaw/maintainer', 'maintainer', unixepoch() * 1000, unixepoch() * 1000);
 
 INSERT OR IGNORE INTO repos (repo, enabled, created_at, updated_at) VALUES
-  ('openclaw/crabyard', 1, unixepoch() * 1000, unixepoch() * 1000),
+  ('openclaw/crabfleet', 1, unixepoch() * 1000, unixepoch() * 1000),
   ('openclaw/clawsweeper', 1, unixepoch() * 1000, unixepoch() * 1000),
   ('openclaw/crabbox', 1, unixepoch() * 1000, unixepoch() * 1000);
 
@@ -93,7 +93,7 @@ VALUES
     'CY-101',
     'Wire admin allowlists',
     'Build admin editing for users, teams, repos, runtime caps, and merge policy.',
-    'openclaw/crabyard',
+    'openclaw/crabfleet',
     'Prompt',
     'container',
     'open_pr',

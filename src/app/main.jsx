@@ -29,14 +29,14 @@ import {
   warmGhosttyModule,
 } from "./terminal.js";
 
-const logo = "__CRABYARD_LOGO__";
+const logo = "__CRABBOX_LOGO__";
 const productName = "Crabfleet";
 const productDomain = "crabfleet.ai";
 const sshHost = "ssh.crabfleet.ai";
-const loginReturnKey = "crabyard-login-return";
-const skipAutoGithubLoginKey = "crabyard-skip-auto-github-login";
-const githubAutoLoginReadyKey = "crabyard-github-auto-login-ready";
-const sessionLayoutStorageKey = "crabyard-session-layout-v1";
+const loginReturnKey = "crabbox-login-return";
+const skipAutoGithubLoginKey = "crabbox-skip-auto-github-login";
+const githubAutoLoginReadyKey = "crabbox-github-auto-login-ready";
+const sessionLayoutStorageKey = "crabbox-session-layout-v1";
 const emptyState = {
   cards: [],
   interactiveSessions: [],
@@ -159,7 +159,7 @@ function App() {
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     try {
-      localStorage.setItem("crabyard-theme", theme);
+      localStorage.setItem("crabbox-theme", theme);
     } catch {}
   }, [theme]);
 
@@ -2586,7 +2586,7 @@ function WorkflowBox({ disabled, workflows, refreshWorkflow }) {
           disabled={disabled}
           onClick={() => refreshWorkflow(repo.trim())}
         >
-          Refresh CRABYARD.md
+          Refresh CRABBOX.md
         </button>
       </div>
       <div class="list">
@@ -2769,5 +2769,5 @@ function isTerminalKeyTarget(event) {
 render(
   <App />,
   document.getElementById("crabfleet-preact-root") ||
-    document.getElementById("crabyard-preact-root"),
+    document.getElementById("crabbox-preact-root"),
 );

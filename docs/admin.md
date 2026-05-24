@@ -162,7 +162,7 @@ Only allowlisted repos can be used for cards.
 **Examples:**
 
 ```
-openclaw/crabyard
+openclaw/crabbox
 openclaw/codex
 steipete/PSPDFKit
 ```
@@ -287,7 +287,7 @@ Configured direct merge policy. The current Worker stores this policy; real merg
 
 ## Repo Workflows
 
-Owners can refresh `CRABYARD.md` for enabled repos from Admin → Workflows. For private repos, the Worker needs deployment `GITHUB_TOKEN` access to fetch the file; it does not use the logged-in user's OAuth token for this refresh.
+Owners can refresh `CRABBOX.md` for enabled repos from Admin → Workflows. For private repos, the Worker needs deployment `GITHUB_TOKEN` access to fetch the file; it does not use the logged-in user's OAuth token for this refresh.
 
 Supported shape:
 
@@ -324,7 +324,7 @@ Recommended for production.
 4. Add secrets to Cloudflare Worker:
    - `GITHUB_CLIENT_ID`
    - `GITHUB_CLIENT_SECRET`
-   - `GITHUB_TOKEN` for all enabled repo previews and private repo `CRABYARD.md` refreshes (optional; public/default repo paths work without it)
+   - `GITHUB_TOKEN` for all enabled repo previews and private repo `CRABBOX.md` refreshes (optional; public/default repo paths work without it)
 5. Set `GITHUB_ORG` var (default: `openclaw`)
 
 **Session lifetime:**
@@ -345,7 +345,7 @@ Admin break-glass access.
 **Setup:**
 
 1. Generate strong random token: `openssl rand -hex 32`
-2. Set as `CRABYARD_BOOTSTRAP_TOKEN` secret in Cloudflare
+2. Set as `CRABBOX_BOOTSTRAP_TOKEN` secret in Cloudflare
 3. Share securely with initial admin
 
 **Session lifetime:**
@@ -392,10 +392,10 @@ All admin actions logged to D1.
 
 ```
 2026-05-17 14:32:01 @steipete allowlist updated @jane role=maintainer
-2026-05-17 14:35:12 @steipete repo allowlisted openclaw/crabyard
+2026-05-17 14:35:12 @steipete repo allowlisted openclaw/crabbox
 2026-05-17 14:40:00 @steipete policy updated cap=30 retention=30 merge=guarded
 2026-05-17 15:10:45 @jane operator takeover granted for CY-101
-2026-05-17 15:45:00 @jane merged PR openclaw/crabyard#456 commit=abc123
+2026-05-17 15:45:00 @jane merged PR openclaw/crabbox#456 commit=abc123
 ```
 
 **Retention:**
@@ -418,7 +418,7 @@ Secrets stored in Cloudflare Worker environment, never in D1/R2.
 
 **Bootstrap token:**
 
-- `CRABYARD_BOOTSTRAP_TOKEN`
+- `CRABBOX_BOOTSTRAP_TOKEN`
 - Admin break-glass access
 - Rotate quarterly
 
@@ -426,7 +426,7 @@ Secrets stored in Cloudflare Worker environment, never in D1/R2.
 
 - `GITHUB_CLIENT_ID`
 - `GITHUB_CLIENT_SECRET`
-- `GITHUB_TOKEN` for all enabled repo previews and private repo `CRABYARD.md` refreshes
+- `GITHUB_TOKEN` for all enabled repo previews and private repo `CRABBOX.md` refreshes
 - Rotate if leaked
 
 **GitHub App (future):**
@@ -496,7 +496,7 @@ Returns full state (owner role only):
     {"value": "@steipete", "role": "owner"},
     {"value": "@openclaw/maintainer", "role": "maintainer"}
   ],
-  "repos": ["openclaw/crabyard", "openclaw/codex"],
+  "repos": ["openclaw/crabbox", "openclaw/codex"],
   "cap": 20,
   "retention": "30",
   "merge": "guarded"
@@ -528,14 +528,14 @@ URL-encode value: `DELETE /api/admin/allow/%40jane`
 ```bash
 POST /api/admin/repos
 {
-  "repo": "openclaw/crabyard"
+  "repo": "openclaw/crabbox"
 }
 ```
 
 ### Remove Repo
 
 ```bash
-DELETE /api/admin/repos/openclaw%2Fcrabyard
+DELETE /api/admin/repos/openclaw%2Fcrabbox
 ```
 
 URL-encode `owner/repo` → `owner%2Frepo`

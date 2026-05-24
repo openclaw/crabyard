@@ -49,12 +49,12 @@ Enabled repos drive:
 
 - Card creation.
 - Issue/PR preview search.
-- `CRABYARD.md` workflow evaluation.
+- `CRABBOX.md` workflow evaluation.
 - Run allowlist checks.
 
-## 4. Optional: Evaluate CRABYARD.md
+## 4. Optional: Evaluate CRABBOX.md
 
-In Admin → Workflows, enter a repo and refresh `CRABYARD.md`.
+In Admin → Workflows, enter a repo and refresh `CRABBOX.md`.
 
 Supported shape:
 
@@ -69,7 +69,7 @@ merge:
 
 Invalid configs are visible and ignored. `stall_ms`, `cap`, `prompt_prefix`, and the Markdown body are parsed/stored for future policy work, but only runtime and merge defaults are effective today.
 
-For private repos, the Worker needs deployment `GITHUB_TOKEN` access to fetch `CRABYARD.md`; it does not use the logged-in user's OAuth token for this refresh.
+For private repos, the Worker needs deployment `GITHUB_TOKEN` access to fetch `CRABBOX.md`; it does not use the logged-in user's OAuth token for this refresh.
 
 ## 5. Create a Crabbox
 

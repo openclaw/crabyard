@@ -2,11 +2,13 @@
 
 ## Unreleased
 
+- Rename the remaining old runtime, cookie, docs, asset, migration, and SSH gateway surfaces to Crabbox names, expiring old sessions and requiring SSH keys to be relinked.
+- Add an OpenClaw service crabbox creation endpoint and make the Go CLI attach by default after API-created crabboxes.
 - Add GoReleaser release automation for the `crabfleet` CLI and dispatch Homebrew formula updates to `openclaw/homebrew-tap`.
 - Rename the product surface to Crabfleet, make Crabbox the app/CLI default, add fleet-by-person dashboard tiles with WebVNC actions, and introduce a Go/Kong `crabfleet` CLI.
-- Restyle the generated docs site and Worker `/docs/` page with the new Crabyard dashboard look.
-- Keep unauthenticated app loads on the Crabyard login screen unless the browser has already completed GitHub sign-in before.
-- Redesign the Crabyard login and app shell with SSH-first onboarding, live dashboard metrics, session charts, and a Codex session list.
+- Restyle the generated docs site and Worker `/docs/` page with the new Crabfleet dashboard look.
+- Keep unauthenticated app loads on the Crabfleet login screen unless the browser has already completed GitHub sign-in before.
+- Redesign the Crabfleet login and app shell with SSH-first onboarding, live dashboard metrics, session charts, and a Codex session list.
 - Add a Go SSH gateway with GitHub OAuth key onboarding, linked-key auth, session listing, Codex session creation, and PTY attach support.
 - Treat missing Cloudflare Sandbox terminal sessions as already removed before recreation so fresh Codex session provisioning can recover instead of failing with `Session 'terminal-...' not found`.
 - Persist per-session GitHub OAuth credentials inside Cloudflare Sandbox terminals so `gh` and `git push` keep working after Codex starts.
@@ -15,7 +17,7 @@
 - Pre-bake Cloudflare Sandbox images with Codex, pnpm, GitHub CLI, Crabbox, and common build/debug tools, plus a session diagnostics endpoint.
 - Trust the Cloudflare Sandbox workspace root as well as the checked-out repo so provisioned Codex sessions skip the directory trust prompt.
 - Provision Cloudflare Sandbox Codex workspaces through explicit setup and PTY sessions so new sessions open with the selected repo checked out.
-- Expose the Cloudflare Sandbox control port from the Crabyard container image so production Codex sessions can create workspaces.
+- Expose the Cloudflare Sandbox control port from the Crabfleet container image so production Codex sessions can create workspaces.
 - Use the fresh per-session Cloudflare Sandbox default session instead of a second named execution session for Codex workspace provisioning.
 - Retry transient Cloudflare API failures during automatic Worker deploys.
 - Auto-start the configured Codex command once when a new Cloudflare Sandbox shell opens, then return to bash after Codex exits.
@@ -63,7 +65,7 @@
 - Close open side drawers with Escape.
 - Preserve completed run attempt status when operators mark stale cards stalled.
 - Add runtime adapter descriptors with persisted selection reasons and capability-gated takeover.
-- Add repo `CRABYARD.md` workflow evaluation for runtime and merge defaults.
+- Add repo `CRABBOX.md` workflow evaluation for runtime and merge defaults.
 - Add durable D1 run attempts with heartbeat, stall handling, run history, and active-run state.
 - Vendor local app icons and remove external icon runtime dependency.
 - Serve `/docs/` from the Worker documentation page.
@@ -74,9 +76,9 @@
 - Make new card titles optional and derive blank titles from the prompt.
 - Add `#number` issue/PR previews across enabled OpenClaw repos and default new cards to `openclaw/openclaw`.
 - Add card-level diff metadata, tile previews, and run-drawer patch rendering for changed files.
-- Add GitHub Pages documentation for docs.crabyard.ai.
+- Add GitHub Pages documentation for docs.crabbox.ai.
 - Clear seeded and smoke-test cards from production boards.
-- Add Crabyard logo branding to the app and hide unavailable GitHub OAuth login.
+- Add Crabfleet logo branding to the app and hide unavailable GitHub OAuth login.
 - Migrate Worker persistence to a typed Kysely D1 query layer.
 - Add D1-backed authentication, sessions, admin APIs, card persistence, and run event logging for the deployed Worker.
-- Add initial Crabyard web app shell with board, card creation, admin allowlists/repos/policy controls, run logs, attach/watch/takeover actions, and deployed spec routes.
+- Add initial Crabfleet web app shell with board, card creation, admin allowlists/repos/policy controls, run logs, attach/watch/takeover actions, and deployed spec routes.

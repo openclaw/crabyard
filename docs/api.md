@@ -11,7 +11,7 @@ Crabfleet exposes same-origin REST APIs and terminal WebSocket APIs from the Wor
 
 ## Auth
 
-Session cookie: `crabyard_session`
+Session cookie: `crabbox_session`
 
 - GitHub OAuth: `/login/github`
 - Bootstrap token: `POST /api/login/token`
@@ -50,7 +50,7 @@ Returns available login methods without requiring a session.
 }
 ```
 
-Returns the bootstrap owner user and sets `crabyard_session`.
+Returns the bootstrap owner user and sets `crabbox_session`.
 
 ### GET /login/github
 
@@ -83,7 +83,7 @@ Returns app state:
   "retention": "30",
   "merge": "guarded",
   "allow": [],
-  "repos": ["openclaw/openclaw", "openclaw/crabyard"],
+  "repos": ["openclaw/openclaw", "openclaw/crabbox"],
   "workflows": [],
   "cards": []
 }
@@ -235,19 +235,19 @@ Public read-only endpoint for a generated session share link. Returns the shared
 
 ### POST /api/provision/interactive
 
-Provision hook used by `CRABYARD_INTERACTIVE_PROVISION_URL`. It accepts the same session request payload as the external adapter contract and returns normalized provision status.
+Provision hook used by `CRABBOX_INTERACTIVE_PROVISION_URL`. It accepts the same session request payload as the external adapter contract and returns normalized provision status.
 
 Auth:
 
-- If `CRABYARD_INTERACTIVE_PROVISION_TOKEN` is set, callers must send `Authorization: Bearer <token>`.
-- The token is required when `CRABYARD_RUNTIME_PROVISION_URL`, `CRABYARD_CLOUDFLARE_RUNNER_URL`, or `CRABYARD_CLAWFLEET_URL` is configured; backend-enabled deployments fail closed without it.
+- If `CRABBOX_INTERACTIVE_PROVISION_TOKEN` is set, callers must send `Authorization: Bearer <token>`.
+- The token is required when `CRABBOX_RUNTIME_PROVISION_URL`, `CRABBOX_CLOUDFLARE_RUNNER_URL`, or `CRABBOX_CLAWFLEET_URL` is configured; backend-enabled deployments fail closed without it.
 
 Backends:
 
-- `CRABYARD_RUNTIME_PROVISION_URL`: forwards the session payload to a generic runtime adapter.
-- `CRABYARD_CLOUDFLARE_RUNNER_URL`: creates a Crabbox Cloudflare container sandbox and returns its lease reference.
-- `CRABYARD_CLAWFLEET_URL`: creates a ClawFleet OpenClaw instance and returns console/noVNC links.
-- ClawFleet handles `crabbox` sessions only; use `CRABYARD_RUNTIME_PROVISION_URL` or `CRABYARD_CLOUDFLARE_RUNNER_URL` for `container` sessions.
+- `CRABBOX_RUNTIME_PROVISION_URL`: forwards the session payload to a generic runtime adapter.
+- `CRABBOX_CLOUDFLARE_RUNNER_URL`: creates a Crabbox Cloudflare container sandbox and returns its lease reference.
+- `CRABBOX_CLAWFLEET_URL`: creates a ClawFleet OpenClaw instance and returns console/noVNC links.
+- ClawFleet handles `crabbox` sessions only; use `CRABBOX_RUNTIME_PROVISION_URL` or `CRABBOX_CLOUDFLARE_RUNNER_URL` for `container` sessions.
 - If neither backend is configured, returns `pending_adapter` with a message that the route is live.
 
 ### GET /api/terminal/ws
@@ -283,15 +283,15 @@ Viewer+ with writable terminal control. Uploads a browser clipboard image/file b
 
 ### GET /api/interactive-sessions/:id/pty
 
-Viewer+. Legacy single-session WebSocket endpoint. Crabyard authenticates the browser session, verifies the interactive session is still attachable, verifies terminal control, then proxies PTY bytes to the configured runner. Owners and maintainers have control by default; other viewers require an approved control request.
+Viewer+. Legacy single-session WebSocket endpoint. Crabfleet authenticates the browser session, verifies the interactive session is still attachable, verifies terminal control, then proxies PTY bytes to the configured runner. Owners and maintainers have control by default; other viewers require an approved control request.
 
 Target resolution:
 
-- `CRABYARD_PTY_BRIDGE_URL`: explicit bridge WebSocket URL/template. Templates support `{id}`, `{leaseId}`, `{repo}`, `{branch}`, and `{runtime}`. Crabyard appends `sessionId`, `leaseId`, `repo`, `branch`, `runtime`, and `command` query parameters.
-- `attachUrl`: if the provision adapter returned a `ws://` or `wss://` URL, Crabyard proxies to it.
-- `CRABYARD_CLOUDFLARE_RUNNER_URL`: for `cloudflare:<sandbox>` leases, Crabyard proxies to `/v1/sandboxes/:sandbox/pty` on the runner.
+- `CRABBOX_PTY_BRIDGE_URL`: explicit bridge WebSocket URL/template. Templates support `{id}`, `{leaseId}`, `{repo}`, `{branch}`, and `{runtime}`. Crabfleet appends `sessionId`, `leaseId`, `repo`, `branch`, `runtime`, and `command` query parameters.
+- `attachUrl`: if the provision adapter returned a `ws://` or `wss://` URL, Crabfleet proxies to it.
+- `CRABBOX_CLOUDFLARE_RUNNER_URL`: for `cloudflare:<sandbox>` leases, Crabfleet proxies to `/v1/sandboxes/:sandbox/pty` on the runner.
 
-If `CRABYARD_PTY_BRIDGE_TOKEN` or `CRABYARD_CLOUDFLARE_RUNNER_TOKEN` is set, Crabyard sends it as a bearer token only to the upstream bridge/runner. The browser never receives runner credentials.
+If `CRABBOX_PTY_BRIDGE_TOKEN` or `CRABBOX_CLOUDFLARE_RUNNER_TOKEN` is set, Crabfleet sends it as a bearer token only to the upstream bridge/runner. The browser never receives runner credentials.
 
 ### POST /api/interactive-sessions
 
@@ -315,7 +315,7 @@ Fields:
 - `command`: optional, default `codex`.
 - `prompt`: optional initial context note.
 
-If `CRABYARD_INTERACTIVE_PROVISION_URL` is configured, the Worker posts the request to that adapter and records returned `status`, `leaseId`, `attachUrl`, `vncUrl`, and `message`. Without an adapter the session is stored as `pending_adapter`.
+If `CRABBOX_INTERACTIVE_PROVISION_URL` is configured, the Worker posts the request to that adapter and records returned `status`, `leaseId`, `attachUrl`, `vncUrl`, and `message`. Without an adapter the session is stored as `pending_adapter`.
 
 ### POST /api/interactive-sessions/:id/actions
 
@@ -344,12 +344,44 @@ Response:
 ## SSH Gateway
 
 The Go gateway terminates raw SSH and calls Worker APIs with `Authorization: Bearer
-CRABYARD_SSH_GATEWAY_TOKEN`. These endpoints are not browser APIs.
+CRABBOX_SSH_GATEWAY_TOKEN`. These endpoints are not browser APIs.
 
 - `POST /api/ssh/auth`: checks a public-key fingerprint. Unknown keys receive a short `/ssh/link/:code` GitHub OAuth URL only when the gateway is in explicit link mode, e.g. `ssh link@host`.
 - `GET /api/ssh/state`: returns the same board/session state for the linked SSH user.
 - `POST /api/ssh/interactive-sessions`: creates an interactive Codex session for the linked SSH user.
 - `GET /api/ssh/interactive-sessions/:id/pty`: WebSocket PTY attach for the gateway, scoped by linked key fingerprint.
+
+## OpenClaw Service
+
+Internal automation uses `Authorization: Bearer CRABBOX_OPENCLAW_TOKEN`.
+
+### POST /api/openclaw/crabboxes
+
+Creates a repo-ready crabbox for an operator, e.g. from a Discord meeting handoff.
+
+```json
+{
+  "owner": "@steipete",
+  "repo": "openclaw/openclaw",
+  "branch": "main",
+  "runtime": "crabbox",
+  "command": "codex --yolo",
+  "prompt": "prep the meeting follow-up"
+}
+```
+
+Response:
+
+```json
+{
+  "session": {
+    "id": "IS-105",
+    "owner": "@steipete",
+    "runtime": "crabbox",
+    "vncUrl": "https://..."
+  }
+}
+```
 
 ## Admin
 
@@ -402,7 +434,7 @@ Fields:
 
 ### POST /api/admin/workflows/evaluate
 
-Fetches and evaluates `CRABYARD.md` for an enabled repo. Private repos require deployment `GITHUB_TOKEN` access; the logged-in user's OAuth token is not used for this fetch.
+Fetches and evaluates `CRABBOX.md` for an enabled repo. Private repos require deployment `GITHUB_TOKEN` access; the logged-in user's OAuth token is not used for this fetch.
 
 ```json
 {
@@ -428,7 +460,7 @@ The stored prompt body is not returned in state summaries.
 - `/` and `/app`: app shell.
 - `/docs`, `/docs/`, `/docs/spec`, `/docs/spec/`: generated docs page, or Markdown when `Accept` includes `text/markdown`.
 - `/docs/spec.md`: Markdown spec.
-- `/crabyard-logo.png`: logo.
+- `/crabbox-logo.png`: logo.
 - `/vendor/ghostty-web.js`: local Ghostty WASM bundle.
 
 ## Error Shape

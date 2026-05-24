@@ -51,6 +51,7 @@ type newCmd struct {
 	Branch  string   `help:"Git branch to checkout." default:"main"`
 	Runtime string   `help:"Runtime backend." enum:"crabbox,container" default:"crabbox"`
 	Command string   `help:"Command to run after checkout." default:"codex --yolo"`
+	Detach  bool     `help:"Create the crabbox without attaching to it."`
 	Prompt  []string `arg:"" optional:"" help:"Initial prompt for Codex."`
 }
 
@@ -92,6 +93,7 @@ type interactiveSession struct {
 	Runtime   string `json:"runtime"`
 	Status    string `json:"status"`
 	Owner     string `json:"owner"`
+	LeaseID   string `json:"leaseId"`
 	AttachURL string `json:"attachUrl"`
 	VNCURL    string `json:"vncUrl"`
 	LastEvent string `json:"lastEvent"`
@@ -193,6 +195,9 @@ func (cmd newCmd) Run(app *cli, api *apiClient) error {
 		if cmd.Command != "codex --yolo" {
 			args = append(args, "--command", cmd.Command)
 		}
+		if cmd.Detach {
+			args = append(args, "--detach")
+		}
 		if prompt != "" {
 			args = append(args, prompt)
 		}
@@ -205,6 +210,9 @@ func (cmd newCmd) Run(app *cli, api *apiClient) error {
 	fmt.Fprintf(os.Stdout, "attach: crabfleet attach %s\n", session.ID)
 	if session.VNCURL != "" {
 		fmt.Fprintf(os.Stdout, "vnc: %s\n", session.VNCURL)
+	}
+	if !cmd.Detach && !app.NoInput && isTerminal(os.Stdin) && isTerminal(os.Stdout) && attachable(session) {
+		return runSSH(app, "attach", session.ID)
 	}
 	return nil
 }
@@ -220,7 +228,15 @@ func (cmd vncCmd) Run(app *cli, api *apiClient) error {
 			return err
 		}
 		if cmd.Open {
-			return errors.New("vnc --open requires API mode so the CLI can open the returned URL")
+			url, captureErr := runSSHOutput(app, "vnc", cmd.ID)
+			if captureErr != nil {
+				return captureErr
+			}
+			url = firstLine(url)
+			if url == "" {
+				return errors.New("ssh gateway did not return a WebVNC URL")
+			}
+			return openURL(url)
 		}
 		return runSSH(app, "vnc", cmd.ID)
 	}
@@ -336,6 +352,14 @@ func runSSHCommand(app *cli, args ...string) error {
 	return runSSH(app, strings.Join(parts, " "))
 }
 
+func runSSHOutput(app *cli, args ...string) (string, error) {
+	sshArgs := append([]string{app.SSHHost}, args...)
+	cmd := exec.Command("ssh", sshArgs...)
+	cmd.Stderr = os.Stderr
+	output, err := cmd.Output()
+	return string(output), err
+}
+
 func shellQuote(value string) string {
 	if value == "" {
 		return "''"
@@ -359,6 +383,41 @@ func openURL(url string) error {
 		cmd = exec.Command("xdg-open", url)
 	}
 	return cmd.Run()
+}
+
+func firstLine(value string) string {
+	for _, line := range strings.Split(value, "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func attachable(session interactiveSession) bool {
+	if !ptyAttachable(session) {
+		return false
+	}
+	switch session.Status {
+	case "ready", "attached", "detached":
+		return true
+	default:
+		return false
+	}
+}
+
+func ptyAttachable(session interactiveSession) bool {
+	if strings.HasPrefix(session.LeaseID, "sandbox:") || strings.HasPrefix(session.LeaseID, "cloudflare:") {
+		return true
+	}
+	return strings.HasPrefix(session.AttachURL, "/api/interactive-sessions/") ||
+		strings.HasPrefix(session.AttachURL, "ws://") ||
+		strings.HasPrefix(session.AttachURL, "wss://")
+}
+
+func isTerminal(file *os.File) bool {
+	info, err := file.Stat()
+	return err == nil && (info.Mode()&os.ModeCharDevice) != 0
 }
 
 func displayUser(u user) string {

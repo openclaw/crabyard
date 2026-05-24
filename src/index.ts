@@ -47,29 +47,30 @@ const defaultInteractiveCommand = "codex --yolo";
 type RuntimeEnv = Env & {
   DB: D1Database;
   SANDBOX?: DurableObjectNamespace<CloudflareSandbox>;
-  CRABYARD_BOOTSTRAP_TOKEN?: string;
+  CRABBOX_BOOTSTRAP_TOKEN?: string;
   GITHUB_CLIENT_ID?: string;
   GITHUB_CLIENT_SECRET?: string;
   GITHUB_TOKEN?: string;
   GITHUB_ORG?: string;
-  CRABYARD_INTERACTIVE_PROVISION_URL?: string;
-  CRABYARD_INTERACTIVE_PROVISION_TOKEN?: string;
-  CRABYARD_RUNTIME_PROVISION_URL?: string;
-  CRABYARD_RUNTIME_PROVISION_TOKEN?: string;
-  CRABYARD_CLOUDFLARE_RUNNER_URL?: string;
-  CRABYARD_CLOUDFLARE_RUNNER_TOKEN?: string;
-  CRABYARD_CLOUDFLARE_RUNNER_INSTANCE_TYPE?: string;
-  CRABYARD_CLOUDFLARE_RUNNER_WORKDIR?: string;
-  CRABYARD_CLOUDFLARE_RUNNER_TTL_SECONDS?: string;
-  CRABYARD_CLOUDFLARE_RUNNER_IDLE_SECONDS?: string;
-  CRABYARD_PTY_BRIDGE_URL?: string;
-  CRABYARD_PTY_BRIDGE_TOKEN?: string;
-  CRABYARD_CLAWFLEET_URL?: string;
-  CRABYARD_CLAWFLEET_TOKEN?: string;
-  CRABYARD_CLAWFLEET_PUBLIC_URL?: string;
-  CRABYARD_SSH_GATEWAY_TOKEN?: string;
+  CRABBOX_INTERACTIVE_PROVISION_URL?: string;
+  CRABBOX_INTERACTIVE_PROVISION_TOKEN?: string;
+  CRABBOX_RUNTIME_PROVISION_URL?: string;
+  CRABBOX_RUNTIME_PROVISION_TOKEN?: string;
+  CRABBOX_CLOUDFLARE_RUNNER_URL?: string;
+  CRABBOX_CLOUDFLARE_RUNNER_TOKEN?: string;
+  CRABBOX_CLOUDFLARE_RUNNER_INSTANCE_TYPE?: string;
+  CRABBOX_CLOUDFLARE_RUNNER_WORKDIR?: string;
+  CRABBOX_CLOUDFLARE_RUNNER_TTL_SECONDS?: string;
+  CRABBOX_CLOUDFLARE_RUNNER_IDLE_SECONDS?: string;
+  CRABBOX_PTY_BRIDGE_URL?: string;
+  CRABBOX_PTY_BRIDGE_TOKEN?: string;
+  CRABBOX_CLAWFLEET_URL?: string;
+  CRABBOX_CLAWFLEET_TOKEN?: string;
+  CRABBOX_CLAWFLEET_PUBLIC_URL?: string;
+  CRABBOX_SSH_GATEWAY_TOKEN?: string;
   CRABFLEET_SSH_GATEWAY_TOKEN?: string;
-  CRABYARD_TOKEN_ENCRYPTION_KEY?: string;
+  CRABBOX_OPENCLAW_TOKEN?: string;
+  CRABBOX_TOKEN_ENCRYPTION_KEY?: string;
   OPENAI_API_KEY?: string;
   OPENAI_BASE_URL?: string;
   OPENAI_ORG_ID?: string;
@@ -537,9 +538,9 @@ type CompilableQuery = {
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 const terminalInputStates = new Map<string, TerminalInputState>();
-const sessionCookie = "crabyard_session";
-const oauthStateCookie = "crabyard_oauth_state";
-const sshLinkCookie = "crabyard_ssh_link";
+const sessionCookie = "crabbox_session";
+const oauthStateCookie = "crabbox_oauth_state";
+const sshLinkCookie = "crabbox_ssh_link";
 const bootstrapSessionSeconds = 60 * 60;
 const githubSessionSeconds = 60 * 15;
 const sshLinkSeconds = 5 * 60;
@@ -686,7 +687,7 @@ export default {
         return text("ok\n", "text/plain; charset=utf-8");
       }
 
-      if (url.pathname === "/crabyard-logo.png") {
+      if (url.pathname === "/crabbox-logo.png") {
         return new Response(base64Bytes(LOGO_PNG_BASE64), {
           headers: {
             ...securityHeaders("image/png"),
@@ -795,6 +796,10 @@ async function api(request: Request, env: RuntimeEnv): Promise<Response> {
 
   if (request.method === "POST" && url.pathname === "/api/ssh/interactive-sessions") {
     return json(await sshCreateInteractiveSession(request, env), { status: 201 });
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/openclaw/crabboxes") {
+    return json(await openClawCreateCrabbox(request, env), { status: 201 });
   }
 
   const sshInteractivePtyMatch = url.pathname.match(
@@ -980,7 +985,7 @@ async function api(request: Request, env: RuntimeEnv): Promise<Response> {
 
 async function tokenLogin(request: Request, env: RuntimeEnv): Promise<Response> {
   const { token } = await readJson<{ token?: string }>(request);
-  if (!env.CRABYARD_BOOTSTRAP_TOKEN || token !== env.CRABYARD_BOOTSTRAP_TOKEN) {
+  if (!env.CRABBOX_BOOTSTRAP_TOKEN || token !== env.CRABBOX_BOOTSTRAP_TOKEN) {
     return json({ error: "invalid token" }, { status: 401 });
   }
 
@@ -1064,7 +1069,7 @@ async function githubCallback(request: Request, env: RuntimeEnv): Promise<Respon
     headers: {
       accept: "application/json",
       "content-type": "application/json",
-      "user-agent": "crabyard-ai",
+      "user-agent": "crabbox-ai",
     },
     body: JSON.stringify({
       client_id: env.GITHUB_CLIENT_ID,
@@ -1289,7 +1294,7 @@ async function requireUser(request: Request, env: RuntimeEnv): Promise<User> {
   };
 
   if (user.subject.startsWith("bootstrap:")) {
-    if (!env.CRABYARD_BOOTSTRAP_TOKEN || user.subject !== (await bootstrapSubject(env))) {
+    if (!env.CRABBOX_BOOTSTRAP_TOKEN || user.subject !== (await bootstrapSubject(env))) {
       await db.deleteFrom("sessions").where("token_hash", "=", tokenHash).execute();
       throw unauthorized();
     }
@@ -1443,6 +1448,64 @@ async function sshCreateInteractiveSession(
   return result;
 }
 
+async function openClawCreateCrabbox(
+  request: Request,
+  env: RuntimeEnv,
+): Promise<{ session: InteractiveSession }> {
+  requireOpenClawService(request, env);
+  const body = await readJson<{
+    repo?: string;
+    branch?: string;
+    runtime?: string;
+    command?: string;
+    prompt?: string;
+    owner?: string;
+    githubToken?: string;
+  }>(request);
+  const owner = openClawOwner(body.owner);
+  const serviceUser: User = {
+    subject: "service:openclaw",
+    login: "openclaw",
+    email: null,
+    name: "OpenClaw",
+    role: "owner",
+    allowed: true,
+    teams: [],
+  };
+  const result = await createInteractiveSessionFromInput(
+    env,
+    serviceUser,
+    body,
+    clean(body.githubToken, 4000) || undefined,
+    { owner },
+  );
+  await audit(
+    env,
+    serviceUser,
+    `openclaw crabbox created ${result.session.id} owner=${owner}`,
+    Date.now(),
+  );
+  return result;
+}
+
+function requireOpenClawService(request: Request, env: RuntimeEnv): void {
+  if (!env.CRABBOX_OPENCLAW_TOKEN) {
+    throw serviceUnavailable("OpenClaw service token is not configured");
+  }
+  if (request.headers.get("authorization") !== `Bearer ${env.CRABBOX_OPENCLAW_TOKEN}`) {
+    throw unauthorized();
+  }
+}
+
+function openClawOwner(value: unknown): string {
+  const owner = clean(value, 240);
+  if (!owner) throw badRequest("owner is required");
+  if (/^[A-Za-z0-9_.-]+$/.test(owner)) return owner;
+  if (/^@[A-Za-z0-9_.-]+$/.test(owner)) return owner.slice(1);
+  if (/^github:[A-Za-z0-9_.-]+$/.test(owner)) return owner.replace(/^github:/, "");
+  return owner;
+}
+
 async function requireSshGatewayUser(request: Request, env: RuntimeEnv): Promise<User> {
   requireSshGateway(request, env);
   const fingerprint = sshFingerprint(request);
@@ -1551,13 +1614,13 @@ function sshFingerprint(request: Request): string {
   const url = new URL(request.url);
   return (
     clean(request.headers.get("x-crabfleet-ssh-fingerprint"), 120) ||
-    clean(request.headers.get("x-crabyard-ssh-fingerprint"), 120) ||
+    clean(request.headers.get("x-crabbox-ssh-fingerprint"), 120) ||
     clean(url.searchParams.get("fingerprint"), 120)
   );
 }
 
 function sshGatewayTokens(env: RuntimeEnv): string[] {
-  return [env.CRABFLEET_SSH_GATEWAY_TOKEN, env.CRABYARD_SSH_GATEWAY_TOKEN].filter(
+  return [env.CRABFLEET_SSH_GATEWAY_TOKEN, env.CRABBOX_SSH_GATEWAY_TOKEN].filter(
     (token): token is string => Boolean(token),
   );
 }
@@ -1626,6 +1689,7 @@ async function createInteractiveSessionFromInput(
     prompt?: string;
   },
   githubToken?: string,
+  options: { owner?: string } = {},
 ): Promise<{ session: InteractiveSession }> {
   const repo = normalizeRepo(body.repo);
   if (!repo) throw badRequest("repo is required");
@@ -1636,7 +1700,7 @@ async function createInteractiveSessionFromInput(
     | "container";
   const command = interactiveCommand(body.command);
   const prompt = clean(body.prompt, 4000);
-  const owner = actor(user);
+  const owner = options.owner || actor(user);
   const now = Date.now();
   const db = database(env);
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -2261,7 +2325,7 @@ async function writeTerminalClipboardFile(
   const name = safeClipboardFilename(rawName, mediaType);
   const lease = sandboxLeaseInfo(session);
   const sandbox = getSandbox(env.SANDBOX, lease.sandboxId);
-  const directory = `${sandboxWorkdir(session.id)}/.crabyard/clipboard`;
+  const directory = `${sandboxWorkdir(session.id)}/.crabbox/clipboard`;
   const path = `${directory}/${Date.now()}-${crypto.randomUUID().slice(0, 8)}-${name}`;
   await sandbox.mkdir(directory, { recursive: true });
   await sandbox.writeFile(path, base64FromBytes(bytes), { encoding: "base64" });
@@ -2913,8 +2977,8 @@ async function readInteractiveSessionDiagnostics(
     sandboxSetupSessionId(session.id),
     "/workspace",
     {
-      CRABYARD_SESSION_ID: session.id,
-      CRABYARD_WORKDIR: workdir,
+      CRABBOX_SESSION_ID: session.id,
+      CRABBOX_WORKDIR: workdir,
     },
   );
   const result = await setup.exec(
@@ -2927,8 +2991,8 @@ const tools = [
   "python3", "pip3", "make", "gcc", "time", "ssh", "rsync", "curl",
   "unzip", "zip", "sqlite3", "shellcheck", "crabbox"
 ];
-const workdir = process.env.CRABYARD_WORKDIR || "";
-const repo = process.env.CRABYARD_REPO || "";
+const workdir = process.env.CRABBOX_WORKDIR || "";
+const repo = process.env.CRABBOX_REPO || "";
 const home = process.env.HOME || "/root";
 function run(command, args) {
   try {
@@ -2976,11 +3040,11 @@ try {
 } catch {}
 const diagnostics = {
   available: true,
-  imageVersion: process.env.CRABYARD_IMAGE_VERSION || null,
+  imageVersion: process.env.CRABBOX_IMAGE_VERSION || null,
   cwd: process.cwd(),
   checkout,
   github: {
-    credentialFilePresent: fs.existsSync(home + "/.config/crabyard/github-credential"),
+    credentialFilePresent: fs.existsSync(home + "/.config/crabbox/github-credential"),
     ghAuthenticated: Boolean(run("gh", ["api", "user", "--jq", ".login"])),
     repo,
     permissions: repoPermissions
@@ -2996,7 +3060,7 @@ const diagnostics = {
 console.log(JSON.stringify(diagnostics));
 NODE
 `,
-    { timeout: 20_000, env: { CRABYARD_WORKDIR: workdir, CRABYARD_REPO: session.repo } },
+    { timeout: 20_000, env: { CRABBOX_WORKDIR: workdir, CRABBOX_REPO: session.repo } },
   );
   if (!result.success) {
     return {
@@ -3026,12 +3090,12 @@ function interactiveTerminalTarget(
   env: RuntimeEnv,
   session: InteractiveSession,
 ): InteractiveTerminalTarget | null {
-  if (env.CRABYARD_PTY_BRIDGE_URL) {
-    const url = interactiveBridgeUrl(env.CRABYARD_PTY_BRIDGE_URL, session);
+  if (env.CRABBOX_PTY_BRIDGE_URL) {
+    const url = interactiveBridgeUrl(env.CRABBOX_PTY_BRIDGE_URL, session);
     if (!url) return null;
     return {
       url,
-      authorization: bearer(env.CRABYARD_PTY_BRIDGE_TOKEN),
+      authorization: bearer(env.CRABBOX_PTY_BRIDGE_TOKEN),
     };
   }
 
@@ -3039,11 +3103,11 @@ function interactiveTerminalTarget(
     return { url: session.attachUrl, authorization: null };
   }
 
-  if (session.leaseId?.startsWith("cloudflare:") && env.CRABYARD_CLOUDFLARE_RUNNER_URL) {
+  if (session.leaseId?.startsWith("cloudflare:") && env.CRABBOX_CLOUDFLARE_RUNNER_URL) {
     const sandboxId = session.leaseId.slice("cloudflare:".length);
     const url = addQuery(
       joinUrl(
-        env.CRABYARD_CLOUDFLARE_RUNNER_URL,
+        env.CRABBOX_CLOUDFLARE_RUNNER_URL,
         `/v1/sandboxes/${encodeURIComponent(sandboxId)}/pty`,
       ),
       terminalQuery(session),
@@ -3051,7 +3115,7 @@ function interactiveTerminalTarget(
     if (!url) return null;
     return {
       url,
-      authorization: bearer(env.CRABYARD_CLOUDFLARE_RUNNER_TOKEN),
+      authorization: bearer(env.CRABBOX_CLOUDFLARE_RUNNER_TOKEN),
     };
   }
 
@@ -3090,9 +3154,9 @@ function interactiveTerminalHeaders(
 ): Headers {
   const headers = new Headers({
     upgrade: "websocket",
-    "x-crabyard-session": session.id,
-    "x-crabyard-repo": session.repo,
-    "x-crabyard-runtime": session.runtime,
+    "x-crabbox-session": session.id,
+    "x-crabbox-repo": session.repo,
+    "x-crabbox-runtime": session.runtime,
   });
   if (authorization) headers.set("authorization", authorization);
   return headers;
@@ -3261,14 +3325,14 @@ async function provisionInteractiveSession(
   session: InteractiveProvisionRequest,
 ): Promise<InteractiveProvisionResult | null> {
   if (session.runtime === "container" && env.SANDBOX) return provisionWithSandbox(env, session);
-  if (!env.CRABYARD_INTERACTIVE_PROVISION_URL) return null;
+  if (!env.CRABBOX_INTERACTIVE_PROVISION_URL) return null;
   let response: Response;
   try {
     const headers = new Headers({ "content-type": "application/json" });
-    if (env.CRABYARD_INTERACTIVE_PROVISION_TOKEN) {
-      headers.set("authorization", `Bearer ${env.CRABYARD_INTERACTIVE_PROVISION_TOKEN}`);
+    if (env.CRABBOX_INTERACTIVE_PROVISION_TOKEN) {
+      headers.set("authorization", `Bearer ${env.CRABBOX_INTERACTIVE_PROVISION_TOKEN}`);
     }
-    response = await fetch(env.CRABYARD_INTERACTIVE_PROVISION_URL, {
+    response = await fetch(env.CRABBOX_INTERACTIVE_PROVISION_URL, {
       method: "POST",
       headers,
       body: JSON.stringify(session),
@@ -3344,13 +3408,13 @@ async function provisionInteractiveEndpoint(
   if (payload.runtime === "container" && env.SANDBOX) {
     return provisionWithSandbox(env, payload);
   }
-  if (env.CRABYARD_RUNTIME_PROVISION_URL) {
+  if (env.CRABBOX_RUNTIME_PROVISION_URL) {
     return forwardRuntimeProvision(env, payload);
   }
-  if (payload.runtime === "container" && env.CRABYARD_CLOUDFLARE_RUNNER_URL) {
+  if (payload.runtime === "container" && env.CRABBOX_CLOUDFLARE_RUNNER_URL) {
     return provisionWithCloudflareRunner(env, payload);
   }
-  if (payload.runtime === "crabbox" && env.CRABYARD_CLAWFLEET_URL) {
+  if (payload.runtime === "crabbox" && env.CRABBOX_CLAWFLEET_URL) {
     return provisionWithClawFleet(env, payload);
   }
   return {
@@ -3365,17 +3429,17 @@ async function provisionInteractiveEndpoint(
 function authorizeProvisionEndpoint(request: Request, env: RuntimeEnv): void {
   const hasBackend = Boolean(
     env.SANDBOX ||
-    env.CRABYARD_RUNTIME_PROVISION_URL ||
-    env.CRABYARD_CLOUDFLARE_RUNNER_URL ||
-    env.CRABYARD_CLAWFLEET_URL,
+    env.CRABBOX_RUNTIME_PROVISION_URL ||
+    env.CRABBOX_CLOUDFLARE_RUNNER_URL ||
+    env.CRABBOX_CLAWFLEET_URL,
   );
-  if (!env.CRABYARD_INTERACTIVE_PROVISION_TOKEN) {
+  if (!env.CRABBOX_INTERACTIVE_PROVISION_TOKEN) {
     if (hasBackend) {
       throw serviceUnavailable("interactive provision token is not configured");
     }
     return;
   }
-  const expected = `Bearer ${env.CRABYARD_INTERACTIVE_PROVISION_TOKEN}`;
+  const expected = `Bearer ${env.CRABBOX_INTERACTIVE_PROVISION_TOKEN}`;
   if (request.headers.get("authorization") !== expected) throw unauthorized();
 }
 
@@ -3527,7 +3591,7 @@ async function prepareSandboxWorkspace(
   const checkoutErrorPath = sandboxCheckoutErrorPath(session.id);
   const quotedCheckoutErrorPath = shellQuote(checkoutErrorPath);
   const quotedGitAskpassPath = shellQuote(
-    `/tmp/crabyard-git-askpass-${sandboxIdForSession(session.id)}.sh`,
+    `/tmp/crabbox-git-askpass-${sandboxIdForSession(session.id)}.sh`,
   );
   const githubEnv = sandboxGitHubTokenEnv(env, session);
   const resetResult = await sandbox.exec(
@@ -3575,7 +3639,7 @@ async function prepareSandboxWorkspace(
       `  tmp="${workdir}.clone.$$"`,
       `  rm -rf "$tmp"`,
       `  rm -f ${quotedCheckoutErrorPath}`,
-      `  if git_with_github_auth clone --depth 1 --branch ${quotedBranch} ${quotedRepoUrl} "$tmp" 2>/tmp/crabyard-git-clone.log || git_with_github_auth clone --depth 1 ${quotedRepoUrl} "$tmp" 2>>/tmp/crabyard-git-clone.log; then`,
+      `  if git_with_github_auth clone --depth 1 --branch ${quotedBranch} ${quotedRepoUrl} "$tmp" 2>/tmp/crabbox-git-clone.log || git_with_github_auth clone --depth 1 ${quotedRepoUrl} "$tmp" 2>>/tmp/crabbox-git-clone.log; then`,
       `    if rm -rf ${quotedWorkdir} && mkdir -p ${quotedWorkdir} && cp -a "$tmp"/. ${quotedWorkdir}/; then`,
       `      :`,
       `    else`,
@@ -3583,8 +3647,8 @@ async function prepareSandboxWorkspace(
       `      printf 'Repository checkout copy failed for %s branch %s.\\n' ${quotedRepoUrl} ${quotedBranch} > ${quotedCheckoutErrorPath}`,
       `    fi`,
       `  else`,
-      `    printf 'Repository checkout failed for %s branch %s. See /tmp/crabyard-git-clone.log.\\n' ${quotedRepoUrl} ${quotedBranch} > ${quotedCheckoutErrorPath}`,
-      `    cat /tmp/crabyard-git-clone.log >> ${quotedCheckoutErrorPath} || true`,
+      `    printf 'Repository checkout failed for %s branch %s. See /tmp/crabbox-git-clone.log.\\n' ${quotedRepoUrl} ${quotedBranch} > ${quotedCheckoutErrorPath}`,
+      `    cat /tmp/crabbox-git-clone.log >> ${quotedCheckoutErrorPath} || true`,
       `    checkout_status=70`,
       `  fi`,
       `  rm -rf "$tmp"`,
@@ -3607,19 +3671,19 @@ async function prepareSandboxWorkspace(
       `if [ "$checkout_status" -eq 0 ]; then test "$(git rev-parse --abbrev-ref HEAD)" = ${quotedBranch} || checkout_status=$?; fi`,
       `if [ "$checkout_status" -eq 0 ]; then test "$(git config --get remote.origin.url)" = ${quotedRepoUrl} || checkout_status=$?; fi`,
       quotedPrompt
-        ? `if [ "$checkout_status" -eq 0 ]; then printf '%s\n' ${quotedPrompt} > .crabyard-initial-prompt.txt || checkout_status=$?; fi`
-        : `if [ "$checkout_status" -eq 0 ]; then rm -f .crabyard-initial-prompt.txt || checkout_status=$?; fi`,
+        ? `if [ "$checkout_status" -eq 0 ]; then printf '%s\n' ${quotedPrompt} > .crabbox-initial-prompt.txt || checkout_status=$?; fi`
+        : `if [ "$checkout_status" -eq 0 ]; then rm -f .crabbox-initial-prompt.txt || checkout_status=$?; fi`,
       `if [ "$checkout_status" -eq 0 ]; then`,
-      `  printf '\\nCRABYARD_CHECKOUT_OK\\n'`,
+      `  printf '\\nCRABBOX_CHECKOUT_OK\\n'`,
       `else`,
       `  if [ -s ${quotedCheckoutErrorPath} ]; then cat ${quotedCheckoutErrorPath}; fi`,
-      `  printf '\\nCRABYARD_CHECKOUT_FAILED %s\\n' "$checkout_status"`,
+      `  printf '\\nCRABBOX_CHECKOUT_FAILED %s\\n' "$checkout_status"`,
       `fi`,
     ].join("\n"),
     { timeout: 120_000, env: githubEnv },
   );
   const checkoutMarker = result.stdout.trim().split(/\r?\n/).at(-1);
-  if (!result.success || checkoutMarker !== "CRABYARD_CHECKOUT_OK") {
+  if (!result.success || checkoutMarker !== "CRABBOX_CHECKOUT_OK") {
     throw new Error(
       clean(
         [result.stdout, result.stderr].filter(Boolean).join("\n") || "repository checkout failed",
@@ -3711,31 +3775,31 @@ for tool in git node npm pnpm codex gh rg fd jq python3 make gcc time ssh rsync 
   fi
 done
 if [ -n "$missing_tools" ]; then
-  printf 'Crabyard sandbox image is missing required tools:%s\\n' "$missing_tools" >/tmp/crabyard-runtime-tools.log
-  if command -v crabyard-diagnostics >/dev/null 2>&1; then
-    crabyard-diagnostics >>/tmp/crabyard-runtime-tools.log 2>&1 || true
+  printf 'Crabfleet sandbox image is missing required tools:%s\\n' "$missing_tools" >/tmp/crabbox-runtime-tools.log
+  if command -v crabbox-diagnostics >/dev/null 2>&1; then
+    crabbox-diagnostics >>/tmp/crabbox-runtime-tools.log 2>&1 || true
   fi
-  cat /tmp/crabyard-runtime-tools.log
+  cat /tmp/crabbox-runtime-tools.log
   exit 72
 fi
 installed_codex="$(npm list -g @openai/codex --depth=0 --json 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>{try{const v=JSON.parse(s).dependencies?.["@openai/codex"]?.version||""; if (v) console.log(v);}catch{}})' || true)"
 latest_codex="$(npm view @openai/codex version 2>/dev/null || true)"
 if [ -z "$installed_codex" ] || { [ -n "$latest_codex" ] && [ "$installed_codex" != "$latest_codex" ]; }; then
   if command -v timeout >/dev/null 2>&1; then
-    timeout 120s npm install -g @openai/codex@latest >/tmp/crabyard-codex-install.log 2>&1
+    timeout 120s npm install -g @openai/codex@latest >/tmp/crabbox-codex-install.log 2>&1
   else
-    npm install -g @openai/codex@latest >/tmp/crabyard-codex-install.log 2>&1
+    npm install -g @openai/codex@latest >/tmp/crabbox-codex-install.log 2>&1
   fi
 fi
 if [ -n "\${GITHUB_TOKEN:-}" ]; then
-  crabyard_credential_file="$HOME/.config/crabyard/github-credential"
-  mkdir -p "$(dirname "$crabyard_credential_file")"
+  crabbox_credential_file="$HOME/.config/crabbox/github-credential"
+  mkdir -p "$(dirname "$crabbox_credential_file")"
   {
     printf 'username=x-access-token\\n'
     printf 'password=%s\\n' "$GITHUB_TOKEN"
-  } > "$crabyard_credential_file"
-  chmod 600 "$crabyard_credential_file"
-  git config --global credential.helper "!f() { test \\"\\$1\\" = get && cat '$crabyard_credential_file'; }; f"
+  } > "$crabbox_credential_file"
+  chmod 600 "$crabbox_credential_file"
+  git config --global credential.helper "!f() { test \\"\\$1\\" = get && cat '$crabbox_credential_file'; }; f"
   git config --global user.name ${shellQuote(session.owner)}
   git config --global user.email ${shellQuote(`${session.owner}@users.noreply.github.com`)}
   if command -v gh >/dev/null 2>&1; then
@@ -3747,41 +3811,41 @@ fi
 mkdir -p "$(dirname ${shellQuote(autostartScript)})"
 cat > ${shellQuote(autostartScript)} <<'EOF'
 export CODEX_HOME="$HOME/.codex"
-export CRABYARD_SESSION_ID=${shellQuote(session.id)}
-export CRABYARD_REPO=${shellQuote(session.repo)}
-export CRABYARD_BRANCH=${shellQuote(session.branch)}
-export CRABYARD_RUNTIME=${shellQuote(session.runtime)}
-export CRABYARD_COMMAND=${shellQuote(session.command)}
-export CRABYARD_CHECKOUT_ERROR=${shellQuote(sandboxCheckoutErrorPath(session.id))}
-export CRABYARD_WORKDIR=${shellQuote(workdir)}
-if [ -z "\${CRABYARD_SHELL_BOOTSTRAPPED:-}" ]; then
-  export CRABYARD_SHELL_BOOTSTRAPPED=1
-  cd "$CRABYARD_WORKDIR" 2>/dev/null || true
+export CRABBOX_SESSION_ID=${shellQuote(session.id)}
+export CRABBOX_REPO=${shellQuote(session.repo)}
+export CRABBOX_BRANCH=${shellQuote(session.branch)}
+export CRABBOX_RUNTIME=${shellQuote(session.runtime)}
+export CRABBOX_COMMAND=${shellQuote(session.command)}
+export CRABBOX_CHECKOUT_ERROR=${shellQuote(sandboxCheckoutErrorPath(session.id))}
+export CRABBOX_WORKDIR=${shellQuote(workdir)}
+if [ -z "\${CRABBOX_SHELL_BOOTSTRAPPED:-}" ]; then
+  export CRABBOX_SHELL_BOOTSTRAPPED=1
+  cd "$CRABBOX_WORKDIR" 2>/dev/null || true
 fi
-if [ -z "\${CRABYARD_CODEX_AUTOSTART_CHECKED:-}" ]; then
-  export CRABYARD_CODEX_AUTOSTART_CHECKED=1
-  crabyard_autostart_marker="$HOME/.cache/crabyard/\${CRABYARD_SESSION_ID:-session}.codex-autostarted"
-  mkdir -p "$HOME/.cache/crabyard" 2>/dev/null || true
-  if [ ! -e "$crabyard_autostart_marker" ]; then
-    if [ -s "\${CRABYARD_CHECKOUT_ERROR:-}" ]; then
-      printf '\\nCrabyard repository checkout failed:\\n'
-      cat "$CRABYARD_CHECKOUT_ERROR"
+if [ -z "\${CRABBOX_CODEX_AUTOSTART_CHECKED:-}" ]; then
+  export CRABBOX_CODEX_AUTOSTART_CHECKED=1
+  crabbox_autostart_marker="$HOME/.cache/crabbox/\${CRABBOX_SESSION_ID:-session}.codex-autostarted"
+  mkdir -p "$HOME/.cache/crabbox" 2>/dev/null || true
+  if [ ! -e "$crabbox_autostart_marker" ]; then
+    if [ -s "\${CRABBOX_CHECKOUT_ERROR:-}" ]; then
+      printf '\\nCrabfleet repository checkout failed:\\n'
+      cat "$CRABBOX_CHECKOUT_ERROR"
       printf '\\n'
-    elif [ -n "\${CRABYARD_COMMAND:-}" ]; then
-      touch "$crabyard_autostart_marker" 2>/dev/null || true
+    elif [ -n "\${CRABBOX_COMMAND:-}" ]; then
+      touch "$crabbox_autostart_marker" 2>/dev/null || true
       (
-        cd "$CRABYARD_WORKDIR" 2>/dev/null || {
-          printf 'Crabyard workdir is unavailable: %s\\n' "$CRABYARD_WORKDIR"
+        cd "$CRABBOX_WORKDIR" 2>/dev/null || {
+          printf 'Crabfleet workdir is unavailable: %s\\n' "$CRABBOX_WORKDIR"
           exit 127
         }
-        env -u BASH_ENV -u PROMPT_COMMAND /bin/bash -c "$CRABYARD_COMMAND"
+        env -u BASH_ENV -u PROMPT_COMMAND /bin/bash -c "$CRABBOX_COMMAND"
       )
     fi
   fi
 fi
 EOF
 marker=${shellQuote(sandboxBashrcMarker(session))}
-bashrc_tmp="$HOME/.bashrc.crabyard.$$"
+bashrc_tmp="$HOME/.bashrc.crabbox.$$"
 {
   printf '%s\\n' "$marker"
   printf '%s\\n' 'source ${shellQuote(autostartScript)} 2>/dev/null || true'
@@ -3866,7 +3930,7 @@ async function sandboxTerminalProfileExists(
     sandboxSetupSessionId(session.id),
     "/workspace",
     {
-      CRABYARD_SESSION_ID: session.id,
+      CRABBOX_SESSION_ID: session.id,
     },
   );
   const marker = shellQuote(sandboxBashrcMarker(session));
@@ -3885,13 +3949,13 @@ async function sandboxTerminalProfileExists(
     `test -x ${shellQuote(terminalShell)}`,
     `grep -Fqx '[shell_environment_policy]' "$HOME/.codex/config.toml"`,
     `grep -Fqx '[projects."/workspace"]' "$HOME/.codex/config.toml"`,
-    `grep -Fqx '        cd "$CRABYARD_WORKDIR" 2>/dev/null || {' ${shellQuote(autostartScript)}`,
+    `grep -Fqx '        cd "$CRABBOX_WORKDIR" 2>/dev/null || {' ${shellQuote(autostartScript)}`,
     `grep -Fqx ${marker} "$HOME/.bashrc"`,
   ];
   if (requiresGitHubAuth) {
     checks.push(
-      `test -s "$HOME/.config/crabyard/github-credential"`,
-      `git config --global --get-all credential.helper | grep -F "$HOME/.config/crabyard/github-credential" >/dev/null`,
+      `test -s "$HOME/.config/crabbox/github-credential"`,
+      `git config --global --get-all credential.helper | grep -F "$HOME/.config/crabbox/github-credential" >/dev/null`,
       `! command -v gh >/dev/null 2>&1 || gh auth status -h github.com >/dev/null 2>&1`,
     );
   }
@@ -3946,10 +4010,10 @@ function sandboxSessionEnv(
   session: SandboxRuntimeSession,
 ): Record<string, string | undefined> {
   return {
-    CRABYARD_SESSION_ID: session.id,
-    CRABYARD_REPO: session.repo,
-    CRABYARD_BRANCH: session.branch,
-    CRABYARD_RUNTIME: session.runtime,
+    CRABBOX_SESSION_ID: session.id,
+    CRABBOX_REPO: session.repo,
+    CRABBOX_BRANCH: session.branch,
+    CRABBOX_RUNTIME: session.runtime,
     TERM: "xterm-256color",
     COLORTERM: "truecolor",
     TERM_PROGRAM: "ghostty",
@@ -3986,10 +4050,10 @@ async function forwardRuntimeProvision(
   let response: Response;
   try {
     const headers = new Headers({ "content-type": "application/json" });
-    if (env.CRABYARD_RUNTIME_PROVISION_TOKEN) {
-      headers.set("authorization", `Bearer ${env.CRABYARD_RUNTIME_PROVISION_TOKEN}`);
+    if (env.CRABBOX_RUNTIME_PROVISION_TOKEN) {
+      headers.set("authorization", `Bearer ${env.CRABBOX_RUNTIME_PROVISION_TOKEN}`);
     }
-    response = await fetch(env.CRABYARD_RUNTIME_PROVISION_URL as string, {
+    response = await fetch(env.CRABBOX_RUNTIME_PROVISION_URL as string, {
       method: "POST",
       headers,
       body: JSON.stringify(session),
@@ -4010,12 +4074,12 @@ async function provisionWithCloudflareRunner(
   env: RuntimeEnv,
   session: InteractiveProvisionRequest,
 ): Promise<InteractiveProvisionResult> {
-  if (!env.CRABYARD_CLOUDFLARE_RUNNER_TOKEN) {
+  if (!env.CRABBOX_CLOUDFLARE_RUNNER_TOKEN) {
     return failedProvision("cloudflare runner token is not configured");
   }
 
-  const runnerUrl = env.CRABYARD_CLOUDFLARE_RUNNER_URL as string;
-  const sandboxId = clean(`crabyard-${session.id}`.toLowerCase().replace(/[^a-z0-9_-]/g, "-"), 64);
+  const runnerUrl = env.CRABBOX_CLOUDFLARE_RUNNER_URL as string;
+  const sandboxId = clean(`crabbox-${session.id}`.toLowerCase().replace(/[^a-z0-9_-]/g, "-"), 64);
   const workdir = cloudflareRunnerWorkdir(env, session);
   const instanceType = cloudflareRunnerInstanceType(env);
   let response: Response;
@@ -4023,7 +4087,7 @@ async function provisionWithCloudflareRunner(
     response = await fetch(joinUrl(runnerUrl, "/v1/sandboxes"), {
       method: "POST",
       headers: {
-        authorization: `Bearer ${env.CRABYARD_CLOUDFLARE_RUNNER_TOKEN}`,
+        authorization: `Bearer ${env.CRABBOX_CLOUDFLARE_RUNNER_TOKEN}`,
         "content-type": "application/json",
       },
       body: JSON.stringify({
@@ -4033,11 +4097,11 @@ async function provisionWithCloudflareRunner(
         branch: session.branch,
         workdir,
         instanceType,
-        ttlSeconds: clampedSeconds(env.CRABYARD_CLOUDFLARE_RUNNER_TTL_SECONDS, 14_400),
-        idleTimeoutSeconds: clampedSeconds(env.CRABYARD_CLOUDFLARE_RUNNER_IDLE_SECONDS, 1_800),
+        ttlSeconds: clampedSeconds(env.CRABBOX_CLOUDFLARE_RUNNER_TTL_SECONDS, 14_400),
+        idleTimeoutSeconds: clampedSeconds(env.CRABBOX_CLOUDFLARE_RUNNER_IDLE_SECONDS, 1_800),
         env: githubTokenEnv(session),
         labels: {
-          app: "crabyard",
+          app: "crabbox",
           session: session.id,
           repo: session.repo,
           branch: session.branch,
@@ -4078,17 +4142,17 @@ async function provisionWithClawFleet(
       leaseId: null,
       attachUrl: null,
       vncUrl: null,
-      message: "container runtime requires CRABYARD_RUNTIME_PROVISION_URL",
+      message: "container runtime requires CRABBOX_RUNTIME_PROVISION_URL",
     };
   }
 
   let response: Response;
   try {
     const headers = new Headers({ "content-type": "application/json" });
-    if (env.CRABYARD_CLAWFLEET_TOKEN) {
-      headers.set("authorization", `Bearer ${env.CRABYARD_CLAWFLEET_TOKEN}`);
+    if (env.CRABBOX_CLAWFLEET_TOKEN) {
+      headers.set("authorization", `Bearer ${env.CRABBOX_CLAWFLEET_TOKEN}`);
     }
-    response = await fetch(joinUrl(env.CRABYARD_CLAWFLEET_URL as string, "/api/v1/instances"), {
+    response = await fetch(joinUrl(env.CRABBOX_CLAWFLEET_URL as string, "/api/v1/instances"), {
       method: "POST",
       headers,
       body: JSON.stringify({ count: 1, runtime_type: "openclaw" }),
@@ -4106,7 +4170,7 @@ async function provisionWithClawFleet(
   const name = clean(instance.name, 120);
   if (!name) return failedProvision("clawfleet provision failed: missing instance name");
 
-  const publicUrl = env.CRABYARD_CLAWFLEET_PUBLIC_URL || env.CRABYARD_CLAWFLEET_URL || "";
+  const publicUrl = env.CRABBOX_CLAWFLEET_PUBLIC_URL || env.CRABBOX_CLAWFLEET_URL || "";
   const status = instance.status === "running" ? "ready" : "provisioning";
   return {
     status,
@@ -4143,14 +4207,14 @@ function failedProvision(message: string): InteractiveProvisionResult {
 }
 
 function cloudflareRunnerWorkdir(env: RuntimeEnv, session: InteractiveProvisionRequest): string {
-  const base = clean(env.CRABYARD_CLOUDFLARE_RUNNER_WORKDIR, 160) || "/workspace/crabyard";
+  const base = clean(env.CRABBOX_CLOUDFLARE_RUNNER_WORKDIR, 160) || "/workspace/crabbox";
   const suffix = session.id.toLowerCase().replace(/[^a-z0-9_-]/g, "-");
   return `${base.replace(/\/+$/, "")}/${suffix}`;
 }
 
 function cloudflareRunnerInstanceType(env: RuntimeEnv): string {
   return (
-    optionalOneOf(env.CRABYARD_CLOUDFLARE_RUNNER_INSTANCE_TYPE, [
+    optionalOneOf(env.CRABBOX_CLOUDFLARE_RUNNER_INSTANCE_TYPE, [
       "lite",
       "basic",
       "standard-1",
@@ -4554,7 +4618,7 @@ async function fetchGitHubReferences(
       "content-type": "application/json",
     },
     body: JSON.stringify({
-      query: `query CrabyardRefs($number: Int!) { ${selections} }`,
+      query: `query CrabfleetRefs($number: Int!) { ${selections} }`,
       variables: { number },
     }),
   });
@@ -4640,18 +4704,18 @@ async function refreshWorkflowForRepo(
   repo: string,
   now: number,
 ): Promise<RepoWorkflow> {
-  const response = await fetch(`https://api.github.com/repos/${repo}/contents/CRABYARD.md`, {
+  const response = await fetch(`https://api.github.com/repos/${repo}/contents/CRABBOX.md`, {
     headers: githubHeaders(env),
   });
   if (response.status === 404) {
     return writeWorkflowRow(env, {
       repo,
       status: "missing",
-      sourcePath: "CRABYARD.md",
+      sourcePath: "CRABBOX.md",
       sourceSha: null,
       config: {},
       prompt: "",
-      error: "CRABYARD.md not found",
+      error: "CRABBOX.md not found",
       evaluatedAt: now,
       updatedAt: now,
     });
@@ -4666,11 +4730,11 @@ async function refreshWorkflowForRepo(
     return writeWorkflowRow(env, {
       repo,
       status: "invalid",
-      sourcePath: "CRABYARD.md",
+      sourcePath: "CRABBOX.md",
       sourceSha: payload.sha ?? null,
       config: {},
       prompt: "",
-      error: "unsupported CRABYARD.md encoding",
+      error: "unsupported CRABBOX.md encoding",
       evaluatedAt: now,
       updatedAt: now,
     });
@@ -4681,7 +4745,7 @@ async function refreshWorkflowForRepo(
   return writeWorkflowRow(env, {
     repo,
     status: parsed.error ? "invalid" : "ok",
-    sourcePath: "CRABYARD.md",
+    sourcePath: "CRABBOX.md",
     sourceSha: payload.sha ?? null,
     config: parsed.error ? {} : parsed.config,
     prompt: parsed.prompt,
@@ -5186,11 +5250,11 @@ async function openSecret(env: RuntimeEnv, sealed: string): Promise<string | nul
 }
 
 async function secretEncryptionKey(env: RuntimeEnv): Promise<CryptoKey | null> {
-  const material = env.CRABYARD_TOKEN_ENCRYPTION_KEY || env.GITHUB_CLIENT_SECRET;
+  const material = env.CRABBOX_TOKEN_ENCRYPTION_KEY || env.GITHUB_CLIENT_SECRET;
   if (!material) return null;
   const digest = await crypto.subtle.digest(
     "SHA-256",
-    encoder.encode(`crabyard-secret-v1:${material}`),
+    encoder.encode(`crabbox-secret-v1:${material}`),
   );
   return crypto.subtle.importKey("raw", digest, "AES-GCM", false, ["encrypt", "decrypt"]);
 }
@@ -5419,7 +5483,7 @@ function githubHeaders(env?: RuntimeEnv): HeadersInit {
   return {
     accept: "application/vnd.github+json",
     ...(env?.GITHUB_TOKEN ? { authorization: `Bearer ${env.GITHUB_TOKEN}` } : {}),
-    "user-agent": "crabyard-ai",
+    "user-agent": "crabbox-ai",
     "x-github-api-version": "2022-11-28",
   };
 }
@@ -5489,7 +5553,7 @@ function strongerRole(left: Role | null, right: Role): Role {
 function authMethods(env: RuntimeEnv, request?: Request): Record<string, boolean> {
   return {
     github: Boolean(env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET),
-    token: Boolean(env.CRABYARD_BOOTSTRAP_TOKEN),
+    token: Boolean(env.CRABBOX_BOOTSTRAP_TOKEN),
     devIdentity: request ? isLocalDevRequest(request) : false,
   };
 }
@@ -5860,10 +5924,10 @@ function selectRuntimeDescriptor(
     return runtimeDescriptor("crabbox", "prompt requires desktop/manual/perf capability");
   }
   if (workflow?.runtime === "crabbox") {
-    return runtimeDescriptor("crabbox", "repo CRABYARD.md runtime default");
+    return runtimeDescriptor("crabbox", "repo CRABBOX.md runtime default");
   }
   if (workflow?.runtime === "container") {
-    return runtimeDescriptor("container", "repo CRABYARD.md runtime default");
+    return runtimeDescriptor("container", "repo CRABBOX.md runtime default");
   }
   return runtimeDescriptor("crabbox", "default crabbox runtime");
 }
@@ -5934,8 +5998,8 @@ async function sha256(value: string): Promise<string> {
 }
 
 async function bootstrapSubject(env: RuntimeEnv): Promise<string> {
-  if (!env.CRABYARD_BOOTSTRAP_TOKEN) throw unauthorized();
-  return `bootstrap:${(await sha256(env.CRABYARD_BOOTSTRAP_TOKEN)).slice(0, 24)}`;
+  if (!env.CRABBOX_BOOTSTRAP_TOKEN) throw unauthorized();
+  return `bootstrap:${(await sha256(env.CRABBOX_BOOTSTRAP_TOKEN)).slice(0, 24)}`;
 }
 
 function normalizeRepo(value: unknown): string {
@@ -6067,7 +6131,7 @@ function bearer(token: string | undefined): string | null {
 }
 
 function sandboxIdForSession(id: string): string {
-  return clean(`crabyard-${id}`.toLowerCase().replace(/[^a-z0-9_-]/g, "-"), 63);
+  return clean(`crabbox-${id}`.toLowerCase().replace(/[^a-z0-9_-]/g, "-"), 63);
 }
 
 function newSandboxLease(id: string): { sandboxId: string; terminalSessionId: string } {
@@ -6131,21 +6195,21 @@ function sandboxWorkdir(id: string): string {
 }
 
 function sandboxAutostartScriptPath(id: string): string {
-  return `/tmp/.crabyard-autostart-${sandboxIdForSession(id)}.sh`;
+  return `/tmp/.crabbox-autostart-${sandboxIdForSession(id)}.sh`;
 }
 
 function sandboxTerminalShellPath(id: string): string {
-  return `/tmp/.crabyard-terminal-${sandboxIdForSession(id)}.sh`;
+  return `/tmp/.crabbox-terminal-${sandboxIdForSession(id)}.sh`;
 }
 
 function sandboxCheckoutErrorPath(id: string): string {
-  return `/tmp/crabyard-checkout-error-${sandboxIdForSession(id)}.txt`;
+  return `/tmp/crabbox-checkout-error-${sandboxIdForSession(id)}.txt`;
 }
 
 function sandboxBashrcMarker(
   session: Pick<InteractiveSession | InteractiveProvisionRequest, "id">,
 ): string {
-  return `# crabyard session ${session.id} autostart-v4`;
+  return `# crabbox session ${session.id} autostart-v4`;
 }
 
 function terminalSize(request: Request, name: "cols" | "rows", fallback: number): number {

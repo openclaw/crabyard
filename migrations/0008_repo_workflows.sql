@@ -1,7 +1,7 @@
 CREATE TABLE IF NOT EXISTS repo_workflows (
   repo TEXT PRIMARY KEY,
   status TEXT NOT NULL,
-  source_path TEXT NOT NULL DEFAULT 'CRABYARD.md',
+  source_path TEXT NOT NULL DEFAULT 'CRABBOX.md',
   source_sha TEXT,
   config_json TEXT NOT NULL DEFAULT '{}',
   prompt TEXT NOT NULL DEFAULT '',

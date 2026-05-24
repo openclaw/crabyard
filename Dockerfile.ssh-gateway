@@ -3,11 +3,11 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd ./cmd
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/crabyard-ssh-gateway ./cmd/crabyard-ssh-gateway
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/crabbox-ssh-gateway ./cmd/crabbox-ssh-gateway
 
 FROM alpine:3.22
-RUN adduser -D -H -s /sbin/nologin crabyard
-USER crabyard
-COPY --from=build /out/crabyard-ssh-gateway /usr/local/bin/crabyard-ssh-gateway
+RUN adduser -D -H -s /sbin/nologin crabbox
+USER crabbox
+COPY --from=build /out/crabbox-ssh-gateway /usr/local/bin/crabbox-ssh-gateway
 EXPOSE 2222
-ENTRYPOINT ["/usr/local/bin/crabyard-ssh-gateway"]
+ENTRYPOINT ["/usr/local/bin/crabbox-ssh-gateway"]

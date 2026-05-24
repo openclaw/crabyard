@@ -2,4 +2,3 @@ self-hosted-runner:
   labels:
     - crabbox
     - openclaw
-    - crabyard

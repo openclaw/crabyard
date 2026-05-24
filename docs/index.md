@@ -35,7 +35,7 @@ The web app at [crabfleet.ai/app](https://crabfleet.ai/app/) exposes the same co
 - **Fleet visibility.** The app groups all org Codex instances by person so OpenClaw can supervise live work.
 - **Repo-gated cards.** Prompt cards and GitHub issue/PR previews stay scoped to enabled OpenClaw repos.
 - **Runtime policy.** Crabfleet records runtime selection, capabilities, heartbeat, stall state, and operator intent.
-- **Admin guardrails.** User/team allowlists, repo allowlists, roles, caps, and `CRABYARD.md` workflow evaluation live in the dashboard.
+- **Admin guardrails.** User/team allowlists, repo allowlists, roles, caps, and `CRABBOX.md` workflow evaluation live in the dashboard.
 - **Generated docs.** The spec, API pages, and architecture notes are built into a searchable documentation shell.
 
 ## What Works Today
@@ -48,7 +48,7 @@ The web app at [crabfleet.ai/app](https://crabfleet.ai/app/) exposes the same co
 - Durable run attempts with heartbeat, stall handling, operator, runtime reason, and capabilities.
 - Ghostty WASM fullscreen session grid with D1 event replay, live multiplex PTY attach, WebVNC links for Crabbox leases, and text fallback.
 - Card diff metadata and compact patch view.
-- Owner workflow evaluation for repo `CRABYARD.md`.
+- Owner workflow evaluation for repo `CRABBOX.md`.
 - Worker-served docs at `/docs/` and generated docs at `docs.crabfleet.ai`.
 
 ## Not Wired Yet
@@ -86,7 +86,7 @@ When a card enters Running, Crabfleet creates a `run_attempts` row, selects a ru
 
 ### Repo Workflows
 
-Owners can evaluate `CRABYARD.md` for enabled repos. Valid workflow config can set runtime and merge defaults for new cards and future scheduler policy.
+Owners can evaluate `CRABBOX.md` for enabled repos. Valid workflow config can set runtime and merge defaults for new cards and future scheduler policy.
 
 ### Roles
 
@@ -106,4 +106,4 @@ Owners can evaluate `CRABYARD.md` for enabled repos. Valid workflow config can s
 
 ## Status
 
-MVP deployed. The control-plane data model is real; the product rename is Crabfleet-first with Crabyard compatibility aliases kept for deployment continuity.
+MVP deployed. The control-plane data model is real; Crabfleet is the only product surface.

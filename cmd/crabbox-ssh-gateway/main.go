@@ -75,6 +75,11 @@ type createSessionRequest struct {
 	Prompt  string `json:"prompt,omitempty"`
 }
 
+type createArgs struct {
+	request createSessionRequest
+	detach  bool
+}
+
 type createSessionResponse struct {
 	Session interactiveSession `json:"session"`
 }
@@ -98,10 +103,10 @@ func main() {
 	var token string
 	var hostKeyPath string
 	var ephemeralHostKey bool
-	flag.StringVar(&addr, "addr", env(":2222", "CRABFLEET_SSH_ADDR", "CRABYARD_SSH_ADDR"), "SSH listen address")
-	flag.StringVar(&apiURL, "api", env("http://127.0.0.1:8787", "CRABFLEET_API_URL", "CRABYARD_API_URL"), "Crabfleet Worker URL")
-	flag.StringVar(&token, "token", env("", "CRABFLEET_SSH_GATEWAY_TOKEN", "CRABYARD_SSH_GATEWAY_TOKEN"), "Worker SSH gateway token")
-	flag.StringVar(&hostKeyPath, "host-key", env("", "CRABFLEET_SSH_HOST_KEY", "CRABYARD_SSH_HOST_KEY"), "SSH host private key path")
+	flag.StringVar(&addr, "addr", env(":2222", "CRABFLEET_SSH_ADDR", "CRABBOX_SSH_ADDR"), "SSH listen address")
+	flag.StringVar(&apiURL, "api", env("http://127.0.0.1:8787", "CRABFLEET_API_URL", "CRABBOX_API_URL"), "Crabfleet Worker URL")
+	flag.StringVar(&token, "token", env("", "CRABFLEET_SSH_GATEWAY_TOKEN", "CRABBOX_SSH_GATEWAY_TOKEN"), "Worker SSH gateway token")
+	flag.StringVar(&hostKeyPath, "host-key", env("", "CRABFLEET_SSH_HOST_KEY", "CRABBOX_SSH_HOST_KEY"), "SSH host private key path")
 	flag.BoolVar(&ephemeralHostKey, "ephemeral-host-key", false, "use a generated host key for local development only")
 	flag.Parse()
 
@@ -297,12 +302,16 @@ func runCommand(ctx context.Context, out io.ReadWriter, perms *ssh.Permissions, 
 		printList(out, state)
 		return 0
 	case "new":
-		session, err := client.createSession(ctx, auth.fingerprint, parseCreate(args[1:], out, client, auth.fingerprint))
+		create := parseCreate(args[1:], client, auth.fingerprint)
+		session, err := client.createSession(ctx, auth.fingerprint, create.request)
 		if err != nil {
 			fmt.Fprintf(out, "error: %v\n", err)
 			return 1
 		}
 		fmt.Fprintf(out, "session: %s\nrepo: %s\nstatus: %s\nattach: ssh crabfleet attach %s\n", session.ID, session.Repo, session.Status, session.ID)
+		if create.detach {
+			return 0
+		}
 		return client.attach(ctx, auth.fingerprint, session.ID, out, pty)
 	case "attach":
 		if len(args) < 2 {
@@ -485,14 +494,16 @@ func splitCommand(command string) ([]string, error) {
 	return args, nil
 }
 
-func parseCreate(args []string, out io.Writer, client *apiClient, fingerprint string) createSessionRequest {
+func parseCreate(args []string, client *apiClient, fingerprint string) createArgs {
 	fs := flag.NewFlagSet("new", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	var req createSessionRequest
+	var detach bool
 	fs.StringVar(&req.Repo, "repo", "", "repo")
 	fs.StringVar(&req.Branch, "branch", "main", "branch")
 	fs.StringVar(&req.Runtime, "runtime", "crabbox", "runtime")
 	fs.StringVar(&req.Command, "command", "", "command")
+	fs.BoolVar(&detach, "detach", false, "do not attach after creating")
 	_ = fs.Parse(args)
 	req.Prompt = strings.Join(fs.Args(), " ")
 	if req.Repo == "" {
@@ -500,7 +511,7 @@ func parseCreate(args []string, out io.Writer, client *apiClient, fingerprint st
 			req.Repo = state.Repos[0]
 		}
 	}
-	return req
+	return createArgs{request: req, detach: detach}
 }
 
 func (c *apiClient) auth(ctx context.Context, key ssh.PublicKey, sshUser string, remote string, createLink bool) (keyAuth, error) {
@@ -557,7 +568,6 @@ func (c *apiClient) attach(ctx context.Context, fingerprint string, id string, t
 	headers := http.Header{}
 	headers.Set("Authorization", "Bearer "+c.token)
 	headers.Set("X-Crabfleet-SSH-Fingerprint", fingerprint)
-	headers.Set("X-Crabyard-SSH-Fingerprint", fingerprint)
 	ws, _, err := websocket.Dial(ctx, u.String(), &websocket.DialOptions{HTTPHeader: headers})
 	if err != nil {
 		fmt.Fprintf(terminal, "attach failed: %v\n", err)
@@ -601,7 +611,6 @@ func (c *apiClient) do(ctx context.Context, method string, path string, fingerpr
 	req.Header.Set("Accept", "application/json")
 	if fingerprint != "" {
 		req.Header.Set("X-Crabfleet-SSH-Fingerprint", fingerprint)
-		req.Header.Set("X-Crabyard-SSH-Fingerprint", fingerprint)
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -647,13 +656,13 @@ func loadHostKey(path string, allowEphemeral bool) (ssh.Signer, error) {
 		return ssh.ParsePrivateKey(data)
 	}
 	if !allowEphemeral {
-		return nil, errors.New("CRABYARD_SSH_HOST_KEY or --host-key is required")
+		return nil, errors.New("CRABBOX_SSH_HOST_KEY or --host-key is required")
 	}
 	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		return nil, err
 	}
-	log.Print("using ephemeral SSH host key; set CRABYARD_SSH_HOST_KEY for production")
+	log.Print("using ephemeral SSH host key; set CRABBOX_SSH_HOST_KEY for production")
 	return ssh.NewSignerFromKey(privateKey)
 }
 

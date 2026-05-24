@@ -70,7 +70,7 @@ RUN set -eux; \
   rm -f /tmp/crabbox.tar.gz; \
   crabbox --version
 
-RUN cat >/usr/local/bin/crabyard-diagnostics <<'EOF' && chmod +x /usr/local/bin/crabyard-diagnostics
+RUN cat >/usr/local/bin/crabbox-diagnostics <<'EOF' && chmod +x /usr/local/bin/crabbox-diagnostics
 #!/usr/bin/env bash
 set -u
 
@@ -79,8 +79,8 @@ tools=(
   time ssh rsync curl unzip zip sqlite3 shellcheck crabbox
 )
 
-printf 'Crabyard sandbox diagnostics\n'
-printf 'image: %s\n' "${CRABYARD_IMAGE_VERSION:-dev}"
+printf 'Crabfleet sandbox diagnostics\n'
+printf 'image: %s\n' "${CRABBOX_IMAGE_VERSION:-dev}"
 printf 'cwd: %s\n' "$(pwd)"
 for tool in "${tools[@]}"; do
   if path="$(command -v "$tool" 2>/dev/null)"; then
@@ -94,6 +94,6 @@ EOF
 
 ENV TERM=xterm-256color
 ENV COLORTERM=truecolor
-ENV CRABYARD_IMAGE_VERSION=2026-05-22-tools
+ENV CRABBOX_IMAGE_VERSION=2026-05-22-tools
 
 EXPOSE 3000

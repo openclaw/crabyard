@@ -54,7 +54,7 @@ jobs:
         run: go build -trimpath -o /tmp/crabfleet ./cmd/crabfleet
 
       - name: Build SSH gateway
-        run: go build -trimpath -o /tmp/crabyard-ssh-gateway ./cmd/crabyard-ssh-gateway
+        run: go build -trimpath -o /tmp/crabbox-ssh-gateway ./cmd/crabbox-ssh-gateway
 
       - name: Smoke CLI help
         run: |

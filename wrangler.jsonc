@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "crabyard-ai",
+  "name": "crabbox-ai",
   "main": "src/index.ts",
   "compatibility_date": "2026-05-17",
   "compatibility_flags": ["nodejs_compat"],
@@ -21,7 +21,7 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "crabyard-ai",
+      "database_name": "crabbox-ai",
       "database_id": "0866ed65-a568-4d9f-a78a-aec41fe75e06",
     },
   ],

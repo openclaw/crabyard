@@ -24,7 +24,7 @@ Cloudflare Worker
   - runtime selection policy
   |
   +-- D1: users, sessions, repos, cards, events, run_attempts, repo_workflows
-  +-- GitHub API: OAuth, org/team membership, CRABYARD.md, issue/PR previews
+  +-- GitHub API: OAuth, org/team membership, CRABBOX.md, issue/PR previews
   +-- Ghostty WASM: terminal grid asset served by Worker
 ```
 
@@ -45,7 +45,7 @@ Structured persistence uses D1 through a small Kysely dialect.
 - `sessions`: hashed session tokens.
 - `cards`: task metadata, prompt, repo, lane, policy, diff summary, active run id.
 - `run_attempts`: durable attempt state, heartbeat, runtime, lease fields, operator, selection reason, and runtime capabilities.
-- `repo_workflows`: last `CRABYARD.md` evaluation per repo, including status, source SHA, parsed config, prompt guidance, and error.
+- `repo_workflows`: last `CRABBOX.md` evaluation per repo, including status, source SHA, parsed config, prompt guidance, and error.
 - `events`: card/run event log.
 - `audit_events`: admin action log.
 
@@ -63,12 +63,12 @@ Current selection order:
 
 1. Explicit card runtime `container` or `crabbox`
 2. Hard prompt cues: `vnc`, `manual`, `takeover`, `gpu`, `perf`, `performance` route to Crabbox
-3. Valid repo `CRABYARD.md` runtime default
+3. Valid repo `CRABBOX.md` runtime default
 4. Product default: Crabbox
 
 ## Repo Workflow Config
 
-Owners can evaluate `CRABYARD.md` for an allowlisted repo. The Worker fetches it from GitHub, decodes UTF-8 base64 content, parses simple frontmatter, stores status/errors in D1, and applies only valid `ok` configs.
+Owners can evaluate `CRABBOX.md` for an allowlisted repo. The Worker fetches it from GitHub, decodes UTF-8 base64 content, parses simple frontmatter, stores status/errors in D1, and applies only valid `ok` configs.
 
 For private repos, workflow refresh requires a deployment `GITHUB_TOKEN` with contents access. The Worker does not use the logged-in user's OAuth token for this fetch.
 

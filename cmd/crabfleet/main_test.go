@@ -30,6 +30,27 @@ func TestShellQuoteMatchesGatewaySplitter(t *testing.T) {
 	}
 }
 
+func TestFirstLineSkipsBlankLines(t *testing.T) {
+	if got, want := firstLine("\n\n https://example.com/vnc\nignored\n"), "https://example.com/vnc"; got != want {
+		t.Fatalf("firstLine = %q, want %q", got, want)
+	}
+}
+
+func TestAttachableRequiresReadySessionWithAttachURL(t *testing.T) {
+	if !attachable(interactiveSession{Status: "ready", AttachURL: "/api/interactive-sessions/IS-1/pty"}) {
+		t.Fatal("ready session with sandbox attach URL should be attachable")
+	}
+	if attachable(interactiveSession{Status: "pending_adapter", LeaseID: "sandbox:test"}) {
+		t.Fatal("pending session should not be attachable")
+	}
+	if attachable(interactiveSession{Status: "ready", AttachURL: "https://example.com/console"}) {
+		t.Fatal("http console URL should not be SSH attachable")
+	}
+	if !attachable(interactiveSession{Status: "ready", LeaseID: "sandbox:test"}) {
+		t.Fatal("sandbox lease should be attachable")
+	}
+}
+
 func splitForTest(command string) ([]string, error) {
 	var args []string
 	var current []rune

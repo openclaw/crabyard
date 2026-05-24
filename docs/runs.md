@@ -39,7 +39,7 @@ Selection order:
 
 1. Explicit card runtime `container` or `crabbox`.
 2. Prompt cues `vnc`, `manual`, `takeover`, `gpu`, `perf`, or `performance` route to Crabbox.
-3. Valid repo `CRABYARD.md` runtime default.
+3. Valid repo `CRABBOX.md` runtime default.
 4. Default Container runtime.
 
 Each selected runtime stores:
@@ -56,7 +56,7 @@ The UI labels sessions from capabilities, and the API rejects takeover unless th
 
 ## Repo Workflow Defaults
 
-Owners can evaluate `CRABYARD.md` in Admin.
+Owners can evaluate `CRABBOX.md` in Admin.
 
 ```yaml
 ---
@@ -96,28 +96,28 @@ The Take over action records `controlIntent = "takeover"` and operator only for 
 
 Maintainers can create a standalone Codex CLI session without making a board card. The Worker stores the requested repo, branch, runtime, command, owner, attach/VNC URLs, status, and event log in D1. The default runtime is `crabbox` so a provision adapter can return both terminal and VNC attach URLs.
 
-If `CRABYARD_INTERACTIVE_PROVISION_URL` is not set, new sessions stay `pending_adapter` and remain visible in the Ghostty grid. If it is set, Crabfleet posts the session request to that endpoint with optional bearer auth from `CRABYARD_INTERACTIVE_PROVISION_TOKEN`; the response can set `status`, `leaseId`, `attachUrl`, `vncUrl`, and `message`.
+If `CRABBOX_INTERACTIVE_PROVISION_URL` is not set, new sessions stay `pending_adapter` and remain visible in the Ghostty grid. If it is set, Crabfleet posts the session request to that endpoint with optional bearer auth from `CRABBOX_INTERACTIVE_PROVISION_TOKEN`; the response can set `status`, `leaseId`, `attachUrl`, `vncUrl`, and `message`.
 
-Crabfleet also ships a built-in provision hook at `/api/provision/interactive`. Point `CRABYARD_INTERACTIVE_PROVISION_URL` at that route to use Worker-side backend selection. Set `CRABYARD_INTERACTIVE_PROVISION_TOKEN` for backend-enabled deployments; the route fails closed without it when a backend is configured. The route delegates to `CRABYARD_RUNTIME_PROVISION_URL` when set, creates a Cloudflare Container sandbox for `container` sessions through `CRABYARD_CLOUDFLARE_RUNNER_URL` when configured, or creates a ClawFleet OpenClaw instance for `crabbox` sessions through `CRABYARD_CLAWFLEET_URL`; without a matching backend it returns `pending_adapter` with a clear setup message.
+Crabfleet also ships a built-in provision hook at `/api/provision/interactive`. Point `CRABBOX_INTERACTIVE_PROVISION_URL` at that route to use Worker-side backend selection. Set `CRABBOX_INTERACTIVE_PROVISION_TOKEN` for backend-enabled deployments; the route fails closed without it when a backend is configured. The route delegates to `CRABBOX_RUNTIME_PROVISION_URL` when set, creates a Cloudflare Container sandbox for `container` sessions through `CRABBOX_CLOUDFLARE_RUNNER_URL` when configured, or creates a ClawFleet OpenClaw instance for `crabbox` sessions through `CRABBOX_CLAWFLEET_URL`; without a matching backend it returns `pending_adapter` with a clear setup message.
 
 Cloudflare runner configuration:
 
-- `CRABYARD_CLOUDFLARE_RUNNER_URL`: Crabbox Cloudflare container runner base URL.
-- `CRABYARD_CLOUDFLARE_RUNNER_TOKEN`: runner bearer token.
-- `CRABYARD_CLOUDFLARE_RUNNER_INSTANCE_TYPE`: `lite`, `basic`, `standard-1`, `standard-2`, `standard-3`, or `standard-4`; default `standard-4`.
-- `CRABYARD_CLOUDFLARE_RUNNER_WORKDIR`: base workspace path; default `/workspace/crabyard`.
-- `CRABYARD_CLOUDFLARE_RUNNER_TTL_SECONDS`: default `14400`.
-- `CRABYARD_CLOUDFLARE_RUNNER_IDLE_SECONDS`: default `1800`.
-- `CRABYARD_PTY_BRIDGE_URL`: optional explicit PTY bridge WebSocket URL/template. Templates support `{id}`, `{leaseId}`, `{repo}`, `{branch}`, and `{runtime}`.
-- `CRABYARD_PTY_BRIDGE_TOKEN`: optional bearer token sent only from Crabyard to the bridge.
+- `CRABBOX_CLOUDFLARE_RUNNER_URL`: Crabbox Cloudflare container runner base URL.
+- `CRABBOX_CLOUDFLARE_RUNNER_TOKEN`: runner bearer token.
+- `CRABBOX_CLOUDFLARE_RUNNER_INSTANCE_TYPE`: `lite`, `basic`, `standard-1`, `standard-2`, `standard-3`, or `standard-4`; default `standard-4`.
+- `CRABBOX_CLOUDFLARE_RUNNER_WORKDIR`: base workspace path; default `/workspace/crabbox`.
+- `CRABBOX_CLOUDFLARE_RUNNER_TTL_SECONDS`: default `14400`.
+- `CRABBOX_CLOUDFLARE_RUNNER_IDLE_SECONDS`: default `1800`.
+- `CRABBOX_PTY_BRIDGE_URL`: optional explicit PTY bridge WebSocket URL/template. Templates support `{id}`, `{leaseId}`, `{repo}`, `{branch}`, and `{runtime}`.
+- `CRABBOX_PTY_BRIDGE_TOKEN`: optional bearer token sent only from Crabfleet to the bridge.
 
 Runner PTY contract:
 
-- Crabyard accepts the browser WebSocket on `/api/terminal/ws` and multiplexes one or more subscribed sessions.
-- Crabyard connects upstream to the configured bridge with `Upgrade: websocket`.
-- Browser-to-Crabyard messages use binary terminal frames for subscribe, input, resize, and stop.
+- Crabfleet accepts the browser WebSocket on `/api/terminal/ws` and multiplexes one or more subscribed sessions.
+- Crabfleet connects upstream to the configured bridge with `Upgrade: websocket`.
+- Browser-to-Crabfleet messages use binary terminal frames for subscribe, input, resize, and stop.
 - Runner-to-browser output is wrapped in terminal output frames with session IDs.
-- The bridge receives `x-crabyard-session`, `x-crabyard-repo`, and `x-crabyard-runtime` headers plus session query parameters.
+- The bridge receives `x-crabbox-session`, `x-crabbox-repo`, and `x-crabbox-runtime` headers plus session query parameters.
 
 Session sharing:
 

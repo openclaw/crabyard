@@ -8,7 +8,7 @@ const run = promisify(execFile);
 const appBuildRoot = new URL("../dist/app-bundle/", import.meta.url);
 const appPath = new URL("../dist/app-bundle/app.html", import.meta.url);
 const specPath = new URL("../docs/spec.md", import.meta.url);
-const logoPath = new URL("../src/assets/crabyard-logo.png", import.meta.url);
+const logoPath = new URL("../src/assets/crabbox-logo.png", import.meta.url);
 const ghosttyWebPath = new URL("../node_modules/ghostty-web/dist/ghostty-web.js", import.meta.url);
 const ghosttyExternalPath = new URL(
   "../node_modules/ghostty-web/dist/__vite-browser-external-2447137e.js",
@@ -44,7 +44,7 @@ const logoDataUrl = `data:image/png;base64,${logoBytes.toString("base64")}`;
 const logoBase64 = logoBytes.toString("base64");
 const lucideIconScript = buildLucideIconScript(JSON.parse(lucideIconJson));
 const appHtml = (await inlineViteAssets(appHtmlSource))
-  .replaceAll("__CRABYARD_LOGO__", logoDataUrl)
+  .replaceAll("__CRABBOX_LOGO__", logoDataUrl)
   .replace("__LUCIDE_ICONS__", lucideIconScript);
 const specMarkdown = stripFrontmatter(rawSpecMarkdown);
 const specHtml = renderSpecPage(specMarkdown);
@@ -65,7 +65,7 @@ if (process.argv.includes("--static")) {
   await writeFile(new URL("../dist/index.html", import.meta.url), redirectHtml("/"));
   await writeFile(new URL("../dist/app/index.html", import.meta.url), redirectHtml("/app/"));
   await writeFile(new URL("../dist/docs/spec.md", import.meta.url), specMarkdown);
-  await writeFile(new URL("../dist/crabyard-logo.png", import.meta.url), logoBytes);
+  await writeFile(new URL("../dist/crabbox-logo.png", import.meta.url), logoBytes);
   await writeFile(new URL("../dist/healthz", import.meta.url), "ok\n");
 }
 
@@ -139,7 +139,7 @@ function renderSpecPage(markdown) {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Crabfleet Spec</title>
-  <link rel="icon" type="image/png" href="/crabyard-logo.png">
+  <link rel="icon" type="image/png" href="/crabbox-logo.png">
   <script>${preThemeScript()}</script>
   <style>${css()}</style>
 </head>
@@ -160,7 +160,7 @@ function renderSpecPage(markdown) {
       <nav>
         <section><h2>Start</h2><a class="nav-link" href="https://docs.crabfleet.ai/">Overview</a><a class="nav-link" href="https://docs.crabfleet.ai/quickstart/">Quickstart</a><a class="nav-link" href="https://docs.crabfleet.ai/architecture/">Architecture</a></section>
         <section><h2>Features</h2><a class="nav-link" href="https://docs.crabfleet.ai/cards/">Cards</a><a class="nav-link" href="https://docs.crabfleet.ai/runs/">Runs</a><a class="nav-link" href="https://docs.crabfleet.ai/admin/">Admin</a></section>
-        <section><h2>Reference</h2><a class="nav-link" href="/docs/spec.md">Markdown</a><a class="nav-link active" href="/docs/spec">Spec</a><a class="nav-link" href="https://github.com/openclaw/crabyard">GitHub</a><a class="nav-link" href="/app/">App</a></section>
+        <section><h2>Reference</h2><a class="nav-link" href="/docs/spec.md">Markdown</a><a class="nav-link active" href="/docs/spec">Spec</a><a class="nav-link" href="https://github.com/openclaw/crabfleet">GitHub</a><a class="nav-link" href="/app/">App</a></section>
       </nav>
     </aside>
     <main>

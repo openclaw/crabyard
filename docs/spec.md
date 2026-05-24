@@ -13,7 +13,7 @@ Crabfleet is a Cloudflare-native control plane for running Codex crabboxes in cl
 ## Decisions
 
 - Product name: Crabfleet.
-- Domains: `crabfleet.ai` for app/docs/OAuth, `ssh.crabfleet.ai` for SSH, and `crabfleet.sh` for installer/bootstrap. `crabyard.ai` is legacy redirect.
+- Domains: `crabfleet.ai` for app/docs/OAuth, `ssh.crabfleet.ai` for SSH, and `crabfleet.sh` for installer/bootstrap.
 - Primary object: card.
 - UI direction: Linear-like, minimal, dense, subtle crustacean branding.
 - Access: OpenClaw GitHub org plus admin-managed allowlists for users/teams and repos.
@@ -22,11 +22,11 @@ Crabfleet is a Cloudflare-native control plane for running Codex crabboxes in cl
 - Autonomous mode: Codex app-server where structured turns/events are better than terminal scraping.
 - Logs: 30-day retention by default.
 - Secrets: per OpenClaw org, never stored in D1/R2/log bodies.
-- Merge: Crabyard may merge directly; ClawSweeper remains available and preferred for review/fix/automerge loops.
+- Merge: Crabfleet may merge directly; ClawSweeper remains available and preferred for review/fix/automerge loops.
 - Runtime cap: configurable, default 20 concurrent Codex runs per org.
-- GitHub comments: Crabyard does not post progress comments by default.
+- GitHub comments: Crabfleet does not post progress comments by default.
 - VNC: available only for Crabbox-backed leases.
-- Repo-owned workflow file: optional `CRABYARD.md`.
+- Repo-owned workflow file: optional `CRABBOX.md`.
 
 ## Goals
 
@@ -51,7 +51,7 @@ Implemented now:
 - Runtime adapter descriptor for Container and Crabbox policy.
 - Ghostty WASM fullscreen session grid with D1 event replay, live multiplex PTY attach, and text fallback.
 - Focused Codex session URLs with public read-only share links and owner-approved control requests.
-- `CRABYARD.md` fetch/parse/evaluate admin surface.
+- `CRABBOX.md` fetch/parse/evaluate admin surface.
 - Card diff metadata and compact patch preview.
 - Worker docs route at `/docs/` plus GitHub Pages docs.
 - Cloudflare container sandbox provisioning through the Crabbox runner.
@@ -231,10 +231,10 @@ Cloudflare Container expectations:
 
 Crabbox expectations:
 
-- Crabyard requests a lease from Crabbox.
+- Crabfleet requests a lease from Crabbox.
 - Crabbox owns provider credentials, SSH, VNC/noVNC, lease lifecycle, and cleanup.
-- Crabyard records the Crabbox lease ID and uses Crabbox attach/VNC affordances.
-- Crabyard does not duplicate Crabbox provider logic.
+- Crabfleet records the Crabbox lease ID and uses Crabbox attach/VNC affordances.
+- Crabfleet does not duplicate Crabbox provider logic.
 
 ## Attach Semantics
 
@@ -262,7 +262,7 @@ Expected flow:
 
 - Card/run detail shows VNC button when lease supports desktop.
 - Browser uses Crabbox noVNC/bridge path.
-- Crabyard records VNC attach events but does not proxy pixels unless needed.
+- Crabfleet records VNC attach events but does not proxy pixels unless needed.
 
 ## Auth
 
@@ -338,11 +338,11 @@ Secret delivery:
 
 ## Merge Authority
 
-Crabyard can merge directly when policy allows.
+Crabfleet can merge directly when policy allows.
 
 Merge paths:
 
-- Direct Crabyard merge
+- Direct Crabfleet merge
 - ClawSweeper handoff
 - Manual human merge
 
@@ -372,9 +372,9 @@ ClawSweeper handoff:
 
 - Preferred for `fix_until_green_and_merge`.
 - Preferred when PR needs review/fix loop.
-- Crabyard sends intent; ClawSweeper owns deterministic GitHub mutation sequence.
+- Crabfleet sends intent; ClawSweeper owns deterministic GitHub mutation sequence.
 
-Crabyard direct merge should stay conservative. If any guardrail is unknown, block direct merge and offer ClawSweeper handoff or human review.
+Crabfleet direct merge should stay conservative. If any guardrail is unknown, block direct merge and offer ClawSweeper handoff or human review.
 
 ## Logs And Retention
 
@@ -473,9 +473,9 @@ Heartbeat sources:
 
 ## Workflow File
 
-Crabyard may support repo-owned workflow config.
+Crabfleet may support repo-owned workflow config.
 
-Recommended name: `CRABYARD.md`.
+Recommended name: `CRABBOX.md`.
 
 Purpose:
 
@@ -510,7 +510,7 @@ codex:
   reasoning_effort: high
 ---
 
-You are working in this repository for Crabyard.
+You are working in this repository for Crabfleet.
 Read AGENTS.md first.
 Keep changes scoped.
 Open a PR unless the card explicitly allows direct merge.
@@ -519,11 +519,11 @@ Open a PR unless the card explicitly allows direct merge.
 Resolution order:
 
 1. Card explicit settings
-2. Repo `CRABYARD.md`
+2. Repo `CRABBOX.md`
 3. Org defaults
 4. Product defaults
 
-Invalid `CRABYARD.md`:
+Invalid `CRABBOX.md`:
 
 - Do not block dashboard access.
 - Show validation error in repo settings.
@@ -578,11 +578,11 @@ apps/
   control/          Worker API, Durable Objects, Queues
 packages/
   schema/           Valibot schemas and inferred types
-  ui/               Crabyard UI components
+  ui/               Crabfleet UI components
   github/           GitHub adapters, issue/PR search
   crabbox/          Crabbox client
   codex-app-server/ JSON-RPC client and generated protocol types
-  workflow/         CRABYARD.md parser/evaluator
+  workflow/         CRABBOX.md parser/evaluator
 ```
 
 Rule:
@@ -684,7 +684,7 @@ PR:
 1. User picks PR.
 2. Runtime checks out PR head.
 3. Codex reviews/fixes/rebases according to card policy.
-4. Crabyard direct merge or ClawSweeper handoff handles merge.
+4. Crabfleet direct merge or ClawSweeper handoff handles merge.
 
 Manual takeover:
 
@@ -723,7 +723,7 @@ Picker behavior:
 
 Target domain:
 
-- `https://crabyard.ai`
+- `https://crabfleet.ai`
 
 Current DNS expectation:
 
@@ -737,8 +737,8 @@ Cloudflare account:
 
 Worker names:
 
-- `crabyard-web`
-- `crabyard-control`
+- `crabfleet-web`
+- `crabfleet-control`
 
 Initial deployable artifact:
 
@@ -748,8 +748,8 @@ Initial deployable artifact:
 Required deploy checks:
 
 - `npx wrangler whoami` shows expected Cloudflare account.
-- `crabyard.ai` is routed to deployed Worker.
-- `curl -I https://crabyard.ai/healthz` returns 200.
+- `crabfleet.ai` is routed to deployed Worker.
+- `curl -I https://crabfleet.ai/healthz` returns 200.
 - `/docs/spec` renders this spec.
 
 ## Security
@@ -851,7 +851,7 @@ Per-run timeline:
 
 - Exact GitHub App permission set.
 - Direct merge default per repo.
-- Whether `CRABYARD.md` ships in MVP or phase 2.
+- Whether `CRABBOX.md` ships in MVP or phase 2.
 - Whether app-server PTY is enough for Ghostty or a small sidecar PTY bridge is needed.
 - Cloudflare Container image shape and Codex auth injection path.
 - R2 lifecycle implementation details for 30-day retention.

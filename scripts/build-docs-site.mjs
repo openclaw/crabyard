@@ -7,7 +7,7 @@ import { css, faviconSvg, js, preThemeScript, themeToggleHtml } from "./docs-sit
 const root = process.cwd();
 const docsDir = path.join(root, "docs");
 const outDir = path.join(root, "dist", "docs-site");
-const repoBase = "https://github.com/openclaw/crabyard";
+const repoBase = "https://github.com/openclaw/crabfleet";
 const repoEditBase = `${repoBase}/edit/main/docs`;
 const cname = readCname();
 const siteBase = cname ? `https://${cname}` : "";
@@ -78,7 +78,7 @@ for (const page of pages) {
 
 fs.writeFileSync(path.join(outDir, "favicon.svg"), faviconSvg(), "utf8");
 
-copyStaticAsset("crabyard-logo.png");
+copyStaticAsset("crabbox-logo.png");
 fs.writeFileSync(path.join(outDir, ".nojekyll"), "", "utf8");
 if (cname) fs.writeFileSync(path.join(outDir, "CNAME"), cname, "utf8");
 validateLinks(outDir);
@@ -507,7 +507,7 @@ function layout({ page, html, toc, prev, next, sectionName }) {
     page.frontmatter.description ||
     (home ? productDescription : `${page.title} — ${productName} CLI documentation.`);
   const canonicalUrl = pageCanonicalUrl(page);
-  const socialImage = siteBase ? `${siteBase}/crabyard-logo.png` : `${rootPrefix}crabyard-logo.png`;
+  const socialImage = siteBase ? `${siteBase}/crabbox-logo.png` : `${rootPrefix}crabbox-logo.png`;
   const socialMeta = [
     ["link", "rel", "canonical", "href", canonicalUrl],
     ["meta", "property", "og:type", "content", "website"],

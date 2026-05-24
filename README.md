@@ -2,7 +2,7 @@
 
 **Mission control for Agent runs.**
 
-Crabfleet gives OpenClaw maintainers a fleet dashboard where every Codex crabbox is visible by operator, repo, terminal, and WebVNC state. Crabyard is the legacy project name and remains in repo paths and compatibility env vars while the product moves to Crabfleet.
+Crabfleet gives OpenClaw maintainers a fleet dashboard where every Codex crabbox is visible by operator, repo, terminal, and WebVNC state.
 
 ## What It Does
 
@@ -15,7 +15,7 @@ Crabfleet gives OpenClaw maintainers a fleet dashboard where every Codex crabbox
 - **Multi-runtime policy.** Auto-select between the Container and Crabbox adapter surfaces based on card overrides, repo workflow defaults, and task requirements.
 - **Allowlist controls.** Restrict access to OpenClaw org members and specific repos through admin-managed allowlists.
 - **Session logs.** D1-backed card/run event history with a 30-day product retention setting.
-- **Repo workflow config.** Owners can evaluate `CRABYARD.md` per repo and use it for runtime and merge defaults.
+- **Repo workflow config.** Owners can evaluate `CRABBOX.md` per repo and use it for runtime and merge defaults.
 
 ## Architecture
 
@@ -38,7 +38,6 @@ Get the bootstrap token from your deployment secrets and use it to log in:
 ```bash
 # Visit https://crabfleet.ai/app/
 # Use bootstrap token for initial admin setup
-# Legacy crabyard.ai routes should redirect during migration.
 ```
 
 ### 2. Configure Access
@@ -67,7 +66,7 @@ Add users/teams to the allowlist and enable repos:
 
 - Click "New crabbox" to request a standalone Codex CLI workspace
 - Default runtime is Crabbox so VNC can be attached when the provision adapter returns a URL
-- Without `CRABYARD_INTERACTIVE_PROVISION_URL`, sessions are stored as `pending_adapter` and still visible in the grid
+- Without `CRABBOX_INTERACTIVE_PROVISION_URL`, sessions are stored as `pending_adapter` and still visible in the grid
 - Install or build the Go CLI, then run `crabfleet new --repo openclaw/openclaw "fix the failing check"`
 
 ## Features
@@ -85,7 +84,7 @@ Add users/teams to the allowlist and enable repos:
 - **Merge policy:** repo default, `open_pr`, `merge_when_green`, `fix_until_green_and_merge`
 - **Source types:** Prompt, Issue, PR
 
-Repo defaults can come from a `CRABYARD.md` file:
+Repo defaults can come from a `CRABBOX.md` file:
 
 ```yaml
 ---
@@ -102,7 +101,7 @@ merge:
 
 - User and team allowlists with role-based access
 - Repo allowlists
-- Manual `CRABYARD.md` evaluation with status/error visibility
+- Manual `CRABBOX.md` evaluation with status/error visibility
 - Concurrent run caps (default: 20)
 - Log retention (14, 30, 60 days)
 - Direct merge permissions (guarded, maintainers, disabled)
@@ -119,7 +118,7 @@ merge:
 ### Prerequisites
 
 - Cloudflare account
-- `crabfleet.ai` route in Cloudflare, with `crabyard.ai` as a legacy redirect
+- `crabfleet.ai` route in Cloudflare
 - GitHub OAuth app (optional but recommended)
 - Bootstrap token secret
 
@@ -136,7 +135,7 @@ Manual deploy is still available:
 pnpm build
 
 # Apply migrations
-wrangler d1 migrations apply crabyard-ai --remote
+wrangler d1 migrations apply DB --remote
 
 # Deploy to Cloudflare
 wrangler deploy
@@ -144,30 +143,33 @@ wrangler deploy
 
 ### Environment Variables
 
-Configure these in Cloudflare Workers dashboard. Existing `CRABYARD_*` names remain supported; new installs should prefer `CRABFLEET_*` where listed.
+Configure these in Cloudflare Workers dashboard. `CRABBOX_*` names are the runtime/crabbox adapter contract; `CRABFLEET_*` names are for the public CLI and SSH gateway.
 
-- `CRABYARD_BOOTSTRAP_TOKEN` – Admin bootstrap token (required)
+The Crabbox namespace cutover intentionally has no old-name compatibility. Existing browser sessions expire, linked SSH keys must be relinked with `ssh link@ssh.crabfleet.ai`, and in-flight interactive workspaces should be recreated.
+
+- `CRABBOX_BOOTSTRAP_TOKEN` – Admin bootstrap token (required)
 - `GITHUB_CLIENT_ID` – GitHub OAuth app client ID (optional)
 - `GITHUB_CLIENT_SECRET` – GitHub OAuth app secret (optional)
 - `GITHUB_ORG` – GitHub org for membership check (default: `openclaw`)
-- `GITHUB_TOKEN` – GitHub token for all enabled repo issue/PR previews and private repo `CRABYARD.md` refreshes (optional; public/default repo paths work without it)
-- `CRABYARD_TOKEN_ENCRYPTION_KEY` – Optional encryption key for per-session GitHub OAuth tokens; defaults to `GITHUB_CLIENT_SECRET`
-- `CRABYARD_INTERACTIVE_PROVISION_URL` – Optional adapter endpoint for standalone Codex CLI workspaces
-- `CRABYARD_INTERACTIVE_PROVISION_TOKEN` – Optional bearer token sent to the interactive provision endpoint; required when backend URLs below are configured
-- `CRABYARD_RUNTIME_PROVISION_URL` – Optional generic backend URL used by `/api/provision/interactive`
-- `CRABYARD_RUNTIME_PROVISION_TOKEN` – Optional bearer token sent to the generic runtime backend
-- `CRABYARD_CLOUDFLARE_RUNNER_URL` – Optional Crabbox Cloudflare container runner URL used by `/api/provision/interactive`
-- `CRABYARD_CLOUDFLARE_RUNNER_TOKEN` – Optional bearer token sent to the Cloudflare runner
-- `CRABYARD_CLOUDFLARE_RUNNER_INSTANCE_TYPE` – Optional runner instance type, default `standard-4`
-- `CRABYARD_CLOUDFLARE_RUNNER_WORKDIR` – Optional base workdir for provisioned sandboxes, default `/workspace/crabyard`
-- `CRABYARD_CLOUDFLARE_RUNNER_TTL_SECONDS` – Optional sandbox TTL, default `14400`
-- `CRABYARD_CLOUDFLARE_RUNNER_IDLE_SECONDS` – Optional idle timeout, default `1800`
-- `CRABYARD_PTY_BRIDGE_URL` – Optional WebSocket PTY bridge URL/template for live Ghostty attach; supports `{id}`, `{leaseId}`, `{repo}`, `{branch}`, and `{runtime}`
-- `CRABYARD_PTY_BRIDGE_TOKEN` – Optional bearer token sent from Crabfleet to the PTY bridge
-- `CRABYARD_CLAWFLEET_URL` – Optional ClawFleet dashboard/API URL used by `/api/provision/interactive` for `crabbox` sessions
-- `CRABYARD_CLAWFLEET_TOKEN` – Optional bearer token sent to ClawFleet
-- `CRABYARD_CLAWFLEET_PUBLIC_URL` – Optional public ClawFleet URL used when building attach/VNC links
-- `CRABFLEET_SSH_GATEWAY_TOKEN` / `CRABYARD_SSH_GATEWAY_TOKEN` – Shared bearer token for the Go SSH gateway internal API
+- `GITHUB_TOKEN` – GitHub token for all enabled repo issue/PR previews and private repo `CRABBOX.md` refreshes (optional; public/default repo paths work without it)
+- `CRABBOX_TOKEN_ENCRYPTION_KEY` – Optional encryption key for per-session GitHub OAuth tokens; defaults to `GITHUB_CLIENT_SECRET`
+- `CRABBOX_INTERACTIVE_PROVISION_URL` – Optional adapter endpoint for standalone Codex CLI workspaces
+- `CRABBOX_INTERACTIVE_PROVISION_TOKEN` – Optional bearer token sent to the interactive provision endpoint; required when backend URLs below are configured
+- `CRABBOX_RUNTIME_PROVISION_URL` – Optional generic backend URL used by `/api/provision/interactive`
+- `CRABBOX_RUNTIME_PROVISION_TOKEN` – Optional bearer token sent to the generic runtime backend
+- `CRABBOX_CLOUDFLARE_RUNNER_URL` – Optional Crabbox Cloudflare container runner URL used by `/api/provision/interactive`
+- `CRABBOX_CLOUDFLARE_RUNNER_TOKEN` – Optional bearer token sent to the Cloudflare runner
+- `CRABBOX_CLOUDFLARE_RUNNER_INSTANCE_TYPE` – Optional runner instance type, default `standard-4`
+- `CRABBOX_CLOUDFLARE_RUNNER_WORKDIR` – Optional base workdir for provisioned sandboxes, default `/workspace/crabbox`
+- `CRABBOX_CLOUDFLARE_RUNNER_TTL_SECONDS` – Optional sandbox TTL, default `14400`
+- `CRABBOX_CLOUDFLARE_RUNNER_IDLE_SECONDS` – Optional idle timeout, default `1800`
+- `CRABBOX_PTY_BRIDGE_URL` – Optional WebSocket PTY bridge URL/template for live Ghostty attach; supports `{id}`, `{leaseId}`, `{repo}`, `{branch}`, and `{runtime}`
+- `CRABBOX_PTY_BRIDGE_TOKEN` – Optional bearer token sent from Crabfleet to the PTY bridge
+- `CRABBOX_CLAWFLEET_URL` – Optional ClawFleet dashboard/API URL used by `/api/provision/interactive` for `crabbox` sessions
+- `CRABBOX_CLAWFLEET_TOKEN` – Optional bearer token sent to ClawFleet
+- `CRABBOX_CLAWFLEET_PUBLIC_URL` – Optional public ClawFleet URL used when building attach/VNC links
+- `CRABBOX_OPENCLAW_TOKEN` – Internal bearer token for OpenClaw/Discord service crabbox creation
+- `CRABFLEET_SSH_GATEWAY_TOKEN` / `CRABBOX_SSH_GATEWAY_TOKEN` – Shared bearer token for the Go SSH gateway internal API
 - `OPENAI_API_KEY` – Required for built-in Cloudflare Sandbox Codex CLI sessions; passed only into the sandbox session environment
 
 ### Verify Deployment
@@ -217,12 +219,12 @@ pnpm format
 wrangler dev
 
 # Apply migrations locally
-wrangler d1 migrations apply crabyard-ai --local
+wrangler d1 migrations apply DB --local
 ```
 
 ### SSH Gateway
 
-The Worker exposes an internal SSH onboarding API guarded by `CRABFLEET_SSH_GATEWAY_TOKEN` or the legacy `CRABYARD_SSH_GATEWAY_TOKEN`.
+The Worker exposes an internal SSH onboarding API guarded by `CRABFLEET_SSH_GATEWAY_TOKEN` or `CRABBOX_SSH_GATEWAY_TOKEN`.
 Run the Go gateway next to a host that can accept raw SSH:
 
 ```bash
@@ -230,7 +232,7 @@ CRABFLEET_API_URL=https://crabfleet.ai \
 CRABFLEET_SSH_GATEWAY_TOKEN=... \
 CRABFLEET_SSH_HOST_KEY=/var/lib/crabfleet/ssh_host_ed25519_key \
 CRABFLEET_SSH_ADDR=:2222 \
-go run ./cmd/crabyard-ssh-gateway
+go run ./cmd/crabbox-ssh-gateway
 ```
 
 Unknown public keys get a short GitHub OAuth link through `ssh link@host`. Linked keys can
@@ -246,11 +248,14 @@ Use `ssh link@ssh.crabfleet.ai` once to connect a GitHub-backed SSH key, then ru
 The `crabfleet` CLI is written in Go with Kong and delegates to SSH by default. API mode is available for service contexts with `CRABFLEET_SSH_GATEWAY_TOKEN` and `CRABFLEET_SSH_FINGERPRINT`.
 
 ```bash
+brew tap openclaw/tap
+brew install crabfleet
+
 go run ./cmd/crabfleet login
 go run ./cmd/crabfleet list
 go run ./cmd/crabfleet new --repo openclaw/openclaw "start on the release checklist"
 go run ./cmd/crabfleet attach <session-id>
-go run ./cmd/crabfleet vnc <session-id>
+go run ./cmd/crabfleet vnc --open <session-id>
 ```
 
 ### CLI Release
@@ -263,6 +268,19 @@ git push origin v0.1.0
 ```
 
 The release workflow builds macOS, Linux, and Windows archives, then updates `openclaw/homebrew-tap` through `update-formula.yml`.
+
+### OpenClaw / Discord Crabbox Hook
+
+OpenClaw can create repo-ready crabboxes for Discord-triggered work through the internal service endpoint:
+
+```bash
+curl -fsS https://crabfleet.ai/api/openclaw/crabboxes \
+  -H "authorization: Bearer $CRABBOX_OPENCLAW_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{"owner":"@steipete","repo":"openclaw/openclaw","prompt":"prep the meeting follow-up"}'
+```
+
+The created crabbox appears in the fleet grid under the requested owner. Provisioning still flows through the configured Crabbox/ClawFleet adapter, so VNC and terminal URLs come from the runtime backend.
 
 ### Project Structure
 

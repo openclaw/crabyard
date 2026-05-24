@@ -16,7 +16,7 @@ Cards are the autonomous work unit in Crabfleet. Interactive Crabboxes are the d
   id: "CY-101",
   title: "Add health check endpoint",
   prompt: "Add a new /healthz endpoint...",
-  repo: "openclaw/crabyard",
+  repo: "openclaw/crabbox",
   source: "Prompt",
   runtime: "auto",
   policy: "open_pr",
@@ -114,7 +114,7 @@ Current Worker stores and displays policy. Actual merge execution is a planned i
 
 ## Repo Defaults
 
-Owners can evaluate `CRABYARD.md` from Admin. Valid workflow config can supply runtime and merge defaults for new cards:
+Owners can evaluate `CRABBOX.md` from Admin. Valid workflow config can supply runtime and merge defaults for new cards:
 
 ```yaml
 ---
