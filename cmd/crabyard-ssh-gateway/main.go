@@ -54,6 +54,8 @@ type interactiveSession struct {
 	Branch    string `json:"branch"`
 	Runtime   string `json:"runtime"`
 	Status    string `json:"status"`
+	AttachURL string `json:"attachUrl"`
+	VNCURL    string `json:"vncUrl"`
 	LastEvent string `json:"lastEvent"`
 }
 
@@ -96,15 +98,15 @@ func main() {
 	var token string
 	var hostKeyPath string
 	var ephemeralHostKey bool
-	flag.StringVar(&addr, "addr", env("CRABYARD_SSH_ADDR", ":2222"), "SSH listen address")
-	flag.StringVar(&apiURL, "api", env("CRABYARD_API_URL", "http://127.0.0.1:8787"), "Crabyard Worker URL")
-	flag.StringVar(&token, "token", os.Getenv("CRABYARD_SSH_GATEWAY_TOKEN"), "Worker SSH gateway token")
-	flag.StringVar(&hostKeyPath, "host-key", os.Getenv("CRABYARD_SSH_HOST_KEY"), "SSH host private key path")
+	flag.StringVar(&addr, "addr", env(":2222", "CRABFLEET_SSH_ADDR", "CRABYARD_SSH_ADDR"), "SSH listen address")
+	flag.StringVar(&apiURL, "api", env("http://127.0.0.1:8787", "CRABFLEET_API_URL", "CRABYARD_API_URL"), "Crabfleet Worker URL")
+	flag.StringVar(&token, "token", env("", "CRABFLEET_SSH_GATEWAY_TOKEN", "CRABYARD_SSH_GATEWAY_TOKEN"), "Worker SSH gateway token")
+	flag.StringVar(&hostKeyPath, "host-key", env("", "CRABFLEET_SSH_HOST_KEY", "CRABYARD_SSH_HOST_KEY"), "SSH host private key path")
 	flag.BoolVar(&ephemeralHostKey, "ephemeral-host-key", false, "use a generated host key for local development only")
 	flag.Parse()
 
 	if token == "" {
-		log.Fatal("CRABYARD_SSH_GATEWAY_TOKEN is required")
+		log.Fatal("CRABFLEET_SSH_GATEWAY_TOKEN is required")
 	}
 
 	signer, err := loadHostKey(hostKeyPath, ephemeralHostKey)
@@ -119,7 +121,7 @@ func main() {
 	}
 
 	config := &ssh.ServerConfig{
-		ServerVersion: "SSH-2.0-Crabyard",
+		ServerVersion: "SSH-2.0-Crabfleet",
 		PublicKeyCallback: func(meta ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
 			linkMode := meta.User() == "link" || meta.User() == "onboard"
 			auth, err := client.auth(
@@ -153,7 +155,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("crabyard ssh gateway listening on %s -> %s", addr, apiURL)
+	log.Printf("crabfleet ssh gateway listening on %s -> %s", addr, apiURL)
 
 	for {
 		conn, err := listener.Accept()
@@ -255,11 +257,15 @@ func runCommand(ctx context.Context, out io.ReadWriter, perms *ssh.Permissions, 
 		},
 	}
 	if !auth.authorized {
-		fmt.Fprintf(out, "Crabyard SSH key not linked.\n\nOpen this URL to connect it:\n%s\n\nThen run ssh again.\n", auth.linkURL)
+		fmt.Fprintf(out, "Crabfleet SSH key not linked.\n\nOpen this URL to connect it:\n%s\n\nThen run ssh again.\n", auth.linkURL)
 		return 1
 	}
 
-	args := strings.Fields(command)
+	args, err := splitCommand(command)
+	if err != nil {
+		fmt.Fprintf(out, "error: %v\n", err)
+		return 2
+	}
 	if len(args) == 0 {
 		printHelp(out, auth.user)
 		return 0
@@ -296,7 +302,7 @@ func runCommand(ctx context.Context, out io.ReadWriter, perms *ssh.Permissions, 
 			fmt.Fprintf(out, "error: %v\n", err)
 			return 1
 		}
-		fmt.Fprintf(out, "session: %s\nrepo: %s\nstatus: %s\nattach: ssh crabyard attach %s\n", session.ID, session.Repo, session.Status, session.ID)
+		fmt.Fprintf(out, "session: %s\nrepo: %s\nstatus: %s\nattach: ssh crabfleet attach %s\n", session.ID, session.Repo, session.Status, session.ID)
 		return client.attach(ctx, auth.fingerprint, session.ID, out, pty)
 	case "attach":
 		if len(args) < 2 {
@@ -304,6 +310,29 @@ func runCommand(ctx context.Context, out io.ReadWriter, perms *ssh.Permissions, 
 			return 2
 		}
 		return client.attach(ctx, auth.fingerprint, args[1], out, pty)
+	case "vnc":
+		if len(args) < 2 {
+			fmt.Fprintln(out, "usage: vnc SESSION_ID")
+			return 2
+		}
+		state, err := client.state(ctx, auth.fingerprint)
+		if err != nil {
+			fmt.Fprintf(out, "error: %v\n", err)
+			return 1
+		}
+		for _, session := range state.InteractiveSessions {
+			if session.ID != args[1] {
+				continue
+			}
+			if session.VNCURL == "" {
+				fmt.Fprintf(out, "session %s has no WebVNC URL yet\n", terminalSafe(args[1]))
+				return 1
+			}
+			fmt.Fprintln(out, terminalSafe(session.VNCURL))
+			return 0
+		}
+		fmt.Fprintf(out, "session %s not found\n", terminalSafe(args[1]))
+		return 1
 	case "open":
 		fmt.Fprintf(out, "%s/app/\n", client.baseURL)
 		return 0
@@ -315,12 +344,13 @@ func runCommand(ctx context.Context, out io.ReadWriter, perms *ssh.Permissions, 
 }
 
 func printHelp(out io.Writer, user user) {
-	fmt.Fprintf(out, "Crabyard SSH\nlogin: %s\nrole: %s\n\n", terminalSafe(displayUser(user)), terminalSafe(user.Role))
+	fmt.Fprintf(out, "Crabfleet SSH\nlogin: %s\nrole: %s\n\n", terminalSafe(displayUser(user)), terminalSafe(user.Role))
 	fmt.Fprintln(out, "commands:")
 	fmt.Fprintln(out, "  whoami")
 	fmt.Fprintln(out, "  list")
-	fmt.Fprintln(out, "  new [--repo owner/repo] [--branch main] [--runtime container|crabbox] [--command codex] [prompt]")
+	fmt.Fprintln(out, "  new [--repo owner/repo] [--branch main] [--runtime crabbox|container] [--command codex] [prompt]")
 	fmt.Fprintln(out, "  attach SESSION_ID")
+	fmt.Fprintln(out, "  vnc SESSION_ID")
 	fmt.Fprintln(out, "  open")
 }
 
@@ -390,13 +420,78 @@ func terminalSafe(value string) string {
 	}, value)
 }
 
+func splitCommand(command string) ([]string, error) {
+	var args []string
+	var current strings.Builder
+	var quote rune
+	escaped := false
+	hasValue := false
+	for _, r := range command {
+		if quote == '\'' {
+			if r == quote {
+				quote = 0
+				hasValue = true
+				continue
+			}
+			current.WriteRune(r)
+			hasValue = true
+			continue
+		}
+		if escaped {
+			current.WriteRune(r)
+			hasValue = true
+			escaped = false
+			continue
+		}
+		if r == '\\' {
+			escaped = true
+			continue
+		}
+		if quote == '"' {
+			if r == quote {
+				quote = 0
+				hasValue = true
+				continue
+			}
+			current.WriteRune(r)
+			hasValue = true
+			continue
+		}
+		if r == '\'' || r == '"' {
+			quote = r
+			hasValue = true
+			continue
+		}
+		if r == ' ' || r == '\t' || r == '\n' || r == '\r' {
+			if hasValue {
+				args = append(args, current.String())
+				current.Reset()
+				hasValue = false
+			}
+			continue
+		}
+		current.WriteRune(r)
+		hasValue = true
+	}
+	if escaped {
+		current.WriteRune('\\')
+	}
+	if quote != 0 {
+		return nil, errors.New("unterminated quote")
+	}
+	if hasValue {
+		args = append(args, current.String())
+	}
+	return args, nil
+}
+
 func parseCreate(args []string, out io.Writer, client *apiClient, fingerprint string) createSessionRequest {
 	fs := flag.NewFlagSet("new", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	var req createSessionRequest
 	fs.StringVar(&req.Repo, "repo", "", "repo")
 	fs.StringVar(&req.Branch, "branch", "main", "branch")
-	fs.StringVar(&req.Runtime, "runtime", "", "runtime")
+	fs.StringVar(&req.Runtime, "runtime", "crabbox", "runtime")
 	fs.StringVar(&req.Command, "command", "", "command")
 	_ = fs.Parse(args)
 	req.Prompt = strings.Join(fs.Args(), " ")
@@ -461,6 +556,7 @@ func (c *apiClient) attach(ctx context.Context, fingerprint string, id string, t
 
 	headers := http.Header{}
 	headers.Set("Authorization", "Bearer "+c.token)
+	headers.Set("X-Crabfleet-SSH-Fingerprint", fingerprint)
 	headers.Set("X-Crabyard-SSH-Fingerprint", fingerprint)
 	ws, _, err := websocket.Dial(ctx, u.String(), &websocket.DialOptions{HTTPHeader: headers})
 	if err != nil {
@@ -504,6 +600,7 @@ func (c *apiClient) do(ctx context.Context, method string, path string, fingerpr
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Accept", "application/json")
 	if fingerprint != "" {
+		req.Header.Set("X-Crabfleet-SSH-Fingerprint", fingerprint)
 		req.Header.Set("X-Crabyard-SSH-Fingerprint", fingerprint)
 	}
 	if body != nil {
@@ -516,7 +613,7 @@ func (c *apiClient) do(ctx context.Context, method string, path string, fingerpr
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("crabyard api %s: %s", resp.Status, strings.TrimSpace(string(data)))
+		return fmt.Errorf("crabfleet api %s: %s", resp.Status, strings.TrimSpace(string(data)))
 	}
 	if out == nil {
 		return nil
@@ -560,9 +657,11 @@ func loadHostKey(path string, allowEphemeral bool) (ssh.Signer, error) {
 	return ssh.NewSignerFromKey(privateKey)
 }
 
-func env(key string, fallback string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
+func env(fallback string, keys ...string) string {
+	for _, key := range keys {
+		if value := os.Getenv(key); value != "" {
+			return value
+		}
 	}
 	return fallback
 }

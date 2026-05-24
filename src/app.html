@@ -3,26 +3,26 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Crabyard.ai</title>
+    <title>Crabfleet</title>
     <meta
       name="description"
-      content="OpenClaw Codex runs, repo-gated cards, attachable sessions, and merge policy in one operations board."
+      content="OpenClaw Codex crabboxes, grouped fleet visibility, WebVNC, SSH, and repo-ready workspaces."
     />
-    <meta property="og:title" content="Crabyard.ai" />
+    <meta property="og:title" content="Crabfleet" />
     <meta
       property="og:description"
-      content="OpenClaw Codex runs, repo-gated cards, attachable sessions, and merge policy in one operations board."
+      content="OpenClaw Codex crabboxes, grouped fleet visibility, WebVNC, SSH, and repo-ready workspaces."
     />
     <meta property="og:type" content="website" />
-    <meta property="og:url" content="https://crabyard.ai/" />
-    <meta property="og:image" content="https://crabyard.ai/crabyard-logo.png" />
+    <meta property="og:url" content="https://crabfleet.ai/" />
+    <meta property="og:image" content="https://crabfleet.ai/crabyard-logo.png" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Crabyard.ai" />
+    <meta name="twitter:title" content="Crabfleet" />
     <meta
       name="twitter:description"
-      content="OpenClaw Codex runs, repo-gated cards, attachable sessions, and merge policy in one operations board."
+      content="OpenClaw Codex crabboxes, grouped fleet visibility, WebVNC, SSH, and repo-ready workspaces."
     />
-    <meta name="twitter:image" content="https://crabyard.ai/crabyard-logo.png" />
+    <meta name="twitter:image" content="https://crabfleet.ai/crabyard-logo.png" />
     <link rel="icon" type="image/png" href="/crabyard-logo.png" />
     <script>
       try {
@@ -426,7 +426,7 @@
         font-size: 13px;
       }
       .command-row .terminal-command {
-        flex: 1 1 235px;
+        flex: 1 1 310px;
       }
       .terminal-command {
         display: inline-flex;
@@ -797,6 +797,75 @@
         display: flex;
         align-items: center;
         gap: 9px;
+      }
+      .fleet-owner {
+        display: grid;
+        gap: 10px;
+      }
+      .fleet-owner-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .fleet-owner-head strong {
+        color: var(--ink);
+        font-size: 14px;
+      }
+      .fleet-box-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(248px, 1fr));
+        gap: 10px;
+      }
+      .fleet-box {
+        display: grid;
+        gap: 10px;
+        min-height: 174px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--dashboard-surface);
+        padding: 14px;
+      }
+      .fleet-box-head {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 10px;
+        align-items: start;
+      }
+      .fleet-box-head strong {
+        min-width: 0;
+        overflow: hidden;
+        color: var(--ink);
+        font-size: 14px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .fleet-box-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .fleet-box-meta span {
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        color: var(--muted);
+        padding: 2px 7px;
+        font-size: 12px;
+      }
+      .fleet-box code {
+        min-width: 0;
+        overflow: hidden;
+        color: var(--ink);
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .fleet-box-actions {
+        display: flex;
+        gap: 8px;
+        align-items: end;
+        margin-top: auto;
       }
       .state-pill {
         min-width: 78px;
@@ -1822,12 +1891,14 @@
           grid-template-columns: 1fr;
         }
         .command-row,
-        .vm-badges {
+        .vm-badges,
+        .fleet-box-actions {
           flex-direction: column;
           align-items: stretch;
         }
         .setup-card .terminal-command,
-        .vm-badges button {
+        .vm-badges button,
+        .fleet-box-actions button {
           width: 100%;
         }
         .toolbar,
@@ -1876,7 +1947,7 @@
     </style>
   </head>
   <body>
-    <div id="crabyard-preact-root"></div>
+    <div id="crabfleet-preact-root"></div>
     <script type="module" src="/src/app/main.jsx"></script>
   </body>
 </html>

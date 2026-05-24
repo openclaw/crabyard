@@ -30,6 +30,9 @@ import {
 } from "./terminal.js";
 
 const logo = "__CRABYARD_LOGO__";
+const productName = "Crabfleet";
+const productDomain = "crabfleet.ai";
+const sshHost = "ssh.crabfleet.ai";
 const loginReturnKey = "crabyard-login-return";
 const skipAutoGithubLoginKey = "crabyard-skip-auto-github-login";
 const githubAutoLoginReadyKey = "crabyard-github-auto-login-ready";
@@ -840,10 +843,10 @@ function App() {
     updatePolicy,
   };
 
-  return <CrabyardApp {...props} />;
+  return <CrabfleetApp {...props} />;
 }
 
-function CrabyardApp(props) {
+function CrabfleetApp(props) {
   useEffect(() => {
     const onKeyDown = (event) => {
       if (event.key !== "Escape" || event.isComposing || isTerminalKeyTarget(event)) return;
@@ -904,9 +907,9 @@ function LoginScreen({ hidden, authMethods, message, onGithub, onToken, onDevIde
           <div class="mark">
             <img src={logo} alt="" />
           </div>
-          <h1>Crabyard.ai</h1>
+          <h1>{productName}</h1>
         </div>
-        <p>OpenClaw infrastructure, SSH-first.</p>
+        <p>OpenClaw crabboxes, SSH-first.</p>
         <div class="login-actions">
           <button
             class="primary github-login"
@@ -920,7 +923,7 @@ function LoginScreen({ hidden, authMethods, message, onGithub, onToken, onDevIde
           </button>
           <div class="command-row">
             <span>Or connect via</span>
-            <CopyCommand value="ssh link@ssh.crabyard.ai" />
+            <CopyCommand value={`ssh link@${sshHost}`} />
           </div>
           <label>
             Bootstrap token
@@ -1004,11 +1007,11 @@ function AppShell(props) {
   return (
     <div class="app">
       <aside class="rail" aria-label="Primary">
-        <div class="brand-lockup" title="Crabyard.ai">
+        <div class="brand-lockup" title={productDomain}>
           <div class="mark">
             <img src={logo} alt="" />
           </div>
-          <span>crabyard</span>
+          <span>crabfleet</span>
         </div>
         <div class="nav-actions">
           <button class="active" title="Board" aria-label="Board" onClick={props.closeAllDrawers}>
@@ -1046,8 +1049,8 @@ function AppShell(props) {
       <main class="shell">
         <section class="top">
           <div class="title">
-            <h1>Crabyard.ai</h1>
-            <p>Cloud Codex sessions, repo-gated cards, and SSH-native control for OpenClaw.</p>
+            <h1>{productName}</h1>
+            <p>Codex crabboxes grouped by operator, with SSH, WebVNC, and OpenClaw supervision.</p>
           </div>
           <button
             class="ghost user-chip"
@@ -1096,7 +1099,7 @@ function AppShell(props) {
             New card
           </button>
           <button disabled={!canMaintain(user)} onClick={() => props.openDrawer("interactive")}>
-            New session
+            New crabbox
           </button>
           <button disabled={!canOwn(user)} onClick={() => props.openDrawer("admin")}>
             Admin
@@ -1113,14 +1116,46 @@ function AppShell(props) {
   );
 }
 
+function sessionOwner(session) {
+  return session.owner || session.operator || "unassigned";
+}
+
+function sessionOwnerLabel(owner) {
+  return String(owner || "unassigned").replace(/^github:/, "@");
+}
+
+function groupedFleetSessions(sessions) {
+  const groups = new Map();
+  for (const session of sessions) {
+    const owner = sessionOwner(session);
+    if (!groups.has(owner)) groups.set(owner, []);
+    groups.get(owner).push(session);
+  }
+  return [...groups.entries()]
+    .map(([owner, items]) => [
+      owner,
+      [...items].sort(
+        (a, b) => Number(b.updatedAt || b.createdAt || 0) - Number(a.updatedAt || a.createdAt || 0),
+      ),
+    ])
+    .sort((a, b) => {
+      const activeDelta = activeFleetCount(b[1]) - activeFleetCount(a[1]);
+      return activeDelta || sessionOwnerLabel(a[0]).localeCompare(sessionOwnerLabel(b[0]));
+    });
+}
+
+function activeFleetCount(sessions) {
+  return sessions.filter((session) => !isDeadInteractiveSession(session)).length;
+}
+
 function DashboardOverview(props) {
-  const cards = props.state.cards || [];
   const sessions = props.state.interactiveSessions || [];
-  const visibleSessions = sessions.slice(0, 4);
+  const groups = groupedFleetSessions(sessions);
+  const ownerCount = groups.length;
   const repos = props.state.repos?.length || 0;
   const sessionLabel = props.cli ? `${props.cli} attachable` : "none attached";
   return (
-    <section class="dashboard" aria-label="Crabyard dashboard">
+    <section class="dashboard" aria-label="Crabfleet dashboard">
       <div class="setup-stack">
         <DashboardAction
           icon="git-pull-request"
@@ -1136,77 +1171,107 @@ function DashboardOverview(props) {
               <Icon name="terminal" />
               Connect over SSH
             </h2>
-            <p>
-              Link a public key once, then create, list, and attach Codex sessions from a shell.
-            </p>
+            <p>Link a public key once, then create, list, attach, and open VNC for crabboxes.</p>
           </div>
-          <CopyCommand value="ssh link@ssh.crabyard.ai" />
+          <CopyCommand value={`ssh link@${sshHost}`} />
         </div>
         <div class="setup-card">
           <div>
             <h2>
               <Icon name="square-terminal" />
-              Start a Codex session
+              Start a Crabbox
             </h2>
-            <p>SSH lands directly in a managed workspace with repo policy and runtime routing.</p>
+            <p>Crabboxes boot with the repo prepared and Codex ready for OpenClaw supervision.</p>
           </div>
-          <CopyCommand value='ssh ssh.crabyard.ai new "fix the failing check"' />
+          <CopyCommand
+            value={`ssh ${sshHost} new --repo openclaw/openclaw "fix the failing check"`}
+          />
         </div>
       </div>
       <div class="status-strip">
-        <Metric label="Running" value={props.active} />
-        <Metric label="Cards" value={cards.length} />
-        <Metric label="Sessions" value={sessions.length} />
+        <Metric label="Running" value={activeFleetCount(sessions)} />
+        <Metric label="People" value={ownerCount} />
+        <Metric label="Crabboxes" value={sessions.length} />
       </div>
       <div class="dashboard-grid">
         <DashboardChart
-          title="CARD FLOW"
+          title="OPENCLAW QUEUE"
           value={`${props.active}/${props.state.cap}`}
           meta={`${props.queue} queued`}
         />
         <DashboardChart
-          title="SESSION FLEET"
+          title="CRABBOX FLEET"
           value={sessionLabel}
           meta={`${repos} repos`}
           secondary
         />
       </div>
       <section class="vm-list">
-        <div class="section-kicker">CODEX SESSIONS</div>
-        {visibleSessions.length ? (
-          visibleSessions.map((session) => (
-            <article class="vm-row" key={session.id}>
-              <div>
-                <strong>{session.title || session.id}</strong>
-                <code>ssh ssh.crabyard.ai attach {session.id}</code>
-                <span>{session.repo || "repo pending"}</span>
+        <div class="section-kicker">FLEET BY PERSON</div>
+        {groups.length ? (
+          groups.map(([owner, items]) => (
+            <section class="fleet-owner" key={owner}>
+              <header class="fleet-owner-head">
+                <strong>{sessionOwnerLabel(owner)}</strong>
+                <span>{activeFleetCount(items)} active</span>
+              </header>
+              <div class="fleet-box-grid">
+                {items.map((session) => (
+                  <FleetBox
+                    key={session.id}
+                    session={session}
+                    openSessionGrid={props.openSessionGrid}
+                  />
+                ))}
               </div>
-              <div class="vm-badges">
-                <span class={`state-pill ${session.status || "pending"}`}>
-                  {session.status || "pending"}
-                </span>
-                <button onClick={() => props.openSessionGrid(session.id)}>Open</button>
-              </div>
-            </article>
+            </section>
           ))
         ) : (
           <div class="vm-row empty-row">
             <div>
-              <strong>No interactive sessions</strong>
-              <code>ssh ssh.crabyard.ai new</code>
-              <span>Create one from SSH or the app.</span>
+              <strong>No crabboxes yet</strong>
+              <code>ssh {sshHost} new --repo openclaw/openclaw</code>
+              <span>Create one from SSH, the Go CLI, or the app.</span>
             </div>
             <button
               onClick={() => props.openDrawer("interactive")}
               disabled={!canMaintain(props.state.user)}
             >
-              New session
+              New crabbox
             </button>
           </div>
         )}
       </section>
       <div class="section-kicker">OPERATIONS BOARD</div>
     </section>
+  );
+}
+
+function FleetBox({ session, openSessionGrid }) {
+  const capabilities = runCapabilities(session);
+  return (
+    <article class="fleet-box">
+      <header class="fleet-box-head">
+        <strong>{session.repo || session.title || session.id}</strong>
+        <span class={`state-pill ${session.status || "pending"}`}>
+          {session.status || "pending"}
+        </span>
+      </header>
+      <div class="fleet-box-meta">
+        <span>{session.branch || "main"}</span>
+        <span>{session.runtime || "crabbox"}</span>
+        {capabilities.vnc ? <span>webvnc</span> : null}
+      </div>
+      <code>
+        ssh {sshHost} attach {session.id}
+      </code>
+      <div class="fleet-box-actions">
+        <button onClick={() => openSessionGrid(session.id)}>Terminal</button>
+        {session.vncUrl ? (
+          <button onClick={() => window.open(session.vncUrl, "_blank", "noopener")}>VNC</button>
+        ) : null}
+      </div>
+    </article>
   );
 }
 
@@ -1390,7 +1455,7 @@ function Board(props) {
     return matchesCard(card, query);
   });
   return (
-    <section class="board" aria-label="Crabyard board">
+    <section class="board" aria-label="Crabfleet board">
       {lanes.map((lane) => {
         const cards = visibleCards.filter((card) => card.lane === lane);
         return (
@@ -1569,7 +1634,7 @@ function InteractiveDrawer({ drawers, closeDrawer, createInteractiveSession, sta
     <Drawer
       id="interactive-drawer"
       open={drawers.interactive}
-      title="New Codex session"
+      title="New Crabbox"
       onClose={() => closeDrawer("interactive")}
     >
       <form
@@ -1593,8 +1658,8 @@ function InteractiveDrawer({ drawers, closeDrawer, createInteractiveSession, sta
         <label>
           Runtime
           <select name="runtime">
-            <option>container</option>
-            <option>crabbox</option>
+            <option value="crabbox">Crabbox</option>
+            <option value="container">Cloudflare Sandbox</option>
           </select>
         </label>
         <label>
@@ -1610,7 +1675,7 @@ function InteractiveDrawer({ drawers, closeDrawer, createInteractiveSession, sta
             Cancel
           </button>
           <button class="primary" type="submit" disabled={busy}>
-            {busy ? "Provisioning..." : "Create session"}
+            {busy ? "Provisioning..." : "Create crabbox"}
           </button>
         </div>
       </form>
@@ -2026,6 +2091,9 @@ function InteractiveSessionActions(props) {
   if (props.minimal) {
     return (
       <>
+        {session.vncUrl ? (
+          <button onClick={() => window.open(session.vncUrl, "_blank", "noopener")}>VNC</button>
+        ) : null}
         {canManage ? <button onClick={handleShare}>{shareLabel}</button> : null}
         {canChangeMultiplayer ? (
           <button
@@ -2053,6 +2121,9 @@ function InteractiveSessionActions(props) {
   }
   return (
     <>
+      {session.vncUrl ? (
+        <button onClick={() => window.open(session.vncUrl, "_blank", "noopener")}>VNC</button>
+      ) : null}
       {canManage ? <button onClick={handleShare}>{shareLabel}</button> : null}
       {canChangeMultiplayer ? (
         <button
@@ -2695,4 +2766,8 @@ function isTerminalKeyTarget(event) {
   );
 }
 
-render(<App />, document.getElementById("crabyard-preact-root"));
+render(
+  <App />,
+  document.getElementById("crabfleet-preact-root") ||
+    document.getElementById("crabyard-preact-root"),
+);

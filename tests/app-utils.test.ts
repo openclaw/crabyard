@@ -88,6 +88,7 @@ test("interactive command defaults to yolo without sandbox suffix", () => {
 
   const session = optimisticInteractiveSession(data, "steipete");
 
+  assert.equal(session.runtime, "crabbox");
   assert.equal(session.command, "codex --yolo");
   assert.equal(interactiveCommand(" codex   --yolosandbox "), "codex --yolo");
   assert.match(terminalText({ ...session, kind: "interactive" }), /^Preparing Codex\r\n/);

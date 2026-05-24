@@ -68,6 +68,7 @@ type RuntimeEnv = Env & {
   CRABYARD_CLAWFLEET_TOKEN?: string;
   CRABYARD_CLAWFLEET_PUBLIC_URL?: string;
   CRABYARD_SSH_GATEWAY_TOKEN?: string;
+  CRABFLEET_SSH_GATEWAY_TOKEN?: string;
   CRABYARD_TOKEN_ENCRYPTION_KEY?: string;
   OPENAI_API_KEY?: string;
   OPENAI_BASE_URL?: string;
@@ -1097,7 +1098,7 @@ async function githubCallback(request: Request, env: RuntimeEnv): Promise<Respon
   const authorized = await authorize(env, freshUser);
   if (!authorized.allowed) {
     return text(
-      "GitHub user is not in the Crabyard allowlist.\n",
+      "GitHub user is not in the Crabfleet allowlist.\n",
       "text/plain; charset=utf-8",
       {},
       403,
@@ -1132,7 +1133,7 @@ async function sshLink(request: Request, env: RuntimeEnv, code: string): Promise
     .executeTakeFirst();
   if (!row || row.consumed_at || row.expires_at <= Date.now()) {
     return text(
-      "SSH link expired. Re-run ssh crabyard to get a fresh link.\n",
+      "SSH link expired. Re-run ssh link@ssh.crabfleet.ai to get a fresh link.\n",
       "text/plain",
       {},
       410,
@@ -1233,7 +1234,7 @@ function sshLinkConfirmHtml(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Link SSH key - Crabyard</title>
+  <title>Link SSH key - Crabfleet</title>
   <style>
     body{font:16px/1.45 system-ui,sans-serif;margin:3rem;max-width:44rem;color:#111;background:#fff}
     code{background:#f3f4f6;padding:.15rem .35rem;border-radius:.25rem;word-break:break-all}
@@ -1452,9 +1453,10 @@ async function requireSshGatewayUser(request: Request, env: RuntimeEnv): Promise
 }
 
 function requireSshGateway(request: Request, env: RuntimeEnv): void {
-  if (!env.CRABYARD_SSH_GATEWAY_TOKEN) throw serviceUnavailable("SSH gateway is not configured");
+  const tokens = sshGatewayTokens(env);
+  if (!tokens.length) throw serviceUnavailable("SSH gateway is not configured");
   const authorization = request.headers.get("authorization") ?? "";
-  if (authorization !== `Bearer ${env.CRABYARD_SSH_GATEWAY_TOKEN}`) throw unauthorized();
+  if (!tokens.some((token) => authorization === `Bearer ${token}`)) throw unauthorized();
 }
 
 async function readSshUser(env: RuntimeEnv, fingerprint: string): Promise<User | null> {
@@ -1540,17 +1542,23 @@ async function sshKeyGitHubTokenByFingerprint(
 }
 
 function isSshGatewayRequest(request: Request, env: RuntimeEnv): boolean {
-  return Boolean(
-    env.CRABYARD_SSH_GATEWAY_TOKEN &&
-    request.headers.get("authorization") === `Bearer ${env.CRABYARD_SSH_GATEWAY_TOKEN}`,
-  );
+  const tokens = sshGatewayTokens(env);
+  const authorization = request.headers.get("authorization") ?? "";
+  return Boolean(tokens.length && tokens.some((token) => authorization === `Bearer ${token}`));
 }
 
 function sshFingerprint(request: Request): string {
   const url = new URL(request.url);
   return (
+    clean(request.headers.get("x-crabfleet-ssh-fingerprint"), 120) ||
     clean(request.headers.get("x-crabyard-ssh-fingerprint"), 120) ||
     clean(url.searchParams.get("fingerprint"), 120)
+  );
+}
+
+function sshGatewayTokens(env: RuntimeEnv): string[] {
+  return [env.CRABFLEET_SSH_GATEWAY_TOKEN, env.CRABYARD_SSH_GATEWAY_TOKEN].filter(
+    (token): token is string => Boolean(token),
   );
 }
 
@@ -3252,7 +3260,7 @@ async function provisionInteractiveSession(
   env: RuntimeEnv,
   session: InteractiveProvisionRequest,
 ): Promise<InteractiveProvisionResult | null> {
-  if (env.SANDBOX) return provisionWithSandbox(env, session);
+  if (session.runtime === "container" && env.SANDBOX) return provisionWithSandbox(env, session);
   if (!env.CRABYARD_INTERACTIVE_PROVISION_URL) return null;
   let response: Response;
   try {
@@ -3333,7 +3341,7 @@ async function provisionInteractiveEndpoint(
     owner,
     ...(githubToken ? { githubToken } : {}),
   };
-  if (env.SANDBOX) {
+  if (payload.runtime === "container" && env.SANDBOX) {
     return provisionWithSandbox(env, payload);
   }
   if (env.CRABYARD_RUNTIME_PROVISION_URL) {
@@ -3342,7 +3350,7 @@ async function provisionInteractiveEndpoint(
   if (payload.runtime === "container" && env.CRABYARD_CLOUDFLARE_RUNNER_URL) {
     return provisionWithCloudflareRunner(env, payload);
   }
-  if (env.CRABYARD_CLAWFLEET_URL) {
+  if (payload.runtime === "crabbox" && env.CRABYARD_CLAWFLEET_URL) {
     return provisionWithClawFleet(env, payload);
   }
   return {
@@ -5857,7 +5865,7 @@ function selectRuntimeDescriptor(
   if (workflow?.runtime === "container") {
     return runtimeDescriptor("container", "repo CRABYARD.md runtime default");
   }
-  return runtimeDescriptor("container", "default container runtime");
+  return runtimeDescriptor("crabbox", "default crabbox runtime");
 }
 
 function runtimeDescriptor(
@@ -5895,10 +5903,10 @@ function stallThresholdMs(settings: Record<string, string>): number {
 
 function systemUser(): User {
   return {
-    subject: "system:crabyard",
+    subject: "system:crabfleet",
     login: "system",
     email: null,
-    name: "Crabyard",
+    name: "Crabfleet",
     role: "owner",
     allowed: true,
     teams: [],
