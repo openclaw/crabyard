@@ -18,6 +18,7 @@ import {
   runtimeCapabilityLabel,
   sessionItems,
   statusLabel,
+  terminalText,
   titleFromPrompt,
 } from "./utils.js";
 import {
@@ -2106,7 +2107,7 @@ function SessionCell(props) {
       </div>
       <footer class="session-cell-foot">
         <span>{sessionFooterSummary(session)}</span>
-        <span>{props.terminalStatus[session.id] || runtimeCapabilityLabel(session)}</span>
+        <span>{sessionTerminalStatusLabel(session, props.terminalStatus)}</span>
       </footer>
     </article>
   );
@@ -2119,6 +2120,11 @@ function terminalMountKey(session) {
 
 function isLocalInteractiveSession(session) {
   return session?.kind === "interactive" && String(session.id).startsWith("LOCAL-");
+}
+
+function sessionTerminalStatusLabel(session, terminalStatus) {
+  if (session.kind === "interactive" && isDeadInteractiveSession(session)) return "Log replay";
+  return terminalStatus[session.id] || runtimeCapabilityLabel(session);
 }
 
 function SessionLayoutButtons() {
@@ -2352,6 +2358,7 @@ function TerminalMount({ session, focused, singleSession, drawerOpen }) {
   const [visible, setVisible] = useState(focused);
   const provisioning = isProvisioningInteractiveSession(session);
   const localSession = isLocalInteractiveSession(session);
+  const endedSession = session.kind === "interactive" && isDeadInteractiveSession(session);
 
   useLayoutEffect(
     () => () => {
@@ -2412,7 +2419,7 @@ function TerminalMount({ session, focused, singleSession, drawerOpen }) {
   useLayoutEffect(() => {
     const mount = ref.current;
     if (!mount) return;
-    const active = drawerOpen && visible && !localSession && !provisioning;
+    const active = drawerOpen && visible && !localSession && !provisioning && !endedSession;
     if (mountedSessionId.current && mountedSessionId.current !== session.id) {
       disposeTerminal(mountedSessionId.current);
       mountedSessionId.current = null;
@@ -2428,9 +2435,9 @@ function TerminalMount({ session, focused, singleSession, drawerOpen }) {
     }
     mountedSessionId.current = session.id;
     void mountTerminal(session, mount, { focused });
-  }, [session, focused, drawerOpen, visible, provisioning, localSession]);
+  }, [session, focused, drawerOpen, visible, provisioning, localSession, endedSession]);
 
-  const terminalActive = drawerOpen && visible && !localSession && !provisioning;
+  const terminalActive = drawerOpen && visible && !localSession && !provisioning && !endedSession;
 
   return (
     <div class="ghostty-terminal" aria-label={`${session.id} terminal`}>
@@ -2444,10 +2451,20 @@ function TerminalMount({ session, focused, singleSession, drawerOpen }) {
         <TerminalProvisioning session={session} />
       ) : localSession ? (
         <TerminalLocalStatus session={session} />
+      ) : endedSession ? (
+        <TerminalEndedTranscript session={session} />
       ) : !visible ? (
         <div class="terminal-placeholder">Terminal paused offscreen</div>
       ) : null}
     </div>
+  );
+}
+
+function TerminalEndedTranscript({ session }) {
+  return (
+    <pre class="terminal-fallback terminal-ended" aria-label={`${session.id} log replay`}>
+      {terminalText(session)}
+    </pre>
   );
 }
 
