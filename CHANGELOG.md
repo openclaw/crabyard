@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Show failed and expired Codex sessions as stable log replays instead of remounting Ghostty terminals.
 - Keep `docs.crabfleet.ai` converged to the GitHub Pages CNAME instead of the Crabfleet wildcard redirect.
 - Document GitHub/SSH as normal Crabfleet onboarding and bootstrap token as owner break-glass only.
 - Add durable crabbox session log archives, Fleet WebVNC/log actions, and `crabfleet logs` plus SSH gateway log viewing.
