@@ -88,6 +88,50 @@ async function ensureCrabfleetRoute() {
   }
 }
 
+async function ensureCrabfleetDocsRecord() {
+  const crabfleet = await zone("crabfleet.ai");
+  const name = "docs.crabfleet.ai";
+  const records = await request(
+    `/zones/${crabfleet.id}/dns_records?name=${encodeURIComponent(name)}`,
+  );
+
+  for (const record of records.filter(
+    (entry) =>
+      ["A", "AAAA", "CNAME"].includes(entry.type) &&
+      !(entry.type === "CNAME" && entry.content === "openclaw.github.io"),
+  )) {
+    await request(`/zones/${crabfleet.id}/dns_records/${record.id}`, { method: "DELETE" });
+    console.log(`deleted conflicting ${name} ${record.type} record ${record.id}`);
+  }
+
+  const refreshed = await request(
+    `/zones/${crabfleet.id}/dns_records?name=${encodeURIComponent(name)}`,
+  );
+  const docsCname = refreshed.find(
+    (record) => record.type === "CNAME" && record.content === "openclaw.github.io",
+  );
+  const body = {
+    type: "CNAME",
+    name: "docs",
+    content: "openclaw.github.io",
+    proxied: false,
+    ttl: 1,
+  };
+  if (docsCname) {
+    await request(`/zones/${crabfleet.id}/dns_records/${docsCname.id}`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    });
+    console.log("set docs.crabfleet.ai CNAME to GitHub Pages");
+  } else {
+    await request(`/zones/${crabfleet.id}/dns_records`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    console.log("created docs.crabfleet.ai CNAME to GitHub Pages");
+  }
+}
+
 async function removeOldOpenClawHosts() {
   const oldHosts = new Set(["crabfleet.openclaw.ai", "crabyard.openclaw.ai"]);
 
@@ -164,5 +208,6 @@ async function ensureCrabdSshRecord() {
 }
 
 await ensureCrabfleetRoute();
+await ensureCrabfleetDocsRecord();
 await removeOldOpenClawHosts();
 await ensureCrabdSshRecord();
