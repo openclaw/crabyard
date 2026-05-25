@@ -12,7 +12,7 @@ This gets you from login to a real D1-backed crabbox, card, and run attempt.
 ## Prerequisites
 
 - OpenClaw GitHub org membership.
-- Bootstrap token from deployment secrets, or GitHub OAuth already configured.
+- GitHub OAuth configured for browser access, or an SSH key to link through `crabd.sh`.
 - Access to `https://crabfleet.ai/app/`.
 
 ## 1. Log In
@@ -20,7 +20,8 @@ This gets you from login to a real D1-backed crabbox, card, and run attempt.
 Open `https://crabfleet.ai/app/`.
 
 - Use GitHub OAuth if configured.
-- Use the bootstrap token for setup/recovery.
+- Use `ssh link@crabd.sh` when you want terminal-first onboarding.
+- Use the bootstrap token only for owner break-glass setup/recovery.
 
 Bootstrap sessions last 1 hour. GitHub sessions last 15 minutes.
 

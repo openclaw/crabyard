@@ -340,13 +340,13 @@ Recommended for production.
 
 ### Bootstrap Token
 
-Admin break-glass access.
+Owner break-glass access. Normal users should sign in with GitHub OAuth or link through `ssh link@crabd.sh`; do not use the bootstrap token for day-to-day onboarding.
 
 **Setup:**
 
 1. Generate strong random token: `openssl rand -hex 32`
-2. Set as `CRABBOX_BOOTSTRAP_TOKEN` secret in Cloudflare
-3. Share securely with initial admin
+2. Set as `CRABBOX_BOOTSTRAP_TOKEN` secret in Cloudflare only when break-glass recovery is required
+3. Store it in 1Password and share only with owners
 
 **Session lifetime:**
 
@@ -420,7 +420,7 @@ Secrets stored in Cloudflare Worker environment, never in D1/R2.
 
 - `CRABBOX_BOOTSTRAP_TOKEN`
 - Admin break-glass access
-- Rotate quarterly
+- Rotate quarterly or after any owner leaves
 
 **GitHub OAuth:**
 

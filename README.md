@@ -32,14 +32,15 @@ Autonomous card execution, Crabbox VNC transport, Durable Object fanout, and mer
 
 ## Quick Start
 
-### 1. Bootstrap Admin Login
+### 1. Sign In
 
-Get the bootstrap token from your deployment secrets and use it to log in:
+Use GitHub OAuth for normal browser access, or link an SSH key from the terminal:
 
 ```bash
-# Visit https://crabfleet.ai/app/
-# Use bootstrap token for initial admin setup
+ssh link@crabd.sh
 ```
+
+`CRABBOX_BOOTSTRAP_TOKEN` is only a break-glass recovery path for owners.
 
 ### 2. Configure Access
 
@@ -152,7 +153,7 @@ Configure these in Cloudflare Workers dashboard. `CRABBOX_*` names are the runti
 
 The Crabbox namespace cutover intentionally has no old-name compatibility. Existing browser sessions expire, linked SSH keys must be relinked with `ssh link@crabd.sh`, and in-flight interactive workspaces should be recreated.
 
-- `CRABBOX_BOOTSTRAP_TOKEN` – Admin bootstrap token (required)
+- `CRABBOX_BOOTSTRAP_TOKEN` – Optional owner break-glass token for setup/recovery
 - `GITHUB_CLIENT_ID` – GitHub OAuth app client ID (optional)
 - `GITHUB_CLIENT_SECRET` – GitHub OAuth app secret (optional)
 - `GITHUB_ORG` – GitHub org for membership check (default: `openclaw`)
@@ -331,7 +332,7 @@ Full documentation available at [docs.crabfleet.ai](https://docs.crabfleet.ai):
 
 Active development. See [CHANGELOG.md](CHANGELOG.md) for recent updates.
 
-Current phase: MVP deployed with auth, board UI, admin controls, card management, Kysely-backed D1 persistence, durable run attempts, repo workflow evaluation, card diffs, Ghostty WASM terminal grid, authenticated PTY WebSocket proxying, and first-party Cloudflare Sandbox Codex CLI sessions.
+Current phase: MVP deployed with auth, board UI, admin controls, card management, Kysely-backed D1 persistence, durable run attempts, repo workflow evaluation, card diffs, Ghostty WASM terminal grid, R2 session log archives, authenticated PTY WebSocket proxying, and first-party Cloudflare Sandbox Codex CLI sessions.
 
 Next: bind autonomous card execution and merge automation to the same runtime layer.
 

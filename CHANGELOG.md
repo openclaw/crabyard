@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Document GitHub/SSH as normal Crabfleet onboarding and bootstrap token as owner break-glass only.
 - Add durable crabbox session log archives, Fleet WebVNC/log actions, and `crabfleet logs` plus SSH gateway log viewing.
 - Split Fleet and Board into separate app pages, with Fleet as the default grouped view of every visible crabbox by person.
 - Tighten the login SSH command width for `crabd.sh` and tuck bootstrap-token login behind a recovery disclosure.
