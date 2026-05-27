@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Keep Cloudflare Sandbox model and GitHub credentials in the Worker path, add DO-backed sandbox credential/checkpoint state, and add CLI lifecycle commands for doctor/status/stop/checkpoint/restore.
 - Show failed and expired Codex sessions as stable log replays instead of remounting Ghostty terminals.
 - Keep `docs.crabfleet.ai` converged to the GitHub Pages CNAME instead of the Crabfleet wildcard redirect.
 - Document GitHub/SSH as normal Crabfleet onboarding and bootstrap token as owner break-glass only.

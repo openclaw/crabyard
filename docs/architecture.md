@@ -24,6 +24,7 @@ Cloudflare Worker
   - runtime selection policy
   |
   +-- D1: users, sessions, repos, cards, events, run_attempts, repo_workflows
+  +-- SessionControl DO: sandbox credential policy and checkpoint handles
   +-- GitHub API: OAuth, org/team membership, CRABBOX.md, issue/PR previews
   +-- Ghostty WASM: terminal grid asset served by Worker
 ```
@@ -32,7 +33,7 @@ Cloudflare Worker
 
 ### Worker
 
-`src/index.ts` handles the app shell, docs routes, auth, API routes, Kysely D1 queries, GitHub calls, and generated asset serving. The Worker intentionally stores runtime lease fields as data, but it does not fabricate external execution.
+`src/index.ts` handles the app shell, docs routes, auth, API routes, Kysely D1 queries, GitHub calls, generated asset serving, and built-in Cloudflare Sandbox lifecycle paths. Sandbox model and GitHub credentials stay in the Worker/DO control path; sandbox env receives placeholders and outbound requests get credentials injected only for approved upstreams.
 
 ### D1 + Kysely
 

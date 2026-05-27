@@ -34,14 +34,20 @@ type cli struct {
 	NoInput     bool   `help:"Fail instead of prompting or delegating to SSH."`
 	Version     kong.VersionFlag
 
-	Login  loginCmd  `cmd:"" help:"Link this machine through SSH onboarding."`
-	Whoami whoamiCmd `cmd:"" help:"Show the linked Crabfleet user."`
-	List   listCmd   `cmd:"" aliases:"ls" help:"List crabboxes grouped by person."`
-	New    newCmd    `cmd:"" help:"Create a repo-ready crabbox and attach."`
-	Attach attachCmd `cmd:"" help:"Attach to a crabbox terminal."`
-	VNC    vncCmd    `cmd:"" help:"Print or open a crabbox WebVNC URL."`
-	Logs   logsCmd   `cmd:"" help:"Print archived crabbox session events."`
-	Open   openCmd   `cmd:"" help:"Open the Crabfleet dashboard."`
+	Login       loginCmd       `cmd:"" help:"Link this machine through SSH onboarding."`
+	Whoami      whoamiCmd      `cmd:"" help:"Show the linked Crabfleet user."`
+	List        listCmd        `cmd:"" aliases:"ls" help:"List crabboxes grouped by person."`
+	New         newCmd         `cmd:"" help:"Create a repo-ready crabbox and attach."`
+	Attach      attachCmd      `cmd:"" help:"Attach to a crabbox terminal."`
+	Status      statusCmd      `cmd:"" help:"Show one crabbox lifecycle state."`
+	Stop        stopCmd        `cmd:"" help:"Stop a crabbox workspace."`
+	Doctor      doctorCmd      `cmd:"" help:"Check API, auth, and linked lifecycle access."`
+	Checkpoints checkpointsCmd `cmd:"" help:"List sandbox checkpoints."`
+	Checkpoint  checkpointCmd  `cmd:"" help:"Create a sandbox checkpoint."`
+	Restore     restoreCmd     `cmd:"" help:"Restore a sandbox checkpoint."`
+	VNC         vncCmd         `cmd:"" help:"Print or open a crabbox WebVNC URL."`
+	Logs        logsCmd        `cmd:"" help:"Print archived crabbox session events."`
+	Open        openCmd        `cmd:"" help:"Open the Crabfleet dashboard."`
 }
 
 type loginCmd struct{}
@@ -60,6 +66,29 @@ type newCmd struct {
 
 type attachCmd struct {
 	ID string `arg:"" help:"Crabbox session id."`
+}
+
+type statusCmd struct {
+	ID string `arg:"" help:"Crabbox session id."`
+}
+
+type stopCmd struct {
+	ID string `arg:"" help:"Crabbox session id."`
+}
+
+type doctorCmd struct{}
+
+type checkpointsCmd struct {
+	ID string `arg:"" help:"Crabbox session id."`
+}
+
+type checkpointCmd struct {
+	ID string `arg:"" help:"Crabbox session id."`
+}
+
+type restoreCmd struct {
+	ID         string `arg:"" help:"Crabbox session id."`
+	Checkpoint string `arg:"" help:"Checkpoint id."`
 }
 
 type vncCmd struct {
@@ -119,6 +148,24 @@ type createSessionResponse struct {
 	Session interactiveSession `json:"session"`
 }
 
+type sessionResponse struct {
+	Session interactiveSession `json:"session"`
+}
+
+type checkpointResponse struct {
+	Session    interactiveSession `json:"session"`
+	Checkpoint checkpoint         `json:"checkpoint"`
+}
+
+type checkpointsResponse struct {
+	Session     interactiveSession `json:"session"`
+	Checkpoints []checkpoint       `json:"checkpoints"`
+}
+
+type actionResponse struct {
+	Session interactiveSession `json:"session"`
+}
+
 type sessionLogResponse struct {
 	Session interactiveSession `json:"session"`
 	Events  []sessionLogEvent  `json:"events"`
@@ -139,6 +186,14 @@ type logArchive struct {
 	SummaryKey    string `json:"summaryKey"`
 	ArchivedAt    int64  `json:"archivedAt"`
 	UpdatedAt     int64  `json:"updatedAt"`
+}
+
+type checkpoint struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	SessionID string `json:"sessionId"`
+	Workdir   string `json:"workdir"`
+	CreatedAt int64  `json:"createdAt"`
 }
 
 func main() {
@@ -270,6 +325,125 @@ func (cmd attachCmd) Run(app *cli, _ *apiClient) error {
 	return runSSH(app, "attach", cmd.ID)
 }
 
+func (cmd statusCmd) Run(app *cli, api *apiClient) error {
+	session, err := api.session(context.Background(), cmd.ID)
+	if err != nil {
+		if app.NoInput || app.JSON {
+			return err
+		}
+		return runSSH(app, "status", cmd.ID)
+	}
+	if app.JSON {
+		return json.NewEncoder(os.Stdout).Encode(session)
+	}
+	printSessionStatus(os.Stdout, session)
+	return nil
+}
+
+func (cmd stopCmd) Run(app *cli, api *apiClient) error {
+	session, err := api.action(context.Background(), cmd.ID, "stop")
+	if err != nil {
+		if app.NoInput || app.JSON {
+			return err
+		}
+		return runSSH(app, "stop", cmd.ID)
+	}
+	if app.JSON {
+		return json.NewEncoder(os.Stdout).Encode(session)
+	}
+	fmt.Fprintf(os.Stdout, "session: %s\nstatus: %s\n", session.ID, session.Status)
+	return nil
+}
+
+func (doctorCmd) Run(app *cli, api *apiClient) error {
+	result := map[string]string{
+		"api":  "unknown",
+		"auth": "unknown",
+	}
+	if err := api.health(context.Background()); err != nil {
+		result["api"] = "failed: " + err.Error()
+	} else {
+		result["api"] = "ok"
+	}
+	state, err := api.state(context.Background())
+	if err != nil {
+		result["auth"] = "failed: " + err.Error()
+	} else {
+		result["auth"] = "ok"
+		result["user"] = displayUser(state.User)
+		result["role"] = state.User.Role
+		result["sessions"] = fmt.Sprintf("%d", len(state.InteractiveSessions))
+	}
+	if app.JSON {
+		return json.NewEncoder(os.Stdout).Encode(result)
+	}
+	keys := []string{"api", "auth", "user", "role", "sessions"}
+	for _, key := range keys {
+		if value := result[key]; value != "" {
+			fmt.Fprintf(os.Stdout, "%s: %s\n", key, value)
+		}
+	}
+	return nil
+}
+
+func (cmd checkpointsCmd) Run(app *cli, api *apiClient) error {
+	checkpoints, err := api.checkpoints(context.Background(), cmd.ID)
+	if err != nil {
+		if app.NoInput || app.JSON {
+			return err
+		}
+		return runSSH(app, "checkpoints", cmd.ID)
+	}
+	if app.JSON {
+		return json.NewEncoder(os.Stdout).Encode(checkpoints)
+	}
+	if len(checkpoints.Checkpoints) == 0 {
+		fmt.Fprintf(os.Stdout, "session: %s\ncheckpoints: none\n", checkpoints.Session.ID)
+		return nil
+	}
+	fmt.Fprintf(os.Stdout, "session: %s\n", checkpoints.Session.ID)
+	for _, checkpoint := range checkpoints.Checkpoints {
+		fmt.Fprintf(
+			os.Stdout,
+			"%s  %s  %s\n",
+			checkpoint.ID,
+			time.UnixMilli(checkpoint.CreatedAt).Format(time.RFC3339),
+			checkpoint.Workdir,
+		)
+	}
+	return nil
+}
+
+func (cmd checkpointCmd) Run(app *cli, api *apiClient) error {
+	checkpoint, err := api.checkpoint(context.Background(), cmd.ID)
+	if err != nil {
+		if app.NoInput || app.JSON {
+			return err
+		}
+		return runSSH(app, "checkpoint", cmd.ID)
+	}
+	if app.JSON {
+		return json.NewEncoder(os.Stdout).Encode(checkpoint)
+	}
+	fmt.Fprintf(os.Stdout, "session: %s\ncheckpoint: %s\n", checkpoint.Session.ID, checkpoint.Checkpoint.ID)
+	return nil
+}
+
+func (cmd restoreCmd) Run(app *cli, api *apiClient) error {
+	checkpoint, err := api.restore(context.Background(), cmd.ID, cmd.Checkpoint)
+	if err != nil {
+		if app.NoInput || app.JSON {
+			return err
+		}
+		return runSSH(app, "restore", cmd.ID, cmd.Checkpoint)
+	}
+	if app.JSON {
+		return json.NewEncoder(os.Stdout).Encode(checkpoint)
+	}
+	fmt.Fprintf(os.Stdout, "session: %s\nrestored: %s\n", checkpoint.Session.ID, checkpoint.Checkpoint.ID)
+	return nil
+}
+
 func (cmd vncCmd) Run(app *cli, api *apiClient) error {
 	state, err := api.state(context.Background())
 	if err != nil {
@@ -330,10 +504,68 @@ func (c *apiClient) state(ctx context.Context) (stateResponse, error) {
 	return out, err
 }
 
+func (c *apiClient) health(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/healthz", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("api %s", resp.Status)
+	}
+	return nil
+}
+
+func (c *apiClient) session(ctx context.Context, id string) (interactiveSession, error) {
+	var out sessionResponse
+	err := c.do(ctx, http.MethodGet, "/api/ssh/interactive-sessions/"+url.PathEscape(id), nil, &out)
+	return out.Session, err
+}
+
 func (c *apiClient) createSession(ctx context.Context, req createSessionRequest) (interactiveSession, error) {
 	var out createSessionResponse
 	err := c.do(ctx, http.MethodPost, "/api/ssh/interactive-sessions", req, &out)
 	return out.Session, err
+}
+
+func (c *apiClient) action(ctx context.Context, id string, action string) (interactiveSession, error) {
+	var out actionResponse
+	err := c.do(
+		ctx,
+		http.MethodPost,
+		"/api/ssh/interactive-sessions/"+url.PathEscape(id)+"/actions",
+		map[string]string{"action": action},
+		&out,
+	)
+	return out.Session, err
+}
+
+func (c *apiClient) checkpoints(ctx context.Context, id string) (checkpointsResponse, error) {
+	var out checkpointsResponse
+	err := c.do(ctx, http.MethodGet, "/api/ssh/interactive-sessions/"+url.PathEscape(id)+"/checkpoints", nil, &out)
+	return out, err
+}
+
+func (c *apiClient) checkpoint(ctx context.Context, id string) (checkpointResponse, error) {
+	var out checkpointResponse
+	err := c.do(ctx, http.MethodPost, "/api/ssh/interactive-sessions/"+url.PathEscape(id)+"/checkpoints", nil, &out)
+	return out, err
+}
+
+func (c *apiClient) restore(ctx context.Context, id string, checkpoint string) (checkpointResponse, error) {
+	var out checkpointResponse
+	err := c.do(
+		ctx,
+		http.MethodPost,
+		"/api/ssh/interactive-sessions/"+url.PathEscape(id)+"/checkpoints/"+url.PathEscape(checkpoint)+"/restore",
+		nil,
+		&out,
+	)
+	return out, err
 }
 
 func (c *apiClient) logs(ctx context.Context, id string) (sessionLogResponse, error) {
@@ -425,6 +657,27 @@ func printSessionLogs(out io.Writer, logs sessionLogResponse) {
 			terminalSafe(event.Actor),
 			terminalSafe(event.Message),
 		)
+	}
+}
+
+func printSessionStatus(out io.Writer, session interactiveSession) {
+	fmt.Fprintf(out, "session: %s\n", terminalSafe(session.ID))
+	fmt.Fprintf(out, "repo: %s\n", terminalSafe(session.Repo))
+	fmt.Fprintf(out, "branch: %s\n", terminalSafe(session.Branch))
+	fmt.Fprintf(out, "runtime: %s\n", terminalSafe(session.Runtime))
+	fmt.Fprintf(out, "status: %s\n", terminalSafe(session.Status))
+	fmt.Fprintf(out, "owner: %s\n", terminalSafe(session.Owner))
+	if session.LeaseID != "" {
+		fmt.Fprintf(out, "lease: %s\n", terminalSafe(session.LeaseID))
+	}
+	if session.AttachURL != "" {
+		fmt.Fprintf(out, "attach: %s\n", terminalSafe(session.AttachURL))
+	}
+	if session.VNCURL != "" {
+		fmt.Fprintf(out, "vnc: %s\n", terminalSafe(session.VNCURL))
+	}
+	if session.LastEvent != "" {
+		fmt.Fprintf(out, "event: %s\n", terminalSafe(session.LastEvent))
 	}
 }
 

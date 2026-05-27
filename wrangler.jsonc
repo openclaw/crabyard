@@ -18,6 +18,10 @@
     ],
   },
   "account_id": "91b59577e757131d68d55a471fe32aca",
+  "vars": {
+    "BACKUP_BUCKET_NAME": "crabfleet-session-logs",
+    "CLOUDFLARE_ACCOUNT_ID": "91b59577e757131d68d55a471fe32aca",
+  },
   "d1_databases": [
     {
       "binding": "DB",
@@ -28,6 +32,10 @@
   "r2_buckets": [
     {
       "binding": "SESSION_LOGS",
+      "bucket_name": "crabfleet-session-logs",
+    },
+    {
+      "binding": "BACKUP_BUCKET",
       "bucket_name": "crabfleet-session-logs",
     },
   ],
@@ -45,12 +53,20 @@
         "name": "SANDBOX",
         "class_name": "Sandbox",
       },
+      {
+        "name": "SESSION_CONTROL",
+        "class_name": "SessionControlDO",
+      },
     ],
   },
   "migrations": [
     {
       "tag": "sandbox-v1",
       "new_sqlite_classes": ["Sandbox"],
+    },
+    {
+      "tag": "session-control-v1",
+      "new_sqlite_classes": ["SessionControlDO"],
     },
   ],
   "workers_dev": true,

@@ -11,6 +11,7 @@ Crabfleet gives OpenClaw maintainers a fleet dashboard where every Codex crabbox
 - **Issue/PR lookup.** Type `#123` in search to preview matching GitHub issues or PRs across enabled OpenClaw repos and create a card from the match.
 - **Codex run control.** Start durable run attempts, track heartbeats, watch the Ghostty WASM session grid, and take over only when the selected runtime advertises that capability.
 - **Interactive Crabboxes.** Start a standalone Codex CLI workspace for manual cloud work and attach it in the same fullscreen Ghostty grid or WebVNC.
+- **Worker-owned sandbox credentials.** Built-in Cloudflare Sandbox sessions get placeholder env credentials; Worker-controlled outbound routing injects model and GitHub credentials only for approved upstream requests.
 - **Diff previews.** Card tiles show changed files and totals; the run drawer shows a compact Codiff-style patch view.
 - **Multi-runtime policy.** Auto-select between the Container and Crabbox adapter surfaces based on card overrides, repo workflow defaults, and task requirements.
 - **Allowlist controls.** Restrict access to OpenClaw org members and specific repos through admin-managed allowlists.
@@ -176,7 +177,8 @@ The Crabbox namespace cutover intentionally has no old-name compatibility. Exist
 - `CRABBOX_CLAWFLEET_PUBLIC_URL` – Optional public ClawFleet URL used when building attach/VNC links
 - `CRABBOX_OPENCLAW_TOKEN` – Internal bearer token for OpenClaw/Discord service crabbox creation
 - `CRABFLEET_SSH_GATEWAY_TOKEN` / `CRABBOX_SSH_GATEWAY_TOKEN` – Shared bearer token for the Go SSH gateway internal API
-- `OPENAI_API_KEY` – Required for built-in Cloudflare Sandbox Codex CLI sessions; passed only into the sandbox session environment
+- `CRABFLEET_LOCAL_SANDBOX_BACKUPS` – Optional Cloudflare Sandbox checkpoint mode override; defaults to R2 binding uploads, set `0` for SDK presigned R2 uploads
+- `OPENAI_API_KEY` – Required for built-in Cloudflare Sandbox Codex CLI sessions; injected by the Worker outbound path for Cloudflare Sandbox requests
 
 ### Verify Deployment
 

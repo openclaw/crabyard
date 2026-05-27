@@ -1,7 +1,9 @@
 interface Env {
   DB: D1Database;
+  BACKUP_BUCKET?: R2Bucket;
   SESSION_LOGS?: R2Bucket;
-  SANDBOX: DurableObjectNamespace<import("@cloudflare/sandbox").Sandbox>;
+  SANDBOX: DurableObjectNamespace<import("./src/index").Sandbox>;
+  SESSION_CONTROL?: DurableObjectNamespace<import("./src/index").SessionControlDO>;
   CRABBOX_BOOTSTRAP_TOKEN?: string;
   GITHUB_CLIENT_ID?: string;
   GITHUB_CLIENT_SECRET?: string;
@@ -24,7 +26,12 @@ interface Env {
   CRABBOX_CLAWFLEET_PUBLIC_URL?: string;
   CRABBOX_OPENCLAW_TOKEN?: string;
   CRABBOX_TOKEN_ENCRYPTION_KEY?: string;
+  BACKUP_BUCKET_NAME?: string;
+  CLOUDFLARE_ACCOUNT_ID?: string;
+  CRABFLEET_LOCAL_SANDBOX_BACKUPS?: string;
   OPENAI_API_KEY?: string;
   OPENAI_BASE_URL?: string;
   OPENAI_ORG_ID?: string;
+  R2_ACCESS_KEY_ID?: string;
+  R2_SECRET_ACCESS_KEY?: string;
 }

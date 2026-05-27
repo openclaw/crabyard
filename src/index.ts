@@ -13,10 +13,15 @@ import {
   type QueryResult,
 } from "kysely";
 import {
+  ContainerProxy,
+  Sandbox as CloudflareSandboxBase,
   getSandbox,
+  type BackupOptions,
+  type DirectoryBackup,
   type Sandbox as CloudflareSandbox,
   type SessionTerminatedError as CloudflareSandboxSessionError,
 } from "@cloudflare/sandbox";
+import { DurableObject } from "cloudflare:workers";
 import {
   TerminalMessageType,
   decodeTerminalFrame,
@@ -31,6 +36,7 @@ import {
   terminalSubmittedLine,
   type TerminalInputState,
 } from "./terminal-multiplayer";
+import { githubRequestCanUseRepoCredential, matchesAnyHost } from "./sandbox-security";
 import {
   APP_HTML,
   GHOSTTY_BROWSER_EXTERNAL_JS,
@@ -47,8 +53,10 @@ const defaultInteractiveCommand = "codex --yolo";
 
 type RuntimeEnv = Env & {
   DB: D1Database;
+  BACKUP_BUCKET?: R2Bucket;
   SESSION_LOGS?: R2Bucket;
   SANDBOX?: DurableObjectNamespace<CloudflareSandbox>;
+  SESSION_CONTROL?: DurableObjectNamespace<SessionControlDO>;
   CRABBOX_BOOTSTRAP_TOKEN?: string;
   GITHUB_CLIENT_ID?: string;
   GITHUB_CLIENT_SECRET?: string;
@@ -73,12 +81,51 @@ type RuntimeEnv = Env & {
   CRABFLEET_SSH_GATEWAY_TOKEN?: string;
   CRABBOX_OPENCLAW_TOKEN?: string;
   CRABBOX_TOKEN_ENCRYPTION_KEY?: string;
+  BACKUP_BUCKET_NAME?: string;
+  CLOUDFLARE_ACCOUNT_ID?: string;
+  CRABFLEET_LOCAL_SANDBOX_BACKUPS?: string;
   OPENAI_API_KEY?: string;
   OPENAI_BASE_URL?: string;
   OPENAI_ORG_ID?: string;
+  R2_ACCESS_KEY_ID?: string;
+  R2_SECRET_ACCESS_KEY?: string;
 };
 
-export { Sandbox } from "@cloudflare/sandbox";
+const sandboxPlaceholderOpenAIKey = "crabfleet-worker-injected";
+const sandboxPlaceholderGitHubToken = "crabfleet-worker-injected";
+
+type SandboxOutboundContext = {
+  containerId: string;
+};
+
+type SandboxOutboundHandler = (
+  request: Request,
+  env: RuntimeEnv,
+  context: SandboxOutboundContext,
+) => Promise<Response> | Response;
+
+type SandboxClassWithOutbound = {
+  outbound?: SandboxOutboundHandler;
+};
+
+export class Sandbox extends CloudflareSandboxBase<RuntimeEnv> {
+  override allowedHosts = ["*"];
+  override enableInternet = false;
+  override envVars = {
+    CRABFLEET_SANDBOX: "1",
+    CURL_CA_BUNDLE: "/etc/cloudflare/certs/cloudflare-containers-ca.crt",
+    GIT_SSL_CAINFO: "/etc/cloudflare/certs/cloudflare-containers-ca.crt",
+    NODE_EXTRA_CA_CERTS: "/etc/cloudflare/certs/cloudflare-containers-ca.crt",
+    OPENAI_API_KEY: sandboxPlaceholderOpenAIKey,
+    REQUESTS_CA_BUNDLE: "/etc/cloudflare/certs/cloudflare-containers-ca.crt",
+    SSL_CERT_FILE: "/etc/cloudflare/certs/cloudflare-containers-ca.crt",
+  };
+  override interceptHttps = true;
+}
+
+(Sandbox as unknown as SandboxClassWithOutbound).outbound = sandboxOutbound;
+
+export { ContainerProxy };
 
 type User = {
   subject: string;
@@ -313,6 +360,27 @@ type InteractiveProvisionResult = {
   attachUrl: string | null;
   vncUrl: string | null;
   message: string;
+};
+
+type SandboxCredentialPolicy = {
+  allowedHosts: string[];
+  githubRepo: string;
+  githubRepoNodeId?: string;
+  githubTokenCiphertext?: string;
+  openAIBaseUrl?: string;
+  openAIOrgId?: string;
+  owner: string;
+  sandboxId: string;
+  sessionId: string;
+};
+
+type SandboxCheckpoint = {
+  backup: DirectoryBackup;
+  createdAt: number;
+  id: string;
+  name: string;
+  sessionId: string;
+  workdir: string;
 };
 
 type InteractiveTerminalTarget = {
@@ -716,6 +784,215 @@ function isReadQuery(sqlText: string): boolean {
   return /^(?:select|with|pragma)\b/i.test(sqlText.trim());
 }
 
+const defaultSandboxEgressHosts = [
+  "api.github.com",
+  "api.openai.com",
+  "codeload.github.com",
+  "github.com",
+  "objects.githubusercontent.com",
+  "raw.githubusercontent.com",
+  "uploads.github.com",
+  "registry.npmjs.org",
+  "registry.yarnpkg.com",
+  "*.githubusercontent.com",
+  "*.npmjs.org",
+  "*.nodejs.org",
+  "*.openai.com",
+  "*.yarnpkg.com",
+];
+
+const sandboxControlObjectName = "__session-control";
+const sandboxPolicyKey = (sandboxId: string) => `sandbox:${sandboxId}`;
+const sandboxCheckpointListKey = (sessionId: string) => `checkpoints:${sessionId}`;
+const sandboxCheckpointKey = (sessionId: string, checkpointId: string) =>
+  `checkpoint:${sessionId}:${checkpointId}`;
+
+function withAuthorization(request: Request, authorization?: string): Request {
+  const next = new Request(request);
+  if (authorization) {
+    next.headers.set("authorization", authorization);
+  } else {
+    next.headers.delete("authorization");
+  }
+  return next;
+}
+
+function githubBasicAuth(token: string): string {
+  return `Basic ${btoa(`x-access-token:${token}`)}`;
+}
+
+function isGitHubHost(host: string): boolean {
+  return (
+    host === "api.github.com" ||
+    host === "github.com" ||
+    host === "codeload.github.com" ||
+    host === "raw.githubusercontent.com" ||
+    host === "uploads.github.com"
+  );
+}
+
+function withoutSandboxPlaceholderAuthorization(request: Request): Request {
+  const authorization = request.headers.get("authorization");
+  if (
+    authorization !== `Bearer ${sandboxPlaceholderGitHubToken}` &&
+    authorization !== `token ${sandboxPlaceholderGitHubToken}` &&
+    authorization !== githubBasicAuth(sandboxPlaceholderGitHubToken)
+  ) {
+    return request;
+  }
+  return withAuthorization(request, undefined);
+}
+
+function sandboxControlStub(env: RuntimeEnv): DurableObjectStub<SessionControlDO> | null {
+  if (!env.SESSION_CONTROL) return null;
+  const id = env.SESSION_CONTROL.idFromName(sandboxControlObjectName);
+  return env.SESSION_CONTROL.get(id);
+}
+
+async function sandboxCredentialPolicy(
+  env: RuntimeEnv,
+  sandboxId: string,
+): Promise<SandboxCredentialPolicy | null> {
+  const stub = sandboxControlStub(env);
+  if (!stub) return null;
+  const response = await stub.fetch(
+    `https://crabfleet.internal/api/session-control/egress/${encodeURIComponent(sandboxId)}`,
+  );
+  if (!response.ok) return null;
+  return (await response.json()) as SandboxCredentialPolicy;
+}
+
+async function sandboxOutbound(
+  request: Request,
+  env: RuntimeEnv,
+  context: SandboxOutboundContext,
+): Promise<Response> {
+  const url = new URL(request.url);
+  const host = url.hostname.toLowerCase();
+  const policy = await sandboxCredentialPolicy(env, context.containerId);
+  const openAIHost = policy?.openAIBaseUrl
+    ? new URL(policy.openAIBaseUrl).hostname.toLowerCase()
+    : "api.openai.com";
+  const allowedHosts = [
+    ...defaultSandboxEgressHosts,
+    ...(policy?.openAIBaseUrl ? [openAIHost] : []),
+    ...(policy?.allowedHosts ?? []),
+  ];
+  if (!matchesAnyHost(host, allowedHosts)) {
+    return new Response(`Crabfleet blocked sandbox outbound access to ${host}.\n`, {
+      status: 403,
+    });
+  }
+
+  if (policy && openAIRequestMatchesPolicy(url, policy)) {
+    const authorization = env.OPENAI_API_KEY ? `Bearer ${env.OPENAI_API_KEY}` : undefined;
+    const next = withAuthorization(request, authorization);
+    if (policy.openAIOrgId) next.headers.set("openai-organization", policy.openAIOrgId);
+    return fetch(next);
+  }
+
+  const githubToken = policy?.githubTokenCiphertext
+    ? await openSecret(env, policy.githubTokenCiphertext)
+    : env.GITHUB_TOKEN;
+  if (
+    githubToken &&
+    policy &&
+    (await githubRequestCanUseRepoCredential(request, url, policy.githubRepo, {
+      nodeBelongsToRepo: (nodeId) =>
+        githubNodeBelongsToRepo(nodeId, policy.githubRepo, githubToken),
+      ...(policy.githubRepoNodeId ? { repoNodeId: policy.githubRepoNodeId } : {}),
+    }))
+  ) {
+    const authorization =
+      host === "api.github.com" || host === "uploads.github.com"
+        ? `Bearer ${githubToken}`
+        : githubBasicAuth(githubToken);
+    return fetch(withAuthorization(request, authorization));
+  }
+
+  if (isGitHubHost(host)) {
+    return fetch(withoutSandboxPlaceholderAuthorization(request));
+  }
+
+  return fetch(request);
+}
+
+function openAIRequestMatchesPolicy(url: URL, policy: SandboxCredentialPolicy): boolean {
+  const baseUrl = new URL(policy.openAIBaseUrl ?? "https://api.openai.com");
+  if (url.origin !== baseUrl.origin) return false;
+  if (baseUrl.pathname === "/" || baseUrl.pathname === "") return true;
+  const basePath = baseUrl.pathname.endsWith("/") ? baseUrl.pathname : `${baseUrl.pathname}/`;
+  return url.pathname === baseUrl.pathname || url.pathname.startsWith(basePath);
+}
+
+export class SessionControlDO extends DurableObject<RuntimeEnv> {
+  override async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    try {
+      if (request.method === "POST" && url.pathname === "/api/session-control/register") {
+        const policy = (await request.json()) as SandboxCredentialPolicy;
+        await this.ctx.storage.put(sandboxPolicyKey(policy.sandboxId), policy);
+        return json({ ok: true });
+      }
+
+      const egressMatch = url.pathname.match(/^\/api\/session-control\/egress\/([^/]+)$/);
+      if (request.method === "GET" && egressMatch) {
+        const sandboxId = decodeURIComponent(egressMatch[1] ?? "");
+        const policy = await this.ctx.storage.get<SandboxCredentialPolicy>(
+          sandboxPolicyKey(sandboxId),
+        );
+        return policy ? json(policy) : json({ error: "not found" }, { status: 404 });
+      }
+
+      const sandboxMatch = url.pathname.match(/^\/api\/session-control\/sandbox\/([^/]+)$/);
+      if (request.method === "DELETE" && sandboxMatch) {
+        await this.ctx.storage.delete(sandboxPolicyKey(decodeURIComponent(sandboxMatch[1] ?? "")));
+        return json({ ok: true });
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/session-control/checkpoints") {
+        const checkpoint = (await request.json()) as SandboxCheckpoint;
+        await this.ctx.storage.put(
+          sandboxCheckpointKey(checkpoint.sessionId, checkpoint.id),
+          checkpoint,
+        );
+        const listKey = sandboxCheckpointListKey(checkpoint.sessionId);
+        const list = (await this.ctx.storage.get<SandboxCheckpoint[]>(listKey)) ?? [];
+        const next = [checkpoint, ...list.filter((item) => item.id !== checkpoint.id)].slice(0, 20);
+        await this.ctx.storage.put(listKey, next);
+        return json({ checkpoint });
+      }
+
+      const checkpointsMatch = url.pathname.match(/^\/api\/session-control\/checkpoints\/([^/]+)$/);
+      if (request.method === "GET" && checkpointsMatch) {
+        const sessionId = decodeURIComponent(checkpointsMatch[1] ?? "");
+        const checkpoints =
+          (await this.ctx.storage.get<SandboxCheckpoint[]>(sandboxCheckpointListKey(sessionId))) ??
+          [];
+        return json({ checkpoints });
+      }
+
+      const checkpointMatch = url.pathname.match(
+        /^\/api\/session-control\/checkpoints\/([^/]+)\/([^/]+)$/,
+      );
+      if (request.method === "GET" && checkpointMatch) {
+        const sessionId = decodeURIComponent(checkpointMatch[1] ?? "");
+        const checkpointId = decodeURIComponent(checkpointMatch[2] ?? "");
+        const checkpoint = await this.ctx.storage.get<SandboxCheckpoint>(
+          sandboxCheckpointKey(sessionId, checkpointId),
+        );
+        return checkpoint ? json({ checkpoint }) : json({ error: "not found" }, { status: 404 });
+      }
+    } catch (error) {
+      return json(
+        { error: error instanceof Error ? error.message : String(error) },
+        { status: 500 },
+      );
+    }
+    return json({ error: "not found" }, { status: 404 });
+  }
+}
+
 export default {
   async fetch(request: Request, env: RuntimeEnv): Promise<Response> {
     const url = new URL(request.url);
@@ -849,6 +1126,66 @@ async function api(request: Request, env: RuntimeEnv): Promise<Response> {
     return json(await sshCreateInteractiveSession(request, env), { status: 201 });
   }
 
+  const sshInteractiveReadMatch = url.pathname.match(/^\/api\/ssh\/interactive-sessions\/([^/]+)$/);
+  if (request.method === "GET" && sshInteractiveReadMatch) {
+    const user = await requireSshGatewayUser(request, env);
+    requireRole(user, "viewer");
+    const session = await readInteractiveSession(
+      env,
+      decodeURIComponent(sshInteractiveReadMatch[1] ?? ""),
+    );
+    if (!session) throw notFound("interactive session not found");
+    return json({ session: decorateInteractiveSession(session, user, env) });
+  }
+
+  const sshInteractiveActionMatch = url.pathname.match(
+    /^\/api\/ssh\/interactive-sessions\/([^/]+)\/actions$/,
+  );
+  if (request.method === "POST" && sshInteractiveActionMatch) {
+    const user = await requireSshGatewayUser(request, env);
+    requireRole(user, "viewer");
+    const body = await readJson<{ action?: string }>(request);
+    return json(
+      await mutateInteractiveSession(
+        request,
+        env,
+        user,
+        decodeURIComponent(sshInteractiveActionMatch[1] ?? ""),
+        body.action ?? "",
+      ),
+    );
+  }
+
+  const sshInteractiveCheckpointsMatch = url.pathname.match(
+    /^\/api\/ssh\/interactive-sessions\/([^/]+)\/checkpoints$/,
+  );
+  if (sshInteractiveCheckpointsMatch) {
+    const user = await requireSshGatewayUser(request, env);
+    requireRole(user, "viewer");
+    const id = decodeURIComponent(sshInteractiveCheckpointsMatch[1] ?? "");
+    if (request.method === "GET")
+      return json(await listInteractiveSessionCheckpoints(env, user, id));
+    if (request.method === "POST") {
+      return json(await checkpointInteractiveSession(env, user, id), { status: 201 });
+    }
+  }
+
+  const sshInteractiveRestoreMatch = url.pathname.match(
+    /^\/api\/ssh\/interactive-sessions\/([^/]+)\/checkpoints\/([^/]+)\/restore$/,
+  );
+  if (request.method === "POST" && sshInteractiveRestoreMatch) {
+    const user = await requireSshGatewayUser(request, env);
+    requireRole(user, "viewer");
+    return json(
+      await restoreInteractiveSessionCheckpoint(
+        env,
+        user,
+        decodeURIComponent(sshInteractiveRestoreMatch[1] ?? ""),
+        decodeURIComponent(sshInteractiveRestoreMatch[2] ?? ""),
+      ),
+    );
+  }
+
   const sshInteractiveLogsMatch = url.pathname.match(
     /^\/api\/ssh\/interactive-sessions\/([^/]+)\/logs$/,
   );
@@ -956,6 +1293,34 @@ async function api(request: Request, env: RuntimeEnv): Promise<Response> {
         env,
         user,
         decodeURIComponent(interactiveSessionDiagnosticsMatch[1] ?? ""),
+      ),
+    );
+  }
+
+  const interactiveSessionCheckpointsMatch = url.pathname.match(
+    /^\/api\/interactive-sessions\/([^/]+)\/checkpoints$/,
+  );
+  if (interactiveSessionCheckpointsMatch) {
+    requireRole(user, "viewer");
+    const id = decodeURIComponent(interactiveSessionCheckpointsMatch[1] ?? "");
+    if (request.method === "GET")
+      return json(await listInteractiveSessionCheckpoints(env, user, id));
+    if (request.method === "POST") {
+      return json(await checkpointInteractiveSession(env, user, id), { status: 201 });
+    }
+  }
+
+  const interactiveSessionRestoreMatch = url.pathname.match(
+    /^\/api\/interactive-sessions\/([^/]+)\/checkpoints\/([^/]+)\/restore$/,
+  );
+  if (request.method === "POST" && interactiveSessionRestoreMatch) {
+    requireRole(user, "viewer");
+    return json(
+      await restoreInteractiveSessionCheckpoint(
+        env,
+        user,
+        decodeURIComponent(interactiveSessionRestoreMatch[1] ?? ""),
+        decodeURIComponent(interactiveSessionRestoreMatch[2] ?? ""),
       ),
     );
   }
@@ -1894,10 +2259,14 @@ async function cleanupInteractiveSessions(
     .selectAll()
     .where("status", "in", deadInteractiveSessionStatuses);
   if (ids.length) query = query.where("id", "in", ids);
-  const removedIds = (await query.execute())
-    .filter((row) => canManageInteractiveSession(user, interactiveSession(row, [])))
-    .map((row) => row.id);
+  const removedSessions = (await query.execute())
+    .map((row) => interactiveSession(row, []))
+    .filter((session) => canManageInteractiveSession(user, session));
+  const removedIds = removedSessions.map((session) => session.id);
   if (removedIds.length) {
+    await Promise.all(
+      removedSessions.map((session) => unregisterInteractiveSessionCredentialPolicy(env, session)),
+    );
     const archives = await db
       .selectFrom("interactive_session_log_archives")
       .selectAll()
@@ -2189,6 +2558,7 @@ async function mutateInteractiveSession(
 
   if (action === "stop") {
     if (!canManage) throw forbidden("only the session owner or maintainer can stop");
+    await unregisterInteractiveSessionCredentialPolicy(env, session);
     await database(env)
       .updateTable("interactive_sessions")
       .set({
@@ -2216,6 +2586,31 @@ async function mutateInteractiveSession(
   }
 
   throw badRequest("unknown action");
+}
+
+async function unregisterSandboxCredentialPolicy(
+  env: RuntimeEnv,
+  sandboxId: string,
+): Promise<void> {
+  const stub = sandboxControlStub(env);
+  if (!stub) return;
+  await Promise.all(
+    sandboxLookupIds(env, sandboxId).map((lookupId) =>
+      stub.fetch(
+        `https://crabfleet.internal/api/session-control/sandbox/${encodeURIComponent(lookupId)}`,
+        { method: "DELETE" },
+      ),
+    ),
+  );
+}
+
+async function unregisterInteractiveSessionCredentialPolicy(
+  env: RuntimeEnv,
+  session: Pick<InteractiveSession, "id" | "leaseId">,
+): Promise<void> {
+  if (session.leaseId?.startsWith(sandboxLeasePrefix)) {
+    await unregisterSandboxCredentialPolicy(env, sandboxLeaseInfo(session).sandboxId);
+  }
 }
 
 async function interactiveTerminalHub(
@@ -2746,11 +3141,11 @@ async function markInteractiveTerminalUnavailable(
 ): Promise<void> {
   const existing = await database(env)
     .selectFrom("interactive_sessions")
-    .select("status")
+    .select(["id", "lease_id", "status"])
     .where("id", "=", id)
     .executeTakeFirst();
   if (!existing || ["expired", "failed", "stopped"].includes(existing.status)) return;
-  await database(env)
+  const update = await database(env)
     .updateTable("interactive_sessions")
     .set({
       status: "expired",
@@ -2760,7 +3155,13 @@ async function markInteractiveTerminalUnavailable(
     })
     .where("id", "=", id)
     .where("status", "not in", ["expired", "failed", "stopped"])
-    .execute();
+    .executeTakeFirst();
+  if ((update.numUpdatedRows ?? 0n) > 0n) {
+    await unregisterInteractiveSessionCredentialPolicy(env, {
+      id: existing.id,
+      leaseId: existing.lease_id,
+    });
+  }
   await appendInteractiveSessionLog(env, id, user, message, now);
 }
 
@@ -3135,6 +3536,7 @@ const diagnostics = {
   cwd: process.cwd(),
   checkout,
   github: {
+    credentialProxy: process.env.CRABFLEET_SANDBOX === "1",
     credentialFilePresent: fs.existsSync(home + "/.config/crabbox/github-credential"),
     ghAuthenticated: Boolean(run("gh", ["api", "user", "--jq", ".login"])),
     repo,
@@ -3175,6 +3577,157 @@ NODE
       },
     };
   }
+}
+
+async function listInteractiveSessionCheckpoints(
+  env: RuntimeEnv,
+  user: User,
+  id: string,
+): Promise<{ checkpoints: Array<Omit<SandboxCheckpoint, "backup">>; session: InteractiveSession }> {
+  const session = await managedSandboxSession(env, user, id);
+  const stub = sandboxControlStub(env);
+  if (!stub) throw serviceUnavailable("SESSION_CONTROL Durable Object is not configured");
+  const response = await stub.fetch(
+    `https://crabfleet.internal/api/session-control/checkpoints/${encodeURIComponent(id)}`,
+  );
+  if (!response.ok) throw serviceUnavailable("checkpoint registry is unavailable");
+  const body = (await response.json()) as { checkpoints?: SandboxCheckpoint[] };
+  return {
+    checkpoints: (body.checkpoints ?? []).map(({ backup: _backup, ...checkpoint }) => checkpoint),
+    session: decorateInteractiveSession(session, user, env),
+  };
+}
+
+async function checkpointInteractiveSession(
+  env: RuntimeEnv,
+  user: User,
+  id: string,
+): Promise<{ checkpoint: Omit<SandboxCheckpoint, "backup">; session: InteractiveSession }> {
+  const session = await managedSandboxSession(env, user, id);
+  const lease = sandboxLeaseInfo(session);
+  const sandbox = getManagedSandbox(env, session);
+  const workdir = sandboxWorkdir(id);
+  const name = `checkpoint-${Date.now()}`;
+  const backup = await sandbox.createBackup(sandboxBackupOptions(env, workdir, name));
+  const checkpoint: SandboxCheckpoint = {
+    backup,
+    createdAt: Date.now(),
+    id: backup.id,
+    name,
+    sessionId: id,
+    workdir,
+  };
+  const stub = sandboxControlStub(env);
+  if (!stub) throw serviceUnavailable("SESSION_CONTROL Durable Object is not configured");
+  const response = await stub.fetch("https://crabfleet.internal/api/session-control/checkpoints", {
+    method: "POST",
+    body: JSON.stringify(checkpoint),
+    headers: { "content-type": "application/json" },
+  });
+  if (!response.ok) throw serviceUnavailable("checkpoint registry is unavailable");
+  await appendInteractiveSessionEvent(
+    env,
+    id,
+    user,
+    `checkpoint created ${checkpoint.id} in ${lease.sandboxId}`,
+    Date.now(),
+  );
+  return {
+    checkpoint: (({ backup: _backup, ...item }) => item)(checkpoint),
+    session: decorateInteractiveSession(session, user, env),
+  };
+}
+
+async function restoreInteractiveSessionCheckpoint(
+  env: RuntimeEnv,
+  user: User,
+  id: string,
+  checkpointId: string,
+): Promise<{ checkpoint: Omit<SandboxCheckpoint, "backup">; session: InteractiveSession }> {
+  const session = await managedSandboxSession(env, user, id);
+  const stub = sandboxControlStub(env);
+  if (!stub) throw serviceUnavailable("SESSION_CONTROL Durable Object is not configured");
+  const response = await stub.fetch(
+    `https://crabfleet.internal/api/session-control/checkpoints/${encodeURIComponent(
+      id,
+    )}/${encodeURIComponent(checkpointId)}`,
+  );
+  if (!response.ok) throw notFound("checkpoint not found");
+  const body = (await response.json()) as { checkpoint?: SandboxCheckpoint };
+  if (!body.checkpoint) throw notFound("checkpoint not found");
+  const sandbox = getManagedSandbox(env, session);
+  await sandbox.restoreBackup(body.checkpoint.backup);
+  await appendInteractiveSessionEvent(
+    env,
+    id,
+    user,
+    `checkpoint restored ${body.checkpoint.id}`,
+    Date.now(),
+  );
+  return {
+    checkpoint: (({ backup: _backup, ...item }) => item)(body.checkpoint),
+    session: decorateInteractiveSession(session, user, env),
+  };
+}
+
+function sandboxBackupOptions(env: RuntimeEnv, workdir: string, name: string): BackupOptions {
+  const localBucket = env.CRABFLEET_LOCAL_SANDBOX_BACKUPS !== "0";
+  if (localBucket && !env.BACKUP_BUCKET) {
+    throw serviceUnavailable("checkpoint backups require the BACKUP_BUCKET R2 binding");
+  }
+  if (!localBucket && !sandboxHasPresignedBackupConfig(env)) {
+    throw serviceUnavailable(
+      "checkpoint backups require BACKUP_BUCKET plus CLOUDFLARE_ACCOUNT_ID, BACKUP_BUCKET_NAME, R2_ACCESS_KEY_ID, and R2_SECRET_ACCESS_KEY",
+    );
+  }
+  return {
+    dir: workdir,
+    excludes: ["node_modules", ".pnpm-store", ".cache", "dist", "build"],
+    gitignore: true,
+    ...(localBucket ? { localBucket: true } : {}),
+    name,
+  };
+}
+
+function sandboxHasPresignedBackupConfig(env: RuntimeEnv): boolean {
+  return Boolean(
+    env.BACKUP_BUCKET &&
+    env.CLOUDFLARE_ACCOUNT_ID &&
+    env.BACKUP_BUCKET_NAME &&
+    env.R2_ACCESS_KEY_ID &&
+    env.R2_SECRET_ACCESS_KEY,
+  );
+}
+
+async function managedSandboxSession(
+  env: RuntimeEnv,
+  user: User,
+  id: string,
+): Promise<InteractiveSession> {
+  const session = await readInteractiveSession(env, id);
+  if (!session) throw notFound("interactive session not found");
+  if (!canManageInteractiveSession(user, session)) {
+    throw forbidden("only the session owner or maintainer can manage checkpoints");
+  }
+  if (!env.SANDBOX || !session.leaseId?.startsWith(sandboxLeasePrefix)) {
+    throw badRequest("checkpoints require a Cloudflare Sandbox session");
+  }
+  if (["expired", "failed", "stopped"].includes(session.status)) {
+    throw badRequest(`session is ${session.status}`);
+  }
+  return session;
+}
+
+function getManagedSandbox(env: RuntimeEnv, session: InteractiveSession): CloudflareSandbox {
+  if (!env.SANDBOX) throw serviceUnavailable("Sandbox binding is not configured");
+  const lease = sandboxLeaseInfo(session);
+  return getSandbox(env.SANDBOX, lease.sandboxId);
+}
+
+function sandboxBackupAllowedHosts(env: RuntimeEnv): string[] {
+  return env.CLOUDFLARE_ACCOUNT_ID && env.BACKUP_BUCKET_NAME
+    ? [`${env.CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com`]
+    : [];
 }
 
 function interactiveTerminalTarget(
@@ -3541,6 +4094,9 @@ async function provisionWithSandbox(
   if (!env.SANDBOX) {
     return failedProvision("Cloudflare Sandbox binding is not configured");
   }
+  if (!env.SESSION_CONTROL) {
+    return failedProvision("SESSION_CONTROL Durable Object is not configured");
+  }
   if (!env.OPENAI_API_KEY) {
     return failedProvision("OPENAI_API_KEY is not configured for Cloudflare Sandbox Codex");
   }
@@ -3549,8 +4105,10 @@ async function provisionWithSandbox(
   const workdir = sandboxWorkdir(session.id);
   const sandbox = getSandbox(env.SANDBOX, lease.sandboxId);
   try {
+    await registerSandboxCredentialPolicy(env, session, lease.sandboxId);
     await setupSandboxTerminalSession(sandbox, env, session, workdir, lease.terminalSessionId);
   } catch (error) {
+    await unregisterSandboxCredentialPolicy(env, lease.sandboxId);
     const message = clean(error instanceof Error ? error.message : String(error), 240);
     return failedProvision(`Cloudflare Sandbox provision failed: ${message}`);
   }
@@ -3564,13 +4122,160 @@ async function provisionWithSandbox(
   };
 }
 
+async function registerSandboxCredentialPolicy(
+  env: RuntimeEnv,
+  session: SandboxRuntimeSession,
+  sandboxId: string,
+): Promise<void> {
+  const stub = sandboxControlStub(env);
+  if (!stub) throw new Error("SESSION_CONTROL Durable Object is not configured");
+  const githubToken = "githubToken" in session ? session.githubToken : undefined;
+  const githubTokenCiphertext = githubToken ? await sealSecret(env, githubToken) : null;
+  if (githubToken && !githubTokenCiphertext) {
+    throw new Error(
+      "CRABBOX_TOKEN_ENCRYPTION_KEY or GITHUB_CLIENT_SECRET is required for user GitHub tokens",
+    );
+  }
+  const effectiveGithubToken = githubToken ?? env.GITHUB_TOKEN;
+  const githubRepoNodeId = effectiveGithubToken
+    ? await fetchGithubRepoNodeId(session.repo, effectiveGithubToken)
+    : null;
+  const policy: SandboxCredentialPolicy = {
+    allowedHosts: sandboxBackupAllowedHosts(env),
+    githubRepo: session.repo,
+    owner: session.owner,
+    sandboxId,
+    sessionId: session.id,
+    ...(githubRepoNodeId ? { githubRepoNodeId } : {}),
+    ...(githubTokenCiphertext ? { githubTokenCiphertext } : {}),
+    ...(env.OPENAI_BASE_URL ? { openAIBaseUrl: env.OPENAI_BASE_URL } : {}),
+    ...(env.OPENAI_ORG_ID ? { openAIOrgId: env.OPENAI_ORG_ID } : {}),
+  };
+  for (const lookupId of sandboxLookupIds(env, sandboxId)) {
+    const response = await stub.fetch("https://crabfleet.internal/api/session-control/register", {
+      method: "POST",
+      body: JSON.stringify({ ...policy, sandboxId: lookupId }),
+      headers: { "content-type": "application/json" },
+    });
+    if (!response.ok) {
+      throw new Error("sandbox credential policy registration failed");
+    }
+  }
+}
+
+async function ensureSandboxCredentialPolicy(
+  env: RuntimeEnv,
+  session: SandboxRuntimeSession,
+  sandboxId: string,
+): Promise<void> {
+  const hasFreshUserToken = Boolean("githubToken" in session && session.githubToken);
+  if (!hasFreshUserToken && (await sandboxCredentialPolicyExists(env, sandboxId))) return;
+  await registerSandboxCredentialPolicy(env, session, sandboxId);
+}
+
+async function sandboxCredentialPolicyExists(env: RuntimeEnv, sandboxId: string): Promise<boolean> {
+  const stub = sandboxControlStub(env);
+  if (!stub) return false;
+  const responses = await Promise.all(
+    sandboxLookupIds(env, sandboxId).map((lookupId) =>
+      stub.fetch(
+        `https://crabfleet.internal/api/session-control/egress/${encodeURIComponent(lookupId)}`,
+      ),
+    ),
+  );
+  return responses.some((response) => response.ok);
+}
+
+async function fetchGithubRepoNodeId(repo: string, token: string): Promise<string> {
+  const response = await fetch(`https://api.github.com/repos/${repo}`, {
+    headers: {
+      accept: "application/vnd.github+json",
+      authorization: `Bearer ${token}`,
+      "user-agent": "crabfleet",
+      "x-github-api-version": "2022-11-28",
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`GitHub repository metadata lookup failed for ${repo}`);
+  }
+  const body = (await response.json()) as { node_id?: unknown };
+  if (typeof body.node_id !== "string" || !body.node_id) {
+    throw new Error(`GitHub repository metadata lookup did not include node_id for ${repo}`);
+  }
+  return body.node_id;
+}
+
+async function githubNodeBelongsToRepo(
+  nodeId: string,
+  repo: string,
+  token: string,
+): Promise<boolean> {
+  const [owner, name] = repo.toLowerCase().split("/");
+  if (!owner || !name) return false;
+  const response = await fetch("https://api.github.com/graphql", {
+    method: "POST",
+    body: JSON.stringify({
+      query: `query($id: ID!) {
+        node(id: $id) {
+          __typename
+          ... on Repository {
+            owner { login }
+            name
+          }
+          ... on RepositoryNode {
+            repository { owner { login } name }
+          }
+        }
+      }`,
+      variables: { id: nodeId },
+    }),
+    headers: {
+      accept: "application/vnd.github+json",
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+      "user-agent": "crabfleet",
+      "x-github-api-version": "2022-11-28",
+    },
+  });
+  if (!response.ok) return false;
+  const body = (await response.json().catch(() => null)) as {
+    data?: {
+      node?: {
+        name?: unknown;
+        owner?: { login?: unknown };
+        repository?: { name?: unknown; owner?: { login?: unknown } };
+      };
+    };
+    errors?: unknown;
+  } | null;
+  if (!body || body.errors) return false;
+  const node = body.data?.node;
+  const repository = node?.repository ?? node;
+  return (
+    typeof repository?.owner?.login === "string" &&
+    typeof repository.name === "string" &&
+    repository.owner.login.toLowerCase() === owner &&
+    repository.name.toLowerCase() === name
+  );
+}
+
+function sandboxLookupIds(env: RuntimeEnv, sandboxId: string): string[] {
+  const ids = new Set([sandboxId]);
+  if (env.SANDBOX) ids.add(env.SANDBOX.idFromName(sandboxId).toString());
+  return [...ids];
+}
+
 async function ensureCurrentSandboxLease(
   request: Request,
   env: RuntimeEnv,
   user: User | null,
   session: InteractiveSession & { githubToken?: string },
 ): Promise<InteractiveSession & { githubToken?: string }> {
-  if (!env.SANDBOX || isCurrentSandboxLease(session.leaseId)) return session;
+  if (!env.SANDBOX) return session;
+  if (isCurrentSandboxLease(session.leaseId)) {
+    await ensureSandboxCredentialPolicy(env, session, sandboxLeaseInfo(session).sandboxId);
+    return session;
+  }
   const originalLeaseId = session.leaseId;
   if (!originalLeaseId) {
     throw serviceUnavailable("Cloudflare Sandbox lease refresh is already in progress");
@@ -3590,6 +4295,9 @@ async function ensureCurrentSandboxLease(
     throw forbidden("GitHub PR credentials are not connected; sign in with GitHub again");
   }
   const fallbackLeaseId = sandboxLeaseWithoutRefresh(originalLeaseId);
+  const oldSandboxId = originalLeaseId.startsWith(sandboxLeasePrefix)
+    ? sandboxLeaseInfo({ id: session.id, leaseId: fallbackLeaseId }).sandboxId
+    : null;
   const refreshLeaseId = `${fallbackLeaseId}:refreshing-${now}-${crypto.randomUUID().slice(0, 8)}`;
   const claim = await database(env)
     .updateTable("interactive_sessions")
@@ -3646,9 +4354,21 @@ async function ensureCurrentSandboxLease(
     .where("status", "in", ["ready", "attached", "detached"])
     .executeTakeFirst();
   if ((update.numUpdatedRows ?? 0n) === 0n) {
+    if (provisioned.leaseId?.startsWith(sandboxLeasePrefix)) {
+      await unregisterSandboxCredentialPolicy(
+        env,
+        sandboxLeaseInfo({ id: session.id, leaseId: provisioned.leaseId }).sandboxId,
+      );
+    }
     const current = await readInteractiveSession(env, session.id);
     if (current && isCurrentSandboxLease(current.leaseId)) return current;
     throw serviceUnavailable("Cloudflare Sandbox lease refresh is already in progress");
+  }
+  const newSandboxId = provisioned.leaseId?.startsWith(sandboxLeasePrefix)
+    ? sandboxLeaseInfo({ id: session.id, leaseId: provisioned.leaseId }).sandboxId
+    : null;
+  if (oldSandboxId && oldSandboxId !== newSandboxId) {
+    await unregisterSandboxCredentialPolicy(env, oldSandboxId);
   }
   await appendInteractiveSessionLog(
     env,
@@ -3681,10 +4401,6 @@ async function prepareSandboxWorkspace(
   const quotedPrompt = shellQuote(session.prompt);
   const checkoutErrorPath = sandboxCheckoutErrorPath(session.id);
   const quotedCheckoutErrorPath = shellQuote(checkoutErrorPath);
-  const quotedGitAskpassPath = shellQuote(
-    `/tmp/crabbox-git-askpass-${sandboxIdForSession(session.id)}.sh`,
-  );
-  const githubEnv = sandboxGitHubTokenEnv(env, session);
   const resetResult = await sandbox.exec(
     [
       `if [ ! -d ${quotedWorkdir}/.git ]; then`,
@@ -3704,27 +4420,19 @@ async function prepareSandboxWorkspace(
   const result = await sandbox.exec(
     [
       "checkout_status=0",
-      `cat > ${quotedGitAskpassPath} <<'EOF'`,
+      "cat > /tmp/crabbox-git-askpass-placeholder.sh <<'EOF'",
       "#!/bin/sh",
-      'prompt="$1"',
-      'case "$prompt" in',
-      "  *github.com*)",
-      '    case "$prompt" in',
-      "      *Username*) printf '%s\\n' x-access-token ;;",
-      "      *Password*) printf '%s\\n' \"$GITHUB_TOKEN\" ;;",
-      "      *) exit 1 ;;",
-      "    esac",
-      "    ;;",
+      'case "$1" in',
+      "  *Username*) printf '%s\\n' x-access-token ;;",
+      `  *Password*) printf '%s\\n' ${shellQuote(sandboxPlaceholderGitHubToken)} ;;`,
       "  *) exit 1 ;;",
       "esac",
       "EOF",
-      `chmod 700 ${quotedGitAskpassPath}`,
+      "chmod 700 /tmp/crabbox-git-askpass-placeholder.sh",
       "git_with_github_auth() {",
-      '  if [ -n "${GITHUB_TOKEN:-}" ]; then',
-      `    GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=${quotedGitAskpassPath} git -c credential.helper= "$@"`,
-      "  else",
-      '    GIT_TERMINAL_PROMPT=0 git "$@"',
-      "  fi",
+      `  GIT_TERMINAL_PROMPT=0 GIT_USERNAME=x-access-token GIT_PASSWORD=${shellQuote(
+        sandboxPlaceholderGitHubToken,
+      )} GIT_ASKPASS=${shellQuote("/tmp/crabbox-git-askpass-placeholder.sh")} git -c credential.helper= "$@"`,
       "}",
       `if [ ! -d ${quotedWorkdir}/.git ]; then`,
       `  tmp="${workdir}.clone.$$"`,
@@ -3771,7 +4479,7 @@ async function prepareSandboxWorkspace(
       `  printf '\\nCRABBOX_CHECKOUT_FAILED %s\\n' "$checkout_status"`,
       `fi`,
     ].join("\n"),
-    { timeout: 120_000, env: githubEnv },
+    { timeout: 120_000 },
   );
   const checkoutMarker = result.stdout.trim().split(/\r?\n/).at(-1);
   if (!result.success || checkoutMarker !== "CRABBOX_CHECKOUT_OK") {
@@ -3836,7 +4544,7 @@ fi
     {
       timeout: 60_000,
       env: {
-        OPENAI_API_KEY: env.OPENAI_API_KEY,
+        OPENAI_API_KEY: env.OPENAI_API_KEY ? sandboxPlaceholderOpenAIKey : undefined,
         OPENAI_BASE_URL: env.OPENAI_BASE_URL,
         OPENAI_ORG_ID: env.OPENAI_ORG_ID,
       },
@@ -3882,26 +4590,17 @@ if [ -z "$installed_codex" ] || { [ -n "$latest_codex" ] && [ "$installed_codex"
     npm install -g @openai/codex@latest >/tmp/crabbox-codex-install.log 2>&1
   fi
 fi
-if [ -n "\${GITHUB_TOKEN:-}" ]; then
-  crabbox_credential_file="$HOME/.config/crabbox/github-credential"
-  mkdir -p "$(dirname "$crabbox_credential_file")"
-  {
-    printf 'username=x-access-token\\n'
-    printf 'password=%s\\n' "$GITHUB_TOKEN"
-  } > "$crabbox_credential_file"
-  chmod 600 "$crabbox_credential_file"
-  git config --global credential.helper "!f() { test \\"\\$1\\" = get && cat '$crabbox_credential_file'; }; f"
-  git config --global user.name ${shellQuote(session.owner)}
-  git config --global user.email ${shellQuote(`${session.owner}@users.noreply.github.com`)}
-  if command -v gh >/dev/null 2>&1; then
-    printf '%s\\n' "$GITHUB_TOKEN" | gh auth login --hostname github.com --with-token >/dev/null 2>&1 || true
-    gh auth setup-git -h github.com >/dev/null 2>&1 || true
-    chmod -R go-rwx "$HOME/.config/gh" 2>/dev/null || true
-  fi
-fi
+rm -f "$HOME/.config/crabbox/github-credential" 2>/dev/null || true
+rm -rf "$HOME/.config/gh" "$HOME/.local/share/gh" 2>/dev/null || true
+git config --global --unset-all credential.helper 2>/dev/null || true
+git config --global credential.helper "!f() { test \\"\\$1\\" = get || exit 0; printf 'username=x-access-token\\n'; printf 'password=%s\\n' ${shellQuote(sandboxPlaceholderGitHubToken)}; }; f"
+git config --global user.name ${shellQuote(session.owner)}
+git config --global user.email ${shellQuote(`${session.owner}@users.noreply.github.com`)}
 mkdir -p "$(dirname ${shellQuote(autostartScript)})"
 cat > ${shellQuote(autostartScript)} <<'EOF'
 export CODEX_HOME="$HOME/.codex"
+export GITHUB_TOKEN=${shellQuote(sandboxPlaceholderGitHubToken)}
+export GH_TOKEN=${shellQuote(sandboxPlaceholderGitHubToken)}
 export CRABBOX_SESSION_ID=${shellQuote(session.id)}
 export CRABBOX_REPO=${shellQuote(session.repo)}
 export CRABBOX_BRANCH=${shellQuote(session.branch)}
@@ -4028,7 +4727,6 @@ async function sandboxTerminalProfileExists(
   const autostartScript = sandboxAutostartScriptPath(session.id);
   const terminalShell = sandboxTerminalShellPath(session.id);
   const repoUrl = `https://github.com/${session.repo}.git`;
-  const requiresGitHubAuth = Boolean(sandboxGitHubTokenEnv(env, session).GITHUB_TOKEN);
   const checks = [
     `test -d ${shellQuote(workdir)}`,
     `test -d ${shellQuote(workdir)}/.git`,
@@ -4040,16 +4738,11 @@ async function sandboxTerminalProfileExists(
     `test -x ${shellQuote(terminalShell)}`,
     `grep -Fqx '[shell_environment_policy]' "$HOME/.codex/config.toml"`,
     `grep -Fqx '[projects."/workspace"]' "$HOME/.codex/config.toml"`,
+    `node -e 'const fs=require("fs"); const p=process.env.HOME+"/.codex/auth.json"; const auth=JSON.parse(fs.readFileSync(p,"utf8")); process.exit(auth.OPENAI_API_KEY==="crabfleet-worker-injected"?0:1)'`,
     `grep -Fqx '        cd "$CRABBOX_WORKDIR" 2>/dev/null || {' ${shellQuote(autostartScript)}`,
     `grep -Fqx ${marker} "$HOME/.bashrc"`,
+    `test ! -e "$HOME/.config/crabbox/github-credential"`,
   ];
-  if (requiresGitHubAuth) {
-    checks.push(
-      `test -s "$HOME/.config/crabbox/github-credential"`,
-      `git config --global --get-all credential.helper | grep -F "$HOME/.config/crabbox/github-credential" >/dev/null`,
-      `! command -v gh >/dev/null 2>&1 || gh auth status -h github.com >/dev/null 2>&1`,
-    );
-  }
   const result = await setup.exec(checks.join(" && "), { timeout: 10_000 });
   return result.success;
 }
@@ -4074,7 +4767,7 @@ async function setupSandboxTerminalSession(
   );
   await runSandboxSetupStep("Codex auth", () => prepareSandboxCodexAuth(setup, env, workdir));
   await runSandboxSetupStep("runtime tools", () =>
-    prepareSandboxRuntimeTools(setup, session, workdir, sandboxGitHubTokenEnv(env, session)),
+    prepareSandboxRuntimeTools(setup, session, workdir),
   );
   await runSandboxSetupStep("terminal session", () =>
     createFreshSandboxSession(sandbox, terminalSessionId, workdir, sessionEnv),
@@ -4107,13 +4800,20 @@ function sandboxSessionEnv(
     CRABBOX_RUNTIME: session.runtime,
     TERM: "xterm-256color",
     COLORTERM: "truecolor",
+    GH_TOKEN: sandboxHasGitHubCredential(env, session) ? sandboxPlaceholderGitHubToken : undefined,
+    GITHUB_TOKEN: sandboxHasGitHubCredential(env, session)
+      ? sandboxPlaceholderGitHubToken
+      : undefined,
     TERM_PROGRAM: "ghostty",
     TERM_PROGRAM_VERSION: "web",
-    ...sandboxGitHubTokenEnv(env, session),
-    OPENAI_API_KEY: env.OPENAI_API_KEY,
+    OPENAI_API_KEY: env.OPENAI_API_KEY ? sandboxPlaceholderOpenAIKey : undefined,
     OPENAI_BASE_URL: env.OPENAI_BASE_URL,
     OPENAI_ORG_ID: env.OPENAI_ORG_ID,
   };
+}
+
+function sandboxHasGitHubCredential(env: RuntimeEnv, session: SandboxRuntimeSession): boolean {
+  return Boolean(("githubToken" in session && session.githubToken) || env.GITHUB_TOKEN);
 }
 
 function githubTokenEnv(session: Pick<InteractiveProvisionRequest, "githubToken">): {
@@ -4123,15 +4823,6 @@ function githubTokenEnv(session: Pick<InteractiveProvisionRequest, "githubToken"
   return session.githubToken
     ? { GITHUB_TOKEN: session.githubToken, GH_TOKEN: session.githubToken }
     : {};
-}
-
-function sandboxGitHubTokenEnv(
-  env: RuntimeEnv,
-  session: SandboxRuntimeSession,
-): { GITHUB_TOKEN?: string; GH_TOKEN?: string } {
-  const token = "githubToken" in session ? session.githubToken : undefined;
-  const githubToken = token || env.GITHUB_TOKEN;
-  return githubToken ? { GITHUB_TOKEN: githubToken, GH_TOKEN: githubToken } : {};
 }
 
 async function forwardRuntimeProvision(
