@@ -1741,8 +1741,8 @@ function InteractiveDrawer({ drawers, closeDrawer, createInteractiveSession, sta
         <label>
           Runtime
           <select name="runtime">
-            <option value="crabbox">Crabbox</option>
             <option value="container">Cloudflare Sandbox</option>
+            <option value="crabbox">Crabbox</option>
           </select>
         </label>
         <label>

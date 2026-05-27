@@ -2140,7 +2140,7 @@ async function createInteractiveSessionFromInput(
   if (!repo) throw badRequest("repo is required");
   await requireRepo(env, repo);
   const branch = clean(body.branch, 120) || "main";
-  const runtime = oneOf(body.runtime, ["crabbox", "container"], "crabbox") as
+  const runtime = oneOf(body.runtime, ["crabbox", "container"], "container") as
     | "crabbox"
     | "container";
   const command = interactiveCommand(body.command);
@@ -3970,6 +3970,9 @@ async function provisionInteractiveSession(
 ): Promise<InteractiveProvisionResult | null> {
   if (session.runtime === "container" && env.SANDBOX) return provisionWithSandbox(env, session);
   if (!env.CRABBOX_INTERACTIVE_PROVISION_URL) return null;
+  if (isBuiltInInteractiveProvisionUrl(env.CRABBOX_INTERACTIVE_PROVISION_URL)) {
+    return provisionInteractivePayload(env, session);
+  }
   let response: Response;
   try {
     const headers = new Headers({ "content-type": "application/json" });
@@ -4028,7 +4031,7 @@ async function provisionInteractiveEndpoint(
   const id = clean(session.id, 120);
   const repo = normalizeRepo(session.repo);
   const branch = clean(session.branch, 120) || "main";
-  const runtime = oneOf(session.runtime, ["crabbox", "container"], "crabbox") as
+  const runtime = oneOf(session.runtime, ["crabbox", "container"], "container") as
     | "crabbox"
     | "container";
   const command = interactiveCommand(session.command);
@@ -4049,6 +4052,26 @@ async function provisionInteractiveEndpoint(
     owner,
     ...(githubToken ? { githubToken } : {}),
   };
+  return provisionInteractivePayload(env, payload);
+}
+
+function isBuiltInInteractiveProvisionUrl(value: string): boolean {
+  if (value === "/api/provision/interactive") return true;
+  try {
+    const url = new URL(value);
+    return (
+      url.pathname === "/api/provision/interactive" &&
+      (url.hostname === "crabfleet.ai" || url.hostname === "crabbox-ai.services-91b.workers.dev")
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function provisionInteractivePayload(
+  env: RuntimeEnv,
+  payload: InteractiveProvisionRequest,
+): Promise<InteractiveProvisionResult> {
   if (payload.runtime === "container" && env.SANDBOX) {
     return provisionWithSandbox(env, payload);
   }
@@ -6985,7 +7008,7 @@ function selectRuntimeDescriptor(
   if (workflow?.runtime === "container") {
     return runtimeDescriptor("container", "repo CRABBOX.md runtime default");
   }
-  return runtimeDescriptor("crabbox", "default crabbox runtime");
+  return runtimeDescriptor("container", "default container runtime");
 }
 
 function runtimeDescriptor(

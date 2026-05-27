@@ -223,7 +223,7 @@ export function optimisticInteractiveSession(data, owner) {
   const now = Date.now();
   const repo = String(data.get("repo") || preferredRepo);
   const branch = String(data.get("branch") || "main");
-  const runtime = String(data.get("runtime") || "crabbox");
+  const runtime = String(data.get("runtime") || "container");
   const runtimeLabel = runtime === "crabbox" ? "Crabbox" : "Cloudflare Sandbox";
   return {
     id: `LOCAL-${now}`,

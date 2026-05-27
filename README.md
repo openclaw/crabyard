@@ -68,7 +68,7 @@ Add users/teams to the allowlist and enable repos:
 ### 5. Start Crabboxes
 
 - Click "New crabbox" to request a standalone Codex CLI workspace
-- Default runtime is Crabbox so VNC can be attached when the provision adapter returns a URL
+- Default runtime is Cloudflare Sandbox; choose Crabbox only when a VNC/desktop adapter is configured
 - Without `CRABBOX_INTERACTIVE_PROVISION_URL`, sessions are stored as `pending_adapter` and still visible in the grid
 - Install or build the Go CLI, then run `crabfleet new --repo openclaw/crabfleet "fix the failing check"`
 
