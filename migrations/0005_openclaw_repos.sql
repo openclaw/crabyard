@@ -76,7 +76,7 @@ INSERT OR IGNORE INTO repos (repo, enabled, created_at, updated_at) VALUES
   ('openclaw/plugin-inspector', 1, unixepoch() * 1000, unixepoch() * 1000),
   ('openclaw/proxyline', 1, unixepoch() * 1000, unixepoch() * 1000),
   ('openclaw/random-maintainer-tooling', 1, unixepoch() * 1000, unixepoch() * 1000),
-  ('openclaw/releases-private', 1, unixepoch() * 1000, unixepoch() * 1000),
+  ('openclaw/releases', 1, unixepoch() * 1000, unixepoch() * 1000),
   ('openclaw/remindctl', 1, unixepoch() * 1000, unixepoch() * 1000),
   ('openclaw/skills', 1, unixepoch() * 1000, unixepoch() * 1000),
   ('openclaw/songsee', 1, unixepoch() * 1000, unixepoch() * 1000),
