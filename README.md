@@ -1,6 +1,6 @@
-![Crabfleet banner](docs/assets/readme-banner.jpg)
-
 # Crabfleet
+
+![Crabfleet banner](docs/assets/readme-banner.jpg)
 
 **Mission control for Agent runs.**
 
