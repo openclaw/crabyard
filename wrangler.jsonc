@@ -73,7 +73,11 @@
   "workers_dev": true,
   // The canonical app/API host is deployed as a Worker Custom Domain so the
   // normal deploy token can converge DNS without the separate DNS token.
-  "routes": [{ "pattern": "clawfleet.openclaw.ai", "custom_domain": true }],
+  "routes": [
+    { "pattern": "clawfleet.openclaw.ai", "custom_domain": true },
+    { "pattern": "crabfleet.openclaw.ai", "custom_domain": true },
+    { "pattern": "crabyard.openclaw.ai", "custom_domain": true },
+  ],
   "observability": {
     "enabled": true,
   },

@@ -1,10 +1,13 @@
 const token = process.env.CLOUDFLARE_API_TOKEN;
-const accountId = process.env.CLOUDFLARE_ACCOUNT_ID || "91b59577e757131d68d55a471fe32aca";
 const workerScript = "crabbox-ai";
 const appHost = "clawfleet.openclaw.ai";
-// The canonical host is a Worker Custom Domain in wrangler.jsonc; this script
-// only removes stale classic routes for it and keeps legacy aliases tidy.
-const legacyOpenClawHosts = new Set(["crabfleet.openclaw.ai", "crabyard.openclaw.ai"]);
+// OpenClaw app hosts are Worker Custom Domains in wrangler.jsonc; this script
+// only removes stale classic routes for them and keeps other aliases tidy.
+const openClawCustomDomainHosts = new Set([
+  appHost,
+  "crabfleet.openclaw.ai",
+  "crabyard.openclaw.ai",
+]);
 const legacyCrabfleetHosts = new Set(["crabfleet.ai", "www.crabfleet.ai"]);
 
 if (!token) {
@@ -141,28 +144,14 @@ async function ensureCrabfleetDocsRecord() {
   }
 }
 
-async function removeOldOpenClawCustomDomains() {
-  const domains = await request(
-    `/accounts/${accountId}/workers/scripts/crabbox-ai/domains/records`,
-  );
-  for (const domain of domains.filter((entry) => legacyOpenClawHosts.has(entry.hostname))) {
-    await request(
-      `/accounts/${accountId}/workers/scripts/crabbox-ai/domains/records/${domain.id}`,
-      {
-        method: "DELETE",
-      },
-    );
-    console.log(`deleted legacy OpenClaw custom domain ${domain.hostname}`);
-  }
-}
-
-async function removeCanonicalClassicRoute() {
+async function removeOpenClawClassicRoutes() {
   const openclaw = await zone("openclaw.ai");
-  const pattern = `${appHost}/*`;
   const routes = await request(`/zones/${openclaw.id}/workers/routes`);
-  for (const route of routes.filter((entry) => entry.pattern === pattern)) {
+  for (const route of routes.filter((entry) =>
+    openClawCustomDomainHosts.has(entry.pattern.replace(/\/\*$/, "")),
+  )) {
     await request(`/zones/${openclaw.id}/workers/routes/${route.id}`, { method: "DELETE" });
-    console.log(`deleted stale ${appHost} classic route ${route.id}`);
+    console.log(`deleted stale ${route.pattern} classic route ${route.id}`);
   }
 }
 
@@ -214,13 +203,9 @@ async function ensureCrabdSshRecord() {
   }
 }
 
-await removeCanonicalClassicRoute();
-for (const host of legacyOpenClawHosts) {
-  await ensureWorkerHost("openclaw.ai", host);
-}
+await removeOpenClawClassicRoutes();
 for (const host of legacyCrabfleetHosts) {
   await ensureWorkerHost("crabfleet.ai", host);
 }
 await ensureCrabfleetDocsRecord();
-await removeOldOpenClawCustomDomains();
 await ensureCrabdSshRecord();
