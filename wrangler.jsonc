@@ -21,7 +21,7 @@
   "vars": {
     "BACKUP_BUCKET_NAME": "crabfleet-session-logs",
     "CLOUDFLARE_ACCOUNT_ID": "91b59577e757131d68d55a471fe32aca",
-    "CRABBOX_INTERACTIVE_PROVISION_URL": "https://crabfleet.ai/api/provision/interactive",
+    "CRABBOX_INTERACTIVE_PROVISION_URL": "https://clawfleet.openclaw.ai/api/provision/interactive",
   },
   "d1_databases": [
     {
@@ -71,7 +71,7 @@
     },
   ],
   "workers_dev": true,
-  // crabfleet.ai/* is managed by scripts/ensure-cloudflare-domains.mjs so
+  // clawfleet.openclaw.ai/* is managed by scripts/ensure-cloudflare-domains.mjs so
   // normal Worker deploys do not require zone/route permissions.
   "observability": {
     "enabled": true,

@@ -653,6 +653,15 @@ const sshLinkSeconds = 5 * 60;
 const terminalClipboardMaxBytes = 10 * 1024 * 1024;
 const lanes = ["Todo", "Running", "Human Review", "Done"];
 const preferredRepo = "openclaw/crabfleet";
+const appCanonicalHost = "clawfleet.openclaw.ai";
+const appCanonicalOrigin = `https://${appCanonicalHost}`;
+const appRedirectHosts = new Set([
+  "crabfleet.ai",
+  "www.crabfleet.ai",
+  "crabfleet.openclaw.ai",
+  "crabyard.openclaw.ai",
+  "crabbox-ai.services-91b.workers.dev",
+]);
 const sandboxLeasePrefix = "sandbox:";
 const sandboxLeaseProfile = "autostart-v4";
 const activeRunStatuses: readonly RunStatus[] = ["queued", "leasing", "running"];
@@ -998,6 +1007,9 @@ export default {
     const url = new URL(request.url);
 
     try {
+      const canonicalRedirect = canonicalAppRedirect(url);
+      if (canonicalRedirect) return canonicalRedirect;
+
       if (url.pathname === "/healthz") {
         return text("ok\n", "text/plain; charset=utf-8");
       }
@@ -4061,7 +4073,7 @@ function isBuiltInInteractiveProvisionUrl(value: string): boolean {
     const url = new URL(value);
     return (
       url.pathname === "/api/provision/interactive" &&
-      (url.hostname === "crabfleet.ai" || url.hostname === "crabbox-ai.services-91b.workers.dev")
+      (url.hostname === appCanonicalHost || appRedirectHosts.has(url.hostname))
     );
   } catch {
     return false;
@@ -7493,6 +7505,14 @@ function isConstraintError(error: unknown): boolean {
 function wantsMarkdown(request: Request): boolean {
   const accept = request.headers.get("accept") ?? "";
   return accept.includes("text/markdown");
+}
+
+function canonicalAppRedirect(url: URL): Response | null {
+  if (!appRedirectHosts.has(url.hostname)) return null;
+  const target = new URL(appCanonicalOrigin);
+  target.pathname = url.pathname;
+  target.search = url.search;
+  return Response.redirect(target.toString(), 308);
 }
 
 function text(

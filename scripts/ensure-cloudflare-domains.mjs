@@ -1,5 +1,9 @@
 const token = process.env.CLOUDFLARE_API_TOKEN;
 const accountId = process.env.CLOUDFLARE_ACCOUNT_ID || "91b59577e757131d68d55a471fe32aca";
+const workerScript = "crabbox-ai";
+const appHost = "clawfleet.openclaw.ai";
+const legacyOpenClawHosts = new Set(["crabfleet.openclaw.ai", "crabyard.openclaw.ai"]);
+const legacyCrabfleetHosts = new Set(["crabfleet.ai", "www.crabfleet.ai"]);
 
 if (!token) {
   throw new Error("CLOUDFLARE_API_TOKEN is required");
@@ -33,58 +37,61 @@ async function zone(name) {
   return selected;
 }
 
-async function ensureCrabfleetRoute() {
-  const crabfleet = await zone("crabfleet.ai");
-  const dns = await request(
-    `/zones/${crabfleet.id}/dns_records?name=${encodeURIComponent("crabfleet.ai")}`,
-  );
-  const addressable = dns.filter((record) => ["A", "AAAA", "CNAME"].includes(record.type));
-  if (!addressable.length) {
-    await request(`/zones/${crabfleet.id}/dns_records`, {
-      method: "POST",
-      body: JSON.stringify({
-        type: "A",
-        name: "crabfleet.ai",
-        content: "192.0.2.1",
-        proxied: true,
-        ttl: 1,
-      }),
-    });
-    console.log("created crabfleet.ai proxied placeholder");
-  } else {
-    for (const record of addressable.filter((entry) => !entry.proxied)) {
-      await request(`/zones/${crabfleet.id}/dns_records/${record.id}`, {
-        method: "PUT",
-        body: JSON.stringify({
-          type: record.type,
-          name: record.name,
-          content: record.content,
-          proxied: true,
-          ttl: 1,
-        }),
-      });
-      console.log(`proxied crabfleet.ai ${record.type} record ${record.id}`);
-    }
+async function ensureWorkerHost(zoneName, host) {
+  const targetZone = await zone(zoneName);
+  const dns = await request(`/zones/${targetZone.id}/dns_records?name=${encodeURIComponent(host)}`);
+  for (const record of dns.filter((entry) => entry.type === "AAAA" || entry.type === "CNAME")) {
+    await request(`/zones/${targetZone.id}/dns_records/${record.id}`, { method: "DELETE" });
+    console.log(`deleted conflicting ${host} ${record.type} record ${record.id}`);
   }
 
-  const routes = await request(`/zones/${crabfleet.id}/workers/routes`);
-  for (const route of routes.filter(
-    (entry) => entry.pattern === "crabfleet.ai/*" && entry.script !== "crabbox-ai",
-  )) {
-    await request(`/zones/${crabfleet.id}/workers/routes/${route.id}`, { method: "DELETE" });
-    console.log(`deleted stale crabfleet.ai route ${route.id}`);
-  }
-  const current = await request(`/zones/${crabfleet.id}/workers/routes`);
-  if (
-    !current.some((route) => route.pattern === "crabfleet.ai/*" && route.script === "crabbox-ai")
-  ) {
-    const route = await request(`/zones/${crabfleet.id}/workers/routes`, {
-      method: "POST",
-      body: JSON.stringify({ pattern: "crabfleet.ai/*", script: "crabbox-ai" }),
+  const refreshed = await request(
+    `/zones/${targetZone.id}/dns_records?name=${encodeURIComponent(host)}`,
+  );
+  const [primaryA, ...extraARecords] = refreshed.filter((record) => record.type === "A");
+  const body = {
+    type: "A",
+    name: host,
+    content: "192.0.2.1",
+    proxied: true,
+    ttl: 1,
+  };
+  if (primaryA) {
+    await request(`/zones/${targetZone.id}/dns_records/${primaryA.id}`, {
+      method: "PUT",
+      body: JSON.stringify(body),
     });
-    console.log(`created crabfleet.ai route ${route.id}`);
+    console.log(`set ${host} proxied placeholder`);
   } else {
-    console.log("crabfleet.ai route ok");
+    await request(`/zones/${targetZone.id}/dns_records`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    console.log(`created ${host} proxied placeholder`);
+  }
+
+  for (const record of extraARecords) {
+    await request(`/zones/${targetZone.id}/dns_records/${record.id}`, { method: "DELETE" });
+    console.log(`deleted extra ${host} A record ${record.id}`);
+  }
+
+  const pattern = `${host}/*`;
+  const routes = await request(`/zones/${targetZone.id}/workers/routes`);
+  for (const route of routes.filter(
+    (entry) => entry.pattern === pattern && entry.script !== workerScript,
+  )) {
+    await request(`/zones/${targetZone.id}/workers/routes/${route.id}`, { method: "DELETE" });
+    console.log(`deleted stale ${host} route ${route.id}`);
+  }
+  const current = await request(`/zones/${targetZone.id}/workers/routes`);
+  if (!current.some((route) => route.pattern === pattern && route.script === workerScript)) {
+    const route = await request(`/zones/${targetZone.id}/workers/routes`, {
+      method: "POST",
+      body: JSON.stringify({ pattern, script: workerScript }),
+    });
+    console.log(`created ${host} route ${route.id}`);
+  } else {
+    console.log(`${host} route ok`);
   }
 }
 
@@ -132,30 +139,18 @@ async function ensureCrabfleetDocsRecord() {
   }
 }
 
-async function removeOldOpenClawHosts() {
-  const oldHosts = new Set(["crabfleet.openclaw.ai", "crabyard.openclaw.ai"]);
-
-  const openclaw = await zone("openclaw.ai");
-  const routes = await request(`/zones/${openclaw.id}/workers/routes`);
-  for (const route of routes.filter((entry) => {
-    const host = entry.pattern.replace(/\/\*$/, "");
-    return oldHosts.has(host);
-  })) {
-    await request(`/zones/${openclaw.id}/workers/routes/${route.id}`, { method: "DELETE" });
-    console.log(`deleted old OpenClaw route ${route.pattern}`);
-  }
-
+async function removeOldOpenClawCustomDomains() {
   const domains = await request(
     `/accounts/${accountId}/workers/scripts/crabbox-ai/domains/records`,
   );
-  for (const domain of domains.filter((entry) => oldHosts.has(entry.hostname))) {
+  for (const domain of domains.filter((entry) => legacyOpenClawHosts.has(entry.hostname))) {
     await request(
       `/accounts/${accountId}/workers/scripts/crabbox-ai/domains/records/${domain.id}`,
       {
         method: "DELETE",
       },
     );
-    console.log(`deleted old OpenClaw custom domain ${domain.hostname}`);
+    console.log(`deleted legacy OpenClaw custom domain ${domain.hostname}`);
   }
 }
 
@@ -207,7 +202,13 @@ async function ensureCrabdSshRecord() {
   }
 }
 
-await ensureCrabfleetRoute();
+await ensureWorkerHost("openclaw.ai", appHost);
+for (const host of legacyOpenClawHosts) {
+  await ensureWorkerHost("openclaw.ai", host);
+}
+for (const host of legacyCrabfleetHosts) {
+  await ensureWorkerHost("crabfleet.ai", host);
+}
 await ensureCrabfleetDocsRecord();
-await removeOldOpenClawHosts();
+await removeOldOpenClawCustomDomains();
 await ensureCrabdSshRecord();

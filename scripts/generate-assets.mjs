@@ -23,6 +23,7 @@ const generatedPath = new URL("../src/generated.ts", import.meta.url);
 const distRoot = new URL("../dist/", import.meta.url);
 const distApp = new URL("../dist/app/", import.meta.url);
 const distDocs = new URL("../dist/docs/", import.meta.url);
+const appOrigin = "https://clawfleet.openclaw.ai";
 
 await run(process.execPath, [
   new URL("../node_modules/vite/bin/vite.js", import.meta.url).pathname,
@@ -68,10 +69,7 @@ await writeFile(
 if (process.argv.includes("--static")) {
   await rm(distRoot, { recursive: true, force: true });
   await Promise.all([mkdir(distApp, { recursive: true }), mkdir(distDocs, { recursive: true })]);
-  await writeFile(
-    new URL("../dist/_redirects", import.meta.url),
-    "/* https://crabfleet.ai/:splat 302\n",
-  );
+  await writeFile(new URL("../dist/_redirects", import.meta.url), `/* ${appOrigin}/:splat 302\n`);
   await writeFile(new URL("../dist/index.html", import.meta.url), redirectHtml("/"));
   await writeFile(new URL("../dist/app/index.html", import.meta.url), redirectHtml("/app/"));
   await writeFile(new URL("../dist/docs/spec.md", import.meta.url), specMarkdown);
@@ -81,7 +79,7 @@ if (process.argv.includes("--static")) {
 }
 
 function redirectHtml(path) {
-  const target = `https://crabfleet.ai${path}`;
+  const target = `${appOrigin}${path}`;
   return `<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0; url=${target}"><title>Crabfleet</title><a href="${target}">Crabfleet</a>`;
 }
 
