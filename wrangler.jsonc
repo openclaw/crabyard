@@ -71,8 +71,9 @@
     },
   ],
   "workers_dev": true,
-  // clawfleet.openclaw.ai/* is managed by scripts/ensure-cloudflare-domains.mjs so
-  // normal Worker deploys do not require zone/route permissions.
+  // The canonical app/API host is deployed as a Worker Custom Domain so the
+  // normal deploy token can converge DNS without the separate DNS token.
+  "routes": [{ "pattern": "clawfleet.openclaw.ai", "custom_domain": true }],
   "observability": {
     "enabled": true,
   },

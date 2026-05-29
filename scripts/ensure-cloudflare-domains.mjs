@@ -2,6 +2,8 @@ const token = process.env.CLOUDFLARE_API_TOKEN;
 const accountId = process.env.CLOUDFLARE_ACCOUNT_ID || "91b59577e757131d68d55a471fe32aca";
 const workerScript = "crabbox-ai";
 const appHost = "clawfleet.openclaw.ai";
+// The canonical host is a Worker Custom Domain in wrangler.jsonc; this script
+// only removes stale classic routes for it and keeps legacy aliases tidy.
 const legacyOpenClawHosts = new Set(["crabfleet.openclaw.ai", "crabyard.openclaw.ai"]);
 const legacyCrabfleetHosts = new Set(["crabfleet.ai", "www.crabfleet.ai"]);
 
@@ -154,6 +156,16 @@ async function removeOldOpenClawCustomDomains() {
   }
 }
 
+async function removeCanonicalClassicRoute() {
+  const openclaw = await zone("openclaw.ai");
+  const pattern = `${appHost}/*`;
+  const routes = await request(`/zones/${openclaw.id}/workers/routes`);
+  for (const route of routes.filter((entry) => entry.pattern === pattern)) {
+    await request(`/zones/${openclaw.id}/workers/routes/${route.id}`, { method: "DELETE" });
+    console.log(`deleted stale ${appHost} classic route ${route.id}`);
+  }
+}
+
 async function ensureCrabdSshRecord() {
   const crabd = await zone("crabd.sh");
   const records = await request(
@@ -202,7 +214,7 @@ async function ensureCrabdSshRecord() {
   }
 }
 
-await ensureWorkerHost("openclaw.ai", appHost);
+await removeCanonicalClassicRoute();
 for (const host of legacyOpenClawHosts) {
   await ensureWorkerHost("openclaw.ai", host);
 }
